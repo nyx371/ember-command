@@ -1,6 +1,7 @@
 const MAX_LOG_LINES = 9;
-const ICON_VERSION = '20260719-minimal2';
-const HARVEST_COOLDOWN = 4;
+const ICON_VERSION = '20260719-costs1';
+const HARVEST_YIELD = 100;
+const HARVEST_COOLDOWNS = { gold: 8, lumber: 14 };
 const TICK_MS = 1000;
 
 installZoomGuards();
@@ -36,7 +37,7 @@ function createGame() {
   return {
     tick: 0,
     selected: { kind: 'structure', type: 'hall', id: 1 },
-    resources: { gold: 120, lumber: 80, oil: 0 },
+    resources: { gold: 1200, lumber: 800, oil: 0 },
     production: [],
     workers: [
       createWorker('gold'),
@@ -55,7 +56,7 @@ function createGame() {
 }
 
 function createWorker(job = 'idle') {
-  return { id: nextId(), job, cooldown: job === 'idle' ? 0 : HARVEST_COOLDOWN };
+  return { id: nextId(), job, cooldown: job === 'idle' ? 0 : HARVEST_COOLDOWNS[job] };
 }
 
 function nextId() {
@@ -70,13 +71,13 @@ const COMMANDS = {
         id: 'train-worker',
         icon: 'worker',
         label: 'train worker',
-        cost: '50◈ 1□',
-        duration: 4,
+        cost: '400◈ 1□',
+        duration: 5,
         producer: 'hall',
-        enabled: s => s.resources.gold >= 50 && supplyUsed(s) < supplyCap(s) && !isProducing(s, 'hall'),
+        enabled: s => s.resources.gold >= 400 && supplyUsed(s) < supplyCap(s) && !isProducing(s, 'hall'),
         run: s => startProduction(s, {
-          id: 'train-worker', producer: 'hall', icon: 'worker', label: 'worker', duration: 4,
-          cost: { gold: 50 },
+          id: 'train-worker', producer: 'hall', icon: 'worker', label: 'worker', duration: 5,
+          cost: { gold: 400 },
           complete: state => { state.workers.push(createWorker('idle')); writeLog(state, 'Worker ready.'); }
         })
       },
@@ -84,13 +85,13 @@ const COMMANDS = {
         id: 'build-farm',
         icon: 'farm',
         label: 'build farm',
-        cost: '40▥',
-        duration: 5,
+        cost: '500◈ 250▥',
+        duration: 10,
         producer: 'hall',
-        enabled: s => s.resources.lumber >= 40 && !isProducing(s, 'hall'),
+        enabled: s => s.resources.gold >= 500 && s.resources.lumber >= 250 && !isProducing(s, 'hall'),
         run: s => startProduction(s, {
-          id: 'build-farm', producer: 'hall', icon: 'farm', label: 'farm', duration: 5,
-          cost: { lumber: 40 },
+          id: 'build-farm', producer: 'hall', icon: 'farm', label: 'farm', duration: 10,
+          cost: { gold: 500, lumber: 250 },
           complete: state => { state.structures.farms += 1; writeLog(state, 'Farm complete.'); }
         })
       },
@@ -98,13 +99,13 @@ const COMMANDS = {
         id: 'build-barracks',
         icon: 'barracks',
         label: 'build barracks',
-        cost: '90◈ 70▥',
-        duration: 7,
+        cost: '700◈ 450▥',
+        duration: 20,
         producer: 'hall',
-        enabled: s => s.resources.gold >= 90 && s.resources.lumber >= 70 && !isProducing(s, 'hall'),
+        enabled: s => s.resources.gold >= 700 && s.resources.lumber >= 450 && !isProducing(s, 'hall'),
         run: s => startProduction(s, {
-          id: 'build-barracks', producer: 'hall', icon: 'barracks', label: 'barracks', duration: 7,
-          cost: { gold: 90, lumber: 70 },
+          id: 'build-barracks', producer: 'hall', icon: 'barracks', label: 'barracks', duration: 20,
+          cost: { gold: 700, lumber: 450 },
           complete: state => { state.structures.barracks += 1; selectEntity('structure', 'barracks', 1); writeLog(state, 'Barracks complete.'); }
         })
       }
@@ -114,13 +115,13 @@ const COMMANDS = {
         id: 'train-soldier',
         icon: 'soldier',
         label: 'train soldier',
-        cost: '60◈ 2□',
-        duration: 5,
+        cost: '600◈ 1□',
+        duration: 6,
         producer: 'barracks',
-        enabled: s => s.structures.barracks > 0 && s.resources.gold >= 60 && supplyUsed(s) + 2 <= supplyCap(s) && !isProducing(s, 'barracks'),
+        enabled: s => s.structures.barracks > 0 && s.resources.gold >= 600 && supplyUsed(s) + 1 <= supplyCap(s) && !isProducing(s, 'barracks'),
         run: s => startProduction(s, {
-          id: 'train-soldier', producer: 'barracks', icon: 'soldier', label: 'soldier', duration: 5,
-          cost: { gold: 60 },
+          id: 'train-soldier', producer: 'barracks', icon: 'soldier', label: 'soldier', duration: 6,
+          cost: { gold: 600 },
           complete: state => { state.units.soldiers += 1; writeLog(state, 'Soldier ready.'); }
         })
       },
@@ -128,13 +129,13 @@ const COMMANDS = {
         id: 'train-archer',
         icon: 'archer',
         label: 'train archer',
-        cost: '45◈ 25▥ 2□',
-        duration: 5,
+        cost: '500◈ 50▥ 1□',
+        duration: 7,
         producer: 'barracks',
-        enabled: s => s.structures.barracks > 0 && s.resources.gold >= 45 && s.resources.lumber >= 25 && supplyUsed(s) + 2 <= supplyCap(s) && !isProducing(s, 'barracks'),
+        enabled: s => s.structures.barracks > 0 && s.resources.gold >= 500 && s.resources.lumber >= 50 && supplyUsed(s) + 1 <= supplyCap(s) && !isProducing(s, 'barracks'),
         run: s => startProduction(s, {
-          id: 'train-archer', producer: 'barracks', icon: 'archer', label: 'archer', duration: 5,
-          cost: { gold: 45, lumber: 25 },
+          id: 'train-archer', producer: 'barracks', icon: 'archer', label: 'archer', duration: 7,
+          cost: { gold: 500, lumber: 50 },
           complete: state => { state.units.archers += 1; writeLog(state, 'Archer ready.'); }
         })
       }
@@ -185,7 +186,7 @@ const COMMANDS = {
 function assignWorker(state, worker, job) {
   if (!worker) return;
   worker.job = job;
-  worker.cooldown = job === 'idle' ? 0 : HARVEST_COOLDOWN;
+  worker.cooldown = job === 'idle' ? 0 : HARVEST_COOLDOWNS[job];
   writeLog(state, `Worker ${worker.id}: ${job}.`);
 }
 
@@ -222,16 +223,14 @@ function advanceProduction(state) {
 function gameTick() {
   game.tick += 1;
 
-  advanceProduction(game);
-
   game.workers.forEach(worker => {
     if (worker.job === 'idle') return;
     worker.cooldown -= 1;
     if (worker.cooldown > 0) return;
 
-    if (worker.job === 'gold') game.resources.gold += 12;
-    if (worker.job === 'lumber') game.resources.lumber += 8;
-    worker.cooldown = HARVEST_COOLDOWN;
+    if (worker.job === 'gold') game.resources.gold += HARVEST_YIELD;
+    if (worker.job === 'lumber') game.resources.lumber += HARVEST_YIELD;
+    worker.cooldown = HARVEST_COOLDOWNS[worker.job];
   });
 
   if (game.tick % 6 === 0) game.enemy += 1;
@@ -268,7 +267,7 @@ function selectEntity(kind, type, id) {
 }
 
 function supplyUsed(state) {
-  return state.workers.length + state.units.soldiers * 2 + state.units.archers * 2;
+  return state.workers.length + state.units.soldiers + state.units.archers;
 }
 
 function supplyCap(state) {
@@ -412,8 +411,6 @@ function renderWorld() {
 
   const workers = document.createElement('section');
   workers.className = 'world-group workers';
-  advanceProduction(game);
-
   game.workers.forEach(worker => {
     workers.appendChild(entityButton({
       kind: 'worker',
@@ -449,7 +446,7 @@ function workerJobIcon(worker) {
 
 function workerProgress(worker) {
   if (worker.job === 'idle') return 0;
-  return (HARVEST_COOLDOWN - worker.cooldown) / HARVEST_COOLDOWN;
+  return (HARVEST_COOLDOWNS[worker.job] - worker.cooldown) / HARVEST_COOLDOWNS[worker.job];
 }
 
 function productionMeta(state, producer) {
