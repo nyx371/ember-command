@@ -12,7 +12,7 @@ const dom = {
   log: document.querySelector('#log')
 };
 
-const ICON_VERSION = '20260718-icons2';
+const ICON_VERSION = '20260718-wiki1';
 
 const ICONS = {
   gold: 'assets/icons/gold.png',
