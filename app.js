@@ -12,20 +12,22 @@ const dom = {
   log: document.querySelector('#log')
 };
 
+const ICON_VERSION = '20260718-icons1';
+
 const ICONS = {
-  gold: [6, 13],
-  lumber: [8, 13],
-  oil: [8, 15],
-  supply: [4, 13],
-  workers: [0, 0],
-  soldiers: [2, 0],
-  archers: [4, 3],
-  hall: [0, 4],
-  farms: [1, 4],
-  barracks: [2, 4],
-  enemy: [3, 8],
-  wait: [6, 17],
-  attack: [3, 8]
+  gold: 'assets/icons/gold.png',
+  lumber: 'assets/icons/lumber.png',
+  oil: 'assets/icons/oil.png',
+  supply: 'assets/icons/supply.png',
+  workers: 'assets/icons/worker.png',
+  soldiers: 'assets/icons/soldier.png',
+  archers: 'assets/icons/archer.png',
+  hall: 'assets/icons/hall.png',
+  farms: 'assets/icons/farm.png',
+  barracks: 'assets/icons/barracks.png',
+  enemy: 'assets/icons/enemy.png',
+  wait: 'assets/icons/wait.png',
+  attack: 'assets/icons/attack.png'
 };
 
 const COMMANDS = [
@@ -298,12 +300,16 @@ function render() {
   renderLog();
 }
 
-function makeSprite(icon) {
-  const sprite = document.createElement('span');
-  sprite.className = 'sprite';
-  sprite.style.setProperty('--sx', icon[0]);
-  sprite.style.setProperty('--sy', icon[1]);
-  return sprite;
+function makeIcon(src, label) {
+  const icon = document.createElement('img');
+  icon.className = 'icon';
+  icon.alt = '';
+  icon.decoding = 'async';
+  icon.draggable = false;
+  icon.src = `${src}?v=${ICON_VERSION}`;
+  icon.setAttribute('aria-hidden', 'true');
+  if (label) icon.title = label;
+  return icon;
 }
 
 function renderStats(parent, stats) {
@@ -315,7 +321,7 @@ function renderStats(parent, stats) {
     row.title = label;
     row.setAttribute('aria-label', `${label}: ${value}`);
 
-    const mark = makeSprite(glyph);
+    const mark = makeIcon(glyph, label);
 
     const amount = document.createElement('strong');
     amount.textContent = value;
@@ -336,7 +342,7 @@ function renderOrders() {
     button.title = command.label;
     button.setAttribute('aria-label', command.label);
 
-    const glyph = makeSprite(ICONS[command.icon]);
+    const glyph = makeIcon(ICONS[command.icon], command.label);
 
     const detail = document.createElement('small');
     detail.textContent = command.detail;
