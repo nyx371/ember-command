@@ -37,7 +37,7 @@ button { touch-action: manipulation; }
   margin: 0 auto;
   padding: calc(env(safe-area-inset-top) + 8px) 8px calc(env(safe-area-inset-bottom) + 8px);
   display: grid;
-  grid-template-rows: 58px 1fr;
+  grid-template-rows: 56px 1fr;
   gap: 8px;
   overflow: hidden;
 }
@@ -52,38 +52,38 @@ button { touch-action: manipulation; }
 
 .topbar {
   display: grid;
-  grid-template-columns: 1fr 42px;
-  gap: 8px;
-  padding: 7px;
+  grid-template-columns: 1fr 38px;
+  gap: 6px;
+  padding: 4px 2px 4px 4px;
   min-height: 0;
 }
 
 .resources {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 5px;
+  gap: 2px;
   min-width: 0;
 }
 
 .resource {
   min-width: 0;
   display: grid;
-  grid-template-columns: 24px 1fr;
+  grid-template-columns: 34px 1fr;
   align-items: center;
-  gap: 4px;
-  padding: 4px;
-  background: var(--panel-2);
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  gap: 2px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
 }
 
 .resource strong {
   min-width: 0;
   overflow: hidden;
   color: var(--text);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1;
-  text-align: right;
+  text-align: left;
 }
 
 .icon {
@@ -95,14 +95,14 @@ button { touch-action: manipulation; }
   pointer-events: none;
   user-select: none;
 }
-.resource .icon { width: 24px; height: 24px; }
+.resource .icon { width: 34px; height: 34px; }
 
 .menu { position: relative; }
 .menu summary {
   list-style: none;
   width: 100%;
   height: 100%;
-  min-height: 42px;
+  min-height: 38px;
   display: grid;
   place-items: center;
   color: var(--accent);
@@ -171,10 +171,11 @@ button { touch-action: manipulation; }
 .world-group.army { grid-template-columns: repeat(3, 1fr); align-content: end; }
 
 .entity {
+  position: relative;
   min-width: 0;
-  min-height: 76px;
+  min-height: 82px;
   display: grid;
-  grid-template-columns: 48px 1fr;
+  grid-template-columns: 58px 1fr;
   align-items: center;
   gap: 7px;
   padding: 7px;
@@ -185,7 +186,19 @@ button { touch-action: manipulation; }
   cursor: pointer;
   overflow: hidden;
 }
-.entity .icon { width: 48px; height: 48px; }
+.entity .icon { width: 54px; height: 54px; }
+.entity.compact {
+  min-height: 82px;
+  display: grid;
+  place-items: center;
+  grid-template-columns: 1fr;
+  padding: 0;
+}
+.entity.compact > .icon {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
 .entity.selected { border-color: var(--accent); }
 .entity.danger { border-color: #4a2620; }
 .entity.danger strong { color: var(--danger); }
@@ -193,6 +206,28 @@ button { touch-action: manipulation; }
 .entity-body { min-width: 0; display: grid; gap: 4px; }
 .entity-body strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; line-height: 1; }
 .entity-body small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 9px; line-height: 1.1; }
+.job-badge {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 24px;
+  height: 24px;
+  background: rgba(5, 5, 5, 0.82);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  overflow: hidden;
+}
+.job-badge .icon {
+  width: 100%;
+  height: 100%;
+}
+.cooldown-fill {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 3px;
+  background: var(--accent);
+}
 
 .command-bar {
   min-height: 0;
@@ -209,7 +244,7 @@ button { touch-action: manipulation; }
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-columns: 54px 1fr;
+  grid-template-columns: 58px 1fr;
   align-items: center;
   gap: 7px;
   padding: 7px;
@@ -220,7 +255,7 @@ button { touch-action: manipulation; }
   cursor: pointer;
   overflow: hidden;
 }
-.command .icon { width: 54px; height: 54px; }
+.command .icon { width: 58px; height: 58px; }
 .command:active:not(:disabled) { border-color: var(--accent); }
 .command:disabled { opacity: 0.34; cursor: not-allowed; }
 .command-copy { min-width: 0; display: grid; gap: 4px; }
@@ -234,10 +269,12 @@ button { touch-action: manipulation; }
   .topbar { padding: 6px; }
   .world { grid-template-rows: 24px 1fr 108px; }
   .world-canvas { gap: 6px; padding: 6px; }
-  .entity { min-height: 64px; grid-template-columns: 40px 1fr; padding: 5px; gap: 5px; }
-  .entity .icon { width: 40px; height: 40px; }
-  .command { grid-template-columns: 44px 1fr; padding: 5px; gap: 5px; }
-  .command .icon { width: 44px; height: 44px; }
+  .entity { min-height: 66px; grid-template-columns: 42px 1fr; padding: 5px; gap: 5px; }
+  .entity .icon { width: 42px; height: 42px; }
+  .entity.compact { min-height: 66px; padding: 0; grid-template-columns: 1fr; }
+  .entity.compact > .icon { width: 100%; height: 100%; }
+  .command { grid-template-columns: 48px 1fr; padding: 5px; gap: 5px; }
+  .command .icon { width: 48px; height: 48px; }
   .command-bar { padding: 6px; gap: 5px; }
   .entity-body strong, .command-copy strong { font-size: 10px; }
   .entity-body small, .command-copy small { font-size: 8px; }

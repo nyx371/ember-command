@@ -1,6 +1,7 @@
 const MAX_LOG_LINES = 9;
-const ICON_VERSION = '20260718-world3';
+const ICON_VERSION = '20260719-cooldowns1';
 const HARVEST_COOLDOWN = 4;
+const TICK_MS = 1000;
 
 installZoomGuards();
 
@@ -36,6 +37,7 @@ function createGame() {
     tick: 0,
     selected: { kind: 'structure', type: 'hall', id: 1 },
     resources: { gold: 120, lumber: 80, oil: 0 },
+    production: [],
     workers: [
       createWorker('gold'),
       createWorker('lumber'),
@@ -69,38 +71,42 @@ const COMMANDS = {
         icon: 'worker',
         label: 'train worker',
         cost: '50◈ 1□',
-        enabled: s => s.resources.gold >= 50 && supplyUsed(s) < supplyCap(s),
-        run: s => {
-          s.resources.gold -= 50;
-          s.workers.push(createWorker('idle'));
-          writeLog(s, 'Worker trained.');
-        }
+        duration: 4,
+        producer: 'hall',
+        enabled: s => s.resources.gold >= 50 && supplyUsed(s) < supplyCap(s) && !isProducing(s, 'hall'),
+        run: s => startProduction(s, {
+          id: 'train-worker', producer: 'hall', icon: 'worker', label: 'worker', duration: 4,
+          cost: { gold: 50 },
+          complete: state => { state.workers.push(createWorker('idle')); writeLog(state, 'Worker ready.'); }
+        })
       },
       {
         id: 'build-farm',
         icon: 'farm',
         label: 'build farm',
-        cost: '40▥ +4□',
-        enabled: s => s.resources.lumber >= 40,
-        run: s => {
-          s.resources.lumber -= 40;
-          s.structures.farms += 1;
-          writeLog(s, 'Farm built.');
-        }
+        cost: '40▥',
+        duration: 5,
+        producer: 'hall',
+        enabled: s => s.resources.lumber >= 40 && !isProducing(s, 'hall'),
+        run: s => startProduction(s, {
+          id: 'build-farm', producer: 'hall', icon: 'farm', label: 'farm', duration: 5,
+          cost: { lumber: 40 },
+          complete: state => { state.structures.farms += 1; writeLog(state, 'Farm complete.'); }
+        })
       },
       {
         id: 'build-barracks',
         icon: 'barracks',
         label: 'build barracks',
         cost: '90◈ 70▥',
-        enabled: s => s.resources.gold >= 90 && s.resources.lumber >= 70,
-        run: s => {
-          s.resources.gold -= 90;
-          s.resources.lumber -= 70;
-          s.structures.barracks += 1;
-          selectEntity('structure', 'barracks', 1);
-          writeLog(s, 'Barracks built.');
-        }
+        duration: 7,
+        producer: 'hall',
+        enabled: s => s.resources.gold >= 90 && s.resources.lumber >= 70 && !isProducing(s, 'hall'),
+        run: s => startProduction(s, {
+          id: 'build-barracks', producer: 'hall', icon: 'barracks', label: 'barracks', duration: 7,
+          cost: { gold: 90, lumber: 70 },
+          complete: state => { state.structures.barracks += 1; selectEntity('structure', 'barracks', 1); writeLog(state, 'Barracks complete.'); }
+        })
       }
     ],
     barracks: [
@@ -109,25 +115,28 @@ const COMMANDS = {
         icon: 'soldier',
         label: 'train soldier',
         cost: '60◈ 2□',
-        enabled: s => s.structures.barracks > 0 && s.resources.gold >= 60 && supplyUsed(s) + 2 <= supplyCap(s),
-        run: s => {
-          s.resources.gold -= 60;
-          s.units.soldiers += 1;
-          writeLog(s, 'Soldier trained.');
-        }
+        duration: 5,
+        producer: 'barracks',
+        enabled: s => s.structures.barracks > 0 && s.resources.gold >= 60 && supplyUsed(s) + 2 <= supplyCap(s) && !isProducing(s, 'barracks'),
+        run: s => startProduction(s, {
+          id: 'train-soldier', producer: 'barracks', icon: 'soldier', label: 'soldier', duration: 5,
+          cost: { gold: 60 },
+          complete: state => { state.units.soldiers += 1; writeLog(state, 'Soldier ready.'); }
+        })
       },
       {
         id: 'train-archer',
         icon: 'archer',
         label: 'train archer',
         cost: '45◈ 25▥ 2□',
-        enabled: s => s.structures.barracks > 0 && s.resources.gold >= 45 && s.resources.lumber >= 25 && supplyUsed(s) + 2 <= supplyCap(s),
-        run: s => {
-          s.resources.gold -= 45;
-          s.resources.lumber -= 25;
-          s.units.archers += 1;
-          writeLog(s, 'Archer trained.');
-        }
+        duration: 5,
+        producer: 'barracks',
+        enabled: s => s.structures.barracks > 0 && s.resources.gold >= 45 && s.resources.lumber >= 25 && supplyUsed(s) + 2 <= supplyCap(s) && !isProducing(s, 'barracks'),
+        run: s => startProduction(s, {
+          id: 'train-archer', producer: 'barracks', icon: 'archer', label: 'archer', duration: 5,
+          cost: { gold: 45, lumber: 25 },
+          complete: state => { state.units.archers += 1; writeLog(state, 'Archer ready.'); }
+        })
       }
     ]
   },
@@ -180,8 +189,40 @@ function assignWorker(state, worker, job) {
   writeLog(state, `Worker ${worker.id}: ${job}.`);
 }
 
+function isProducing(state, producer) {
+  return state.production.some(job => job.producer === producer);
+}
+
+function activeProduction(state, producer) {
+  return state.production.find(job => job.producer === producer) || null;
+}
+
+function canAfford(state, cost) {
+  return Object.keys(cost).every(key => state.resources[key] >= cost[key]);
+}
+
+function spend(state, cost) {
+  Object.keys(cost).forEach(key => { state.resources[key] -= cost[key]; });
+}
+
+function startProduction(state, job) {
+  if (isProducing(state, job.producer) || !canAfford(state, job.cost)) return;
+  spend(state, job.cost);
+  state.production.push({ ...job, remaining: job.duration });
+  writeLog(state, `${job.label}: started.`);
+}
+
+function advanceProduction(state) {
+  state.production.forEach(job => { job.remaining -= 1; });
+  const done = state.production.filter(job => job.remaining <= 0);
+  state.production = state.production.filter(job => job.remaining > 0);
+  done.forEach(job => job.complete(state));
+}
+
 function gameTick() {
   game.tick += 1;
+
+  advanceProduction(game);
 
   game.workers.forEach(worker => {
     if (worker.job === 'idle') return;
@@ -268,9 +309,12 @@ function makeIcon(src, label) {
   return icon;
 }
 
-function entityButton({ kind, type, id, icon, label, count, meta, danger }) {
+function entityButton({ kind, type, id, icon, label, count, meta, danger, compact, jobIcon, progress }) {
   const button = document.createElement('button');
-  button.className = danger ? 'entity danger' : 'entity';
+  const classes = ['entity'];
+  if (danger) classes.push('danger');
+  if (compact) classes.push('compact');
+  button.className = classes.join(' ');
   if (game.selected.kind === kind && game.selected.type === type && game.selected.id === id) {
     button.classList.add('selected');
   }
@@ -282,17 +326,32 @@ function entityButton({ kind, type, id, icon, label, count, meta, danger }) {
 
   button.appendChild(makeIcon(ICONS[icon], label));
 
-  const body = document.createElement('span');
-  body.className = 'entity-body';
+  if (jobIcon) {
+    const badge = document.createElement('span');
+    badge.className = 'job-badge';
+    badge.appendChild(makeIcon(ICONS[jobIcon], meta || jobIcon));
+    if (typeof progress === 'number') {
+      const fill = document.createElement('span');
+      fill.className = 'cooldown-fill';
+      fill.style.width = `${Math.max(0, Math.min(100, progress * 100))}%`;
+      badge.appendChild(fill);
+    }
+    button.appendChild(badge);
+  }
 
-  const name = document.createElement('strong');
-  name.textContent = count ? `${label} ${count}` : label;
+  if (!compact) {
+    const body = document.createElement('span');
+    body.className = 'entity-body';
 
-  const sub = document.createElement('small');
-  sub.textContent = meta || '';
+    const name = document.createElement('strong');
+    name.textContent = count ? `${label} ${count}` : label;
 
-  body.append(name, sub);
-  button.appendChild(body);
+    const sub = document.createElement('small');
+    sub.textContent = meta || '';
+
+    body.append(name, sub);
+    button.appendChild(body);
+  }
   return button;
 }
 
@@ -309,7 +368,7 @@ function render() {
 function selectedTitle(state) {
   if (state.selected.kind === 'worker') {
     const worker = selectedWorker(state);
-    return worker ? `worker ${worker.id}` : 'worker';
+    return worker ? 'worker' : 'worker';
   }
   if (state.selected.kind === 'army') return 'army';
   return state.selected.type === 'hall' ? 'town hall' : state.selected.type;
@@ -341,18 +400,20 @@ function renderWorld() {
 
   const structures = document.createElement('section');
   structures.className = 'world-group structures';
-  structures.appendChild(entityButton({ kind: 'structure', type: 'hall', id: 1, icon: 'hall', label: 'town hall', count: game.structures.hall, meta: 'train workers' }));
+  structures.appendChild(entityButton({ kind: 'structure', type: 'hall', id: 1, icon: 'hall', label: 'town hall', count: game.structures.hall, meta: productionMeta(game, 'hall') || 'train/build', jobIcon: productionIcon(game, 'hall'), progress: productionProgress(game, 'hall') }));
 
   for (let i = 1; i <= game.structures.farms; i += 1) {
     structures.appendChild(entityButton({ kind: 'structure', type: 'farm', id: i, icon: 'farm', label: 'farm', meta: '+4 supply' }));
   }
 
   for (let i = 1; i <= game.structures.barracks; i += 1) {
-    structures.appendChild(entityButton({ kind: 'structure', type: 'barracks', id: i, icon: 'barracks', label: 'barracks', meta: 'train army' }));
+    structures.appendChild(entityButton({ kind: 'structure', type: 'barracks', id: i, icon: 'barracks', label: 'barracks', meta: productionMeta(game, 'barracks') || 'train army', jobIcon: productionIcon(game, 'barracks'), progress: productionProgress(game, 'barracks') }));
   }
 
   const workers = document.createElement('section');
   workers.className = 'world-group workers';
+  advanceProduction(game);
+
   game.workers.forEach(worker => {
     workers.appendChild(entityButton({
       kind: 'worker',
@@ -360,7 +421,10 @@ function renderWorld() {
       id: worker.id,
       icon: 'worker',
       label: `worker ${worker.id}`,
-      meta: workerMeta(worker)
+      meta: workerMeta(worker),
+      compact: true,
+      jobIcon: workerJobIcon(worker),
+      progress: workerProgress(worker)
     }));
   });
 
@@ -374,9 +438,34 @@ function renderWorld() {
 }
 
 function workerMeta(worker) {
-  if (worker.job === 'idle') return 'idle';
-  const dots = '■'.repeat(HARVEST_COOLDOWN - worker.cooldown) + '□'.repeat(worker.cooldown);
-  return `${worker.job} ${dots}`;
+  return worker.job;
+}
+
+function workerJobIcon(worker) {
+  if (worker.job === 'gold') return 'gold';
+  if (worker.job === 'lumber') return 'lumber';
+  return 'worker';
+}
+
+function workerProgress(worker) {
+  if (worker.job === 'idle') return 0;
+  return (HARVEST_COOLDOWN - worker.cooldown) / HARVEST_COOLDOWN;
+}
+
+function productionMeta(state, producer) {
+  const job = activeProduction(state, producer);
+  if (!job) return '';
+  return `${job.label} ${job.remaining}s`;
+}
+
+function productionIcon(state, producer) {
+  const job = activeProduction(state, producer);
+  return job ? job.icon : '';
+}
+
+function productionProgress(state, producer) {
+  const job = activeProduction(state, producer);
+  return job ? (job.duration - job.remaining) / job.duration : 0;
 }
 
 function renderOrders() {
@@ -440,4 +529,4 @@ dom.orders.addEventListener('click', event => {
 });
 
 render();
-setInterval(gameTick, 1000);
+setInterval(gameTick, TICK_MS);

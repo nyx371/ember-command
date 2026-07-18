@@ -24,3 +24,5 @@ python3 -m http.server 5173
 - Warcraft 2-style loop: gold/lumber/oil, workers/soldiers/archers, hall/farms/barracks.
 - Resources live at the top; structures, units, workers, enemy, and commands live inside the central world canvas.
 - Workers are assigned to gold/lumber/idle and harvest automatically on a cooldown.
+- Training/building uses producer cooldowns instead of instant completion.
+- Worker tiles are full-bleed image buttons with resource/cooldown overlays.
