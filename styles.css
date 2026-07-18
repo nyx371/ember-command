@@ -173,22 +173,22 @@ button { touch-action: manipulation; }
 .entity {
   position: relative;
   min-width: 0;
-  min-height: 82px;
+  min-height: 58px;
   display: grid;
-  grid-template-columns: 58px 1fr;
+  grid-template-columns: 42px 1fr;
   align-items: center;
-  gap: 7px;
-  padding: 7px;
+  gap: 4px;
+  padding: 2px;
   color: var(--text);
-  background: var(--panel-2);
-  border: 1px solid var(--line);
-  border-radius: 10px;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
   cursor: pointer;
   overflow: hidden;
 }
-.entity .icon { width: 54px; height: 54px; }
+.entity .icon { width: 42px; height: 42px; }
 .entity.compact {
-  min-height: 82px;
+  min-height: 42px;
   display: grid;
   place-items: center;
   grid-template-columns: 1fr;
