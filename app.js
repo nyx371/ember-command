@@ -1,5 +1,5 @@
 const MAX_LOG_LINES = 9;
-const ICON_VERSION = '20260718-world2';
+const ICON_VERSION = '20260718-world3';
 const HARVEST_COOLDOWN = 4;
 
 installZoomGuards();
@@ -312,7 +312,7 @@ function selectedTitle(state) {
     return worker ? `worker ${worker.id}` : 'worker';
   }
   if (state.selected.kind === 'army') return 'army';
-  return state.selected.type;
+  return state.selected.type === 'hall' ? 'town hall' : state.selected.type;
 }
 
 function renderResources() {
@@ -341,7 +341,7 @@ function renderWorld() {
 
   const structures = document.createElement('section');
   structures.className = 'world-group structures';
-  structures.appendChild(entityButton({ kind: 'structure', type: 'hall', id: 1, icon: 'hall', label: 'hall', count: game.structures.hall, meta: 'train ♙' }));
+  structures.appendChild(entityButton({ kind: 'structure', type: 'hall', id: 1, icon: 'hall', label: 'town hall', count: game.structures.hall, meta: 'train workers' }));
 
   for (let i = 1; i <= game.structures.farms; i += 1) {
     structures.appendChild(entityButton({ kind: 'structure', type: 'farm', id: i, icon: 'farm', label: 'farm', meta: '+4 supply' }));
