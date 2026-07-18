@@ -15,6 +15,7 @@ python3 -m http.server 5173
 ## Design direction
 
 - Plain static site: no React, no build step, GitHub Pages native.
+- Warcraft 2 mindset: simple data structures, explicit systems, one render pass.
 - Text-first and abstract, not sprite-heavy.
 - Clicker pacing at first; strategic production and defense later.
 - Camp survival expands into scouting, logistics, perimeter defense, then army/front management.

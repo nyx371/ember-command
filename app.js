@@ -1,273 +1,358 @@
-const state = {
-  tick: 0,
-  ember: 0,
-  wood: 0,
-  food: 0,
-  scouts: 0,
-  foragers: 0,
-  sentries: 0,
-  traps: 0,
-  huts: 0,
-  commandGrounds: 0,
-  threat: 0,
-  unlocked: {
-    fire: false,
-    gather: false,
-    trap: false,
-    scout: false,
-    command: false
-  },
-  log: [
-    'The room is dark.',
-    'Something waits beyond the tree line.'
-  ]
+const MAX_LOG_LINES = 8;
+
+const game = createGame();
+const dom = {
+  headline: document.querySelector('#headline'),
+  phase: document.querySelector('#phase'),
+  stores: document.querySelector('#stores'),
+  orders: document.querySelector('#orders'),
+  camp: document.querySelector('#camp'),
+  log: document.querySelector('#log')
 };
 
-const actions = [
+const COMMANDS = [
   {
     id: 'spark',
     label: 'strike a spark',
     detail: '+1 ember',
-    show: () => !state.unlocked.fire,
-    run: () => {
-      state.ember += 1;
-      if (state.ember >= 3) {
-        state.unlocked.fire = true;
-        addLog('The ember catches. The fire is alive.');
+    visible: s => !s.flags.fire,
+    execute: s => {
+      s.resources.ember += 1;
+      if (s.resources.ember >= 3) {
+        s.flags.fire = true;
+        writeLog(s, 'The ember catches. The fire is alive.');
       } else {
-        addLog('A spark jumps, then shivers.');
+        writeLog(s, 'A spark jumps, then shivers.');
       }
     }
   },
   {
-    id: 'gather',
+    id: 'gather-wood',
     label: 'gather wood',
     detail: '+2 wood',
-    show: () => state.unlocked.fire,
-    run: () => {
-      state.wood += 2;
-      state.unlocked.gather = true;
-      addLog('You drag branches from the black edge of the camp.');
+    visible: s => s.flags.fire,
+    execute: s => {
+      s.resources.wood += 2;
+      s.flags.gather = true;
+      writeLog(s, 'You drag branches from the black edge of the camp.');
     }
   },
   {
-    id: 'feed',
+    id: 'feed-fire',
     label: 'feed the fire',
     detail: '2 wood → +3 ember',
-    show: () => state.unlocked.fire,
-    enabled: () => state.wood >= 2,
-    run: () => {
-      state.wood -= 2;
-      state.ember += 3;
-      addLog('The fire climbs higher. Shadows retreat.');
+    visible: s => s.flags.fire,
+    enabled: s => s.resources.wood >= 2,
+    execute: s => {
+      s.resources.wood -= 2;
+      s.resources.ember += 3;
+      writeLog(s, 'The fire climbs higher. Shadows retreat.');
     }
   },
   {
     id: 'forage',
     label: 'forage',
     detail: '+1 food, +1 threat',
-    show: () => state.unlocked.gather,
-    run: () => {
-      state.food += 1;
-      state.threat += 1;
-      addLog('Tracks cross your path. You return with roots.');
+    visible: s => s.flags.gather,
+    execute: s => {
+      s.resources.food += 1;
+      s.threat += 1;
+      writeLog(s, 'Tracks cross your path. You return with roots.');
     }
   },
   {
-    id: 'trap',
+    id: 'set-trap',
     label: 'set traps',
     detail: '5 wood → +1 trap',
-    show: () => state.unlocked.gather,
-    enabled: () => state.wood >= 5,
-    run: () => {
-      state.wood -= 5;
-      state.traps += 1;
-      state.unlocked.trap = true;
-      addLog('A snare waits under leaves.');
+    visible: s => s.flags.gather,
+    enabled: s => s.resources.wood >= 5,
+    execute: s => {
+      s.resources.wood -= 5;
+      s.structures.traps += 1;
+      s.flags.trap = true;
+      writeLog(s, 'A snare waits under leaves.');
     }
   },
   {
-    id: 'hut',
+    id: 'raise-hut',
     label: 'raise huts',
     detail: '12 wood, 4 food → worker cap',
-    show: () => state.traps >= 1,
-    enabled: () => state.wood >= 12 && state.food >= 4,
-    run: () => {
-      state.wood -= 12;
-      state.food -= 4;
-      state.huts += 1;
-      state.unlocked.scout = true;
-      addLog('Smoke curls from a new shelter.');
+    visible: s => s.structures.traps >= 1,
+    enabled: s => s.resources.wood >= 12 && s.resources.food >= 4,
+    execute: s => {
+      s.resources.wood -= 12;
+      s.resources.food -= 4;
+      s.structures.huts += 1;
+      s.flags.scout = true;
+      writeLog(s, 'Smoke curls from a new shelter.');
     }
   },
   {
-    id: 'scout',
+    id: 'train-scout',
     label: 'train scouts',
     detail: '3 food → +1 scout',
-    show: () => state.unlocked.scout,
-    enabled: () => state.food >= 3 && workers() < workerCap(),
-    run: () => {
-      state.food -= 3;
-      state.scouts += 1;
-      state.unlocked.command = true;
-      addLog('A scout learns the paths between trees.');
+    visible: s => s.flags.scout,
+    enabled: s => s.resources.food >= 3 && totalWorkers(s) < workerCap(s),
+    execute: s => {
+      s.resources.food -= 3;
+      s.units.scouts += 1;
+      s.flags.command = true;
+      writeLog(s, 'A scout learns the paths between trees.');
     }
   },
   {
-    id: 'forager',
+    id: 'assign-forager',
     label: 'assign foragers',
     detail: '4 food → passive supplies',
-    show: () => state.unlocked.scout,
-    enabled: () => state.food >= 4 && workers() < workerCap(),
-    run: () => {
-      state.food -= 4;
-      state.foragers += 1;
-      addLog('A quiet worker starts ranging for supplies.');
+    visible: s => s.flags.scout,
+    enabled: s => s.resources.food >= 4 && totalWorkers(s) < workerCap(s),
+    execute: s => {
+      s.resources.food -= 4;
+      s.units.foragers += 1;
+      writeLog(s, 'A quiet worker starts ranging for supplies.');
     }
   },
   {
-    id: 'sentry',
+    id: 'post-sentry',
     label: 'post sentries',
     detail: '5 food, 3 ember → defense',
-    show: () => state.unlocked.command,
-    enabled: () => state.food >= 5 && state.ember >= 3 && workers() < workerCap(),
-    run: () => {
-      state.food -= 5;
-      state.ember -= 3;
-      state.sentries += 1;
-      addLog('A spear point glints at the perimeter.');
+    visible: s => s.flags.command,
+    enabled: s => s.resources.food >= 5 && s.resources.ember >= 3 && totalWorkers(s) < workerCap(s),
+    execute: s => {
+      s.resources.food -= 5;
+      s.resources.ember -= 3;
+      s.units.sentries += 1;
+      writeLog(s, 'A spear point glints at the perimeter.');
     }
   },
   {
     id: 'command-ground',
     label: 'mark command ground',
     detail: '25 wood, 10 ember → RTS layer',
-    show: () => state.unlocked.command,
-    enabled: () => state.wood >= 25 && state.ember >= 10,
-    run: () => {
-      state.wood -= 25;
-      state.ember -= 10;
-      state.commandGrounds += 1;
-      addLog('Orders become doctrine. The camp is now a front.');
+    visible: s => s.flags.command,
+    enabled: s => s.resources.wood >= 25 && s.resources.ember >= 10,
+    execute: s => {
+      s.resources.wood -= 25;
+      s.resources.ember -= 10;
+      s.structures.commandGrounds += 1;
+      writeLog(s, 'Orders become doctrine. The camp is now a front.');
     }
+  },
+  {
+    id: 'wait',
+    label: 'let time pass',
+    detail: 'production + raids',
+    primary: true,
+    visible: () => true,
+    execute: runTurn
   }
 ];
 
-function workers() {
-  return state.scouts + state.foragers + state.sentries;
+function createGame() {
+  return {
+    turn: 0,
+    resources: {
+      ember: 0,
+      wood: 0,
+      food: 0
+    },
+    units: {
+      scouts: 0,
+      foragers: 0,
+      sentries: 0
+    },
+    structures: {
+      traps: 0,
+      huts: 0,
+      commandGrounds: 0
+    },
+    threat: 0,
+    flags: {
+      fire: false,
+      gather: false,
+      trap: false,
+      scout: false,
+      command: false
+    },
+    log: [
+      'The room is dark.',
+      'Something waits beyond the tree line.'
+    ]
+  };
 }
 
-function workerCap() {
-  return 2 + state.huts * 2 + state.commandGrounds * 4;
+function commandById(id) {
+  return COMMANDS.find(command => command.id === id);
 }
 
-function addLog(line) {
-  state.log.unshift(line);
-  state.log = state.log.slice(0, 8);
+function canRun(command, state) {
+  return command.visible(state) && (!command.enabled || command.enabled(state));
 }
 
-function passTime() {
-  state.tick += 1;
-
-  if (state.unlocked.fire) {
-    state.ember += 1 + state.commandGrounds;
-  }
-
-  state.wood += state.foragers;
-  state.food += Math.max(0, state.foragers - Math.floor(state.threat / 10));
-  state.threat += Math.max(0, state.scouts ? 1 : 2) + state.commandGrounds;
-
-  const raidAt = 12 + state.sentries * 5;
-  if (state.threat >= raidAt) {
-    resolveRaid();
-  } else {
-    addLog('Time passes. The fire listens.');
-  }
-
+function runCommand(id) {
+  const command = commandById(id);
+  if (!command || !canRun(command, game)) return;
+  command.execute(game);
+  clampGame(game);
   render();
 }
 
-function resolveRaid() {
-  const defense = state.traps * 2 + state.sentries * 3 + state.commandGrounds * 5;
+function runTurn(state) {
+  state.turn += 1;
+  produceResources(state);
+  increaseThreat(state);
+
+  if (state.threat >= raidThreshold(state)) {
+    resolveRaid(state);
+  } else {
+    writeLog(state, 'Time passes. The fire listens.');
+  }
+}
+
+function produceResources(state) {
+  if (state.flags.fire) {
+    state.resources.ember += 1 + state.structures.commandGrounds;
+  }
+
+  state.resources.wood += state.units.foragers;
+  state.resources.food += Math.max(0, state.units.foragers - Math.floor(state.threat / 10));
+}
+
+function increaseThreat(state) {
+  const scoutReduction = state.units.scouts > 0 ? 1 : 0;
+  state.threat += 2 - scoutReduction + state.structures.commandGrounds;
+}
+
+function resolveRaid(state) {
+  const defense = defenseValue(state);
   const pressure = Math.ceil(state.threat / 3);
 
   if (defense >= pressure) {
-    state.traps = Math.max(0, state.traps - 1);
-    state.food += 2;
-    addLog('Shapes break on the traps. The camp holds.');
+    state.structures.traps = Math.max(0, state.structures.traps - 1);
+    state.resources.food += 2;
+    writeLog(state, 'Shapes break on the traps. The camp holds.');
   } else {
-    const loss = Math.min(state.wood, pressure - defense + 2);
-    state.wood -= loss;
-    state.ember = Math.max(0, state.ember - 2);
-    addLog(`A raid cuts through the dark. Lost ${loss} wood.`);
+    const loss = Math.min(state.resources.wood, pressure - defense + 2);
+    state.resources.wood -= loss;
+    state.resources.ember = Math.max(0, state.resources.ember - 2);
+    writeLog(state, `A raid cuts through the dark. Lost ${loss} wood.`);
   }
 
   state.threat = Math.floor(state.threat / 3);
 }
 
-function phase() {
-  if (!state.unlocked.fire) return 'Dark room';
-  if (!state.unlocked.command) return 'Camp survival';
-  if (!state.commandGrounds) return 'Border command';
+function defenseValue(state) {
+  return state.structures.traps * 2 + state.units.sentries * 3 + state.structures.commandGrounds * 5;
+}
+
+function raidThreshold(state) {
+  return 12 + state.units.sentries * 5;
+}
+
+function totalWorkers(state) {
+  return state.units.scouts + state.units.foragers + state.units.sentries;
+}
+
+function workerCap(state) {
+  return 2 + state.structures.huts * 2 + state.structures.commandGrounds * 4;
+}
+
+function phase(state) {
+  if (!state.flags.fire) return 'Dark room';
+  if (!state.flags.command) return 'Camp survival';
+  if (!state.structures.commandGrounds) return 'Border command';
   return 'Abstract RTS';
 }
 
-function stat(label, value, danger = false) {
-  return `<div class="stat${danger ? ' danger' : ''}"><span>${label}</span><strong>${value}</strong></div>`;
+function writeLog(state, line) {
+  state.log.unshift(line);
+  state.log = state.log.slice(0, MAX_LOG_LINES);
 }
 
-function renderStats() {
-  document.querySelector('#stores').innerHTML = [
-    stat('ember', state.ember),
-    stat('wood', state.wood),
-    stat('food', state.food),
-    stat('threat', state.threat, true)
-  ].join('');
-
-  document.querySelector('#camp').innerHTML = [
-    stat('workers', `${workers()} / ${workerCap()}`),
-    stat('scouts', state.scouts),
-    stat('foragers', state.foragers),
-    stat('sentries', state.sentries),
-    stat('traps', state.traps),
-    stat('huts', state.huts),
-    stat('command grounds', state.commandGrounds)
-  ].join('');
-}
-
-function renderOrders() {
-  const orderBox = document.querySelector('#orders');
-  orderBox.innerHTML = '';
-
-  actions.filter(action => action.show()).forEach(action => {
-    const button = document.createElement('button');
-    const enabled = action.enabled ? action.enabled() : true;
-    button.disabled = !enabled;
-    button.innerHTML = `<span>${action.label}</span><small>${action.detail}</small>`;
-    button.addEventListener('click', () => {
-      action.run();
-      render();
-    });
-    orderBox.appendChild(button);
+function clampGame(state) {
+  Object.keys(state.resources).forEach(key => {
+    state.resources[key] = Math.max(0, Math.floor(state.resources[key]));
   });
-
-  const timeButton = document.createElement('button');
-  timeButton.className = 'primary';
-  timeButton.innerHTML = '<span>let time pass</span><small>production + raids</small>';
-  timeButton.addEventListener('click', passTime);
-  orderBox.appendChild(timeButton);
-}
-
-function renderLog() {
-  document.querySelector('#log').innerHTML = state.log.map(line => `<p>${line}</p>`).join('');
+  state.threat = Math.max(0, Math.floor(state.threat));
 }
 
 function render() {
-  document.querySelector('#headline').textContent = state.unlocked.fire ? 'The fire is roaring.' : 'The room is dark.';
-  document.querySelector('#phase').textContent = phase();
-  renderStats();
+  dom.headline.textContent = game.flags.fire ? 'The fire is roaring.' : 'The room is dark.';
+  dom.phase.textContent = phase(game);
+
+  renderStats(dom.stores, [
+    ['ember', game.resources.ember],
+    ['wood', game.resources.wood],
+    ['food', game.resources.food],
+    ['threat', game.threat, true]
+  ]);
+
+  renderStats(dom.camp, [
+    ['workers', `${totalWorkers(game)} / ${workerCap(game)}`],
+    ['scouts', game.units.scouts],
+    ['foragers', game.units.foragers],
+    ['sentries', game.units.sentries],
+    ['traps', game.structures.traps],
+    ['huts', game.structures.huts],
+    ['command grounds', game.structures.commandGrounds]
+  ]);
+
   renderOrders();
   renderLog();
 }
+
+function renderStats(parent, stats) {
+  parent.replaceChildren();
+
+  stats.forEach(([label, value, danger]) => {
+    const row = document.createElement('div');
+    row.className = danger ? 'stat danger' : 'stat';
+
+    const name = document.createElement('span');
+    name.textContent = label;
+
+    const amount = document.createElement('strong');
+    amount.textContent = value;
+
+    row.append(name, amount);
+    parent.appendChild(row);
+  });
+}
+
+function renderOrders() {
+  dom.orders.replaceChildren();
+
+  COMMANDS.filter(command => command.visible(game)).forEach(command => {
+    const button = document.createElement('button');
+    button.dataset.command = command.id;
+    button.className = command.primary ? 'primary' : '';
+    button.disabled = !canRun(command, game);
+
+    const label = document.createElement('span');
+    label.textContent = command.label;
+
+    const detail = document.createElement('small');
+    detail.textContent = command.detail;
+
+    button.append(label, detail);
+    dom.orders.appendChild(button);
+  });
+}
+
+function renderLog() {
+  dom.log.replaceChildren();
+
+  game.log.forEach(line => {
+    const item = document.createElement('p');
+    item.textContent = line;
+    dom.log.appendChild(item);
+  });
+}
+
+dom.orders.addEventListener('click', event => {
+  const button = event.target.closest('button[data-command]');
+  if (!button) return;
+  runCommand(button.dataset.command);
+});
 
 render();
