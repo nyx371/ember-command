@@ -1,5 +1,5 @@
 const MAX_LOG_LINES = 9;
-const ICON_VERSION = '20260718-world1';
+const ICON_VERSION = '20260718-world2';
 const HARVEST_COOLDOWN = 4;
 
 installZoomGuards();
@@ -28,6 +28,7 @@ const ICONS = {
   attack: 'assets/icons/attack.png'
 };
 
+let idCounter = 0;
 const game = createGame();
 
 function createGame() {
@@ -55,7 +56,6 @@ function createWorker(job = 'idle') {
   return { id: nextId(), job, cooldown: job === 'idle' ? 0 : HARVEST_COOLDOWN };
 }
 
-let idCounter = 0;
 function nextId() {
   idCounter += 1;
   return idCounter;
