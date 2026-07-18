@@ -2,39 +2,39 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Ember Command</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <main class="shell">
-      <section class="hero panel">
-        <p class="eyebrow">EMBER COMMAND</p>
-        <h1 id="headline">The room is dark.</h1>
-        <p class="lede">A tiny abstract RTS: clicker survival grows into scouting, logistics, perimeter defense, and eventually command doctrine.</p>
-        <div class="phase" id="phase">Dark room</div>
+      <header class="topbar">
+        <div>
+          <p class="mark">EMBER COMMAND</p>
+          <h1 id="headline">DARK</h1>
+        </div>
+        <details class="menu">
+          <summary aria-label="menu">☰</summary>
+          <div class="menu-panel">
+            <strong id="phase">Dark room</strong>
+            <p>∴ ember · ╱ wood · ○ food · ∆ threat</p>
+            <p>⌖ scout · ∿ forage · † guard · ⌁ trap · ⌂ hut · ⌘ command</p>
+          </div>
+        </details>
+      </header>
+
+      <section class="stats" aria-label="stores and camp">
+        <div id="stores" class="stat-grid"></div>
+        <div id="camp" class="stat-grid"></div>
       </section>
 
-      <section class="grid">
-        <section class="panel resources">
-          <h2>Stores</h2>
-          <div id="stores"></div>
-        </section>
+      <section class="orders panel" aria-label="orders">
+        <div id="orders" class="order-grid"></div>
+      </section>
 
-        <section class="panel actions">
-          <h2>Orders</h2>
-          <div id="orders"></div>
-        </section>
-
-        <section class="panel forces">
-          <h2>Camp</h2>
-          <div id="camp"></div>
-        </section>
-
-        <section class="panel log">
-          <h2>Signs</h2>
-          <div id="log"></div>
-        </section>
+      <section class="log panel" aria-label="signs">
+        <div class="panel-title">SIGNS</div>
+        <div id="log" class="log-lines"></div>
       </section>
     </main>
 

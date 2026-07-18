@@ -10,11 +10,26 @@ const dom = {
   log: document.querySelector('#log')
 };
 
+const GLYPHS = {
+  ember: '∴',
+  wood: '╱',
+  food: '○',
+  threat: '∆',
+  workers: '◇',
+  scouts: '⌖',
+  foragers: '∿',
+  sentries: '†',
+  traps: '⌁',
+  huts: '⌂',
+  commandGrounds: '⌘'
+};
+
 const COMMANDS = [
   {
     id: 'spark',
+    glyph: '✶',
     label: 'strike a spark',
-    detail: '+1 ember',
+    detail: '+1∴',
     visible: s => !s.flags.fire,
     execute: s => {
       s.resources.ember += 1;
@@ -28,8 +43,9 @@ const COMMANDS = [
   },
   {
     id: 'gather-wood',
+    glyph: '╱',
     label: 'gather wood',
-    detail: '+2 wood',
+    detail: '+2╱',
     visible: s => s.flags.fire,
     execute: s => {
       s.resources.wood += 2;
@@ -39,8 +55,9 @@ const COMMANDS = [
   },
   {
     id: 'feed-fire',
+    glyph: '▲',
     label: 'feed the fire',
-    detail: '2 wood → +3 ember',
+    detail: '2╱→3∴',
     visible: s => s.flags.fire,
     enabled: s => s.resources.wood >= 2,
     execute: s => {
@@ -51,8 +68,9 @@ const COMMANDS = [
   },
   {
     id: 'forage',
+    glyph: '○',
     label: 'forage',
-    detail: '+1 food, +1 threat',
+    detail: '+1○ +1∆',
     visible: s => s.flags.gather,
     execute: s => {
       s.resources.food += 1;
@@ -62,8 +80,9 @@ const COMMANDS = [
   },
   {
     id: 'set-trap',
+    glyph: '⌁',
     label: 'set traps',
-    detail: '5 wood → +1 trap',
+    detail: '5╱→1⌁',
     visible: s => s.flags.gather,
     enabled: s => s.resources.wood >= 5,
     execute: s => {
@@ -75,8 +94,9 @@ const COMMANDS = [
   },
   {
     id: 'raise-hut',
+    glyph: '⌂',
     label: 'raise huts',
-    detail: '12 wood, 4 food → worker cap',
+    detail: '12╱ 4○',
     visible: s => s.structures.traps >= 1,
     enabled: s => s.resources.wood >= 12 && s.resources.food >= 4,
     execute: s => {
@@ -89,8 +109,9 @@ const COMMANDS = [
   },
   {
     id: 'train-scout',
+    glyph: '⌖',
     label: 'train scouts',
-    detail: '3 food → +1 scout',
+    detail: '3○→1⌖',
     visible: s => s.flags.scout,
     enabled: s => s.resources.food >= 3 && totalWorkers(s) < workerCap(s),
     execute: s => {
@@ -102,8 +123,9 @@ const COMMANDS = [
   },
   {
     id: 'assign-forager',
+    glyph: '∿',
     label: 'assign foragers',
-    detail: '4 food → passive supplies',
+    detail: '4○→1∿',
     visible: s => s.flags.scout,
     enabled: s => s.resources.food >= 4 && totalWorkers(s) < workerCap(s),
     execute: s => {
@@ -114,8 +136,9 @@ const COMMANDS = [
   },
   {
     id: 'post-sentry',
+    glyph: '†',
     label: 'post sentries',
-    detail: '5 food, 3 ember → defense',
+    detail: '5○ 3∴',
     visible: s => s.flags.command,
     enabled: s => s.resources.food >= 5 && s.resources.ember >= 3 && totalWorkers(s) < workerCap(s),
     execute: s => {
@@ -127,8 +150,9 @@ const COMMANDS = [
   },
   {
     id: 'command-ground',
+    glyph: '⌘',
     label: 'mark command ground',
-    detail: '25 wood, 10 ember → RTS layer',
+    detail: '25╱ 10∴',
     visible: s => s.flags.command,
     enabled: s => s.resources.wood >= 25 && s.resources.ember >= 10,
     execute: s => {
@@ -140,8 +164,9 @@ const COMMANDS = [
   },
   {
     id: 'wait',
+    glyph: '›',
     label: 'let time pass',
-    detail: 'production + raids',
+    detail: 'turn',
     primary: true,
     visible: () => true,
     execute: runTurn
@@ -277,24 +302,24 @@ function clampGame(state) {
 }
 
 function render() {
-  dom.headline.textContent = game.flags.fire ? 'The fire is roaring.' : 'The room is dark.';
+  dom.headline.textContent = game.flags.fire ? 'FIRE' : 'DARK';
   dom.phase.textContent = phase(game);
 
   renderStats(dom.stores, [
-    ['ember', game.resources.ember],
-    ['wood', game.resources.wood],
-    ['food', game.resources.food],
-    ['threat', game.threat, true]
+    ['ember', GLYPHS.ember, game.resources.ember],
+    ['wood', GLYPHS.wood, game.resources.wood],
+    ['food', GLYPHS.food, game.resources.food],
+    ['threat', GLYPHS.threat, game.threat, true]
   ]);
 
   renderStats(dom.camp, [
-    ['workers', `${totalWorkers(game)} / ${workerCap(game)}`],
-    ['scouts', game.units.scouts],
-    ['foragers', game.units.foragers],
-    ['sentries', game.units.sentries],
-    ['traps', game.structures.traps],
-    ['huts', game.structures.huts],
-    ['command grounds', game.structures.commandGrounds]
+    ['workers', GLYPHS.workers, `${totalWorkers(game)}/${workerCap(game)}`],
+    ['scouts', GLYPHS.scouts, game.units.scouts],
+    ['foragers', GLYPHS.foragers, game.units.foragers],
+    ['sentries', GLYPHS.sentries, game.units.sentries],
+    ['traps', GLYPHS.traps, game.structures.traps],
+    ['huts', GLYPHS.huts, game.structures.huts],
+    ['command grounds', GLYPHS.commandGrounds, game.structures.commandGrounds]
   ]);
 
   renderOrders();
@@ -304,17 +329,20 @@ function render() {
 function renderStats(parent, stats) {
   parent.replaceChildren();
 
-  stats.forEach(([label, value, danger]) => {
+  stats.forEach(([label, glyph, value, danger]) => {
     const row = document.createElement('div');
     row.className = danger ? 'stat danger' : 'stat';
+    row.title = label;
+    row.setAttribute('aria-label', `${label}: ${value}`);
 
-    const name = document.createElement('span');
-    name.textContent = label;
+    const mark = document.createElement('span');
+    mark.className = 'glyph';
+    mark.textContent = glyph;
 
     const amount = document.createElement('strong');
     amount.textContent = value;
 
-    row.append(name, amount);
+    row.append(mark, amount);
     parent.appendChild(row);
   });
 }
@@ -328,13 +356,17 @@ function renderOrders() {
     button.className = command.primary ? 'primary' : '';
     button.disabled = !canRun(command, game);
 
-    const label = document.createElement('span');
-    label.textContent = command.label;
+    button.title = command.label;
+    button.setAttribute('aria-label', command.label);
+
+    const glyph = document.createElement('span');
+    glyph.className = 'glyph';
+    glyph.textContent = command.glyph;
 
     const detail = document.createElement('small');
     detail.textContent = command.detail;
 
-    button.append(label, detail);
+    button.append(glyph, detail);
     dom.orders.appendChild(button);
   });
 }
