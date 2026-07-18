@@ -1,5 +1,5 @@
 const MAX_LOG_LINES = 9;
-const ICON_VERSION = '20260719-cooldowns1';
+const ICON_VERSION = '20260719-minimal1';
 const HARVEST_COOLDOWN = 4;
 const TICK_MS = 1000;
 
