@@ -1,5 +1,7 @@
 const MAX_LOG_LINES = 8;
 
+installZoomGuards();
+
 const game = createGame();
 const dom = {
   headline: document.querySelector('#headline'),
@@ -11,165 +13,142 @@ const dom = {
 };
 
 const GLYPHS = {
-  ember: '∴',
-  wood: '╱',
-  food: '○',
-  threat: '∆',
-  workers: '◇',
-  scouts: '⌖',
-  foragers: '∿',
-  sentries: '†',
-  traps: '⌁',
-  huts: '⌂',
-  commandGrounds: '⌘'
+  gold: '◈',
+  lumber: '▥',
+  oil: '≈',
+  supply: '□',
+  workers: '♙',
+  soldiers: '♜',
+  archers: '⋀',
+  hall: '⌂',
+  farms: '□',
+  barracks: '⌘',
+  enemy: '∆'
 };
 
 const COMMANDS = [
   {
-    id: 'spark',
-    glyph: '✶',
-    label: 'strike a spark',
-    detail: '+1∴',
-    visible: s => !s.flags.fire,
-    execute: s => {
-      s.resources.ember += 1;
-      if (s.resources.ember >= 3) {
-        s.flags.fire = true;
-        writeLog(s, 'The ember catches. The fire is alive.');
-      } else {
-        writeLog(s, 'A spark jumps, then shivers.');
-      }
-    }
-  },
-  {
-    id: 'gather-wood',
-    glyph: '╱',
-    label: 'gather wood',
-    detail: '+2╱',
-    visible: s => s.flags.fire,
-    execute: s => {
-      s.resources.wood += 2;
-      s.flags.gather = true;
-      writeLog(s, 'You drag branches from the black edge of the camp.');
-    }
-  },
-  {
-    id: 'feed-fire',
-    glyph: '▲',
-    label: 'feed the fire',
-    detail: '2╱→3∴',
-    visible: s => s.flags.fire,
-    enabled: s => s.resources.wood >= 2,
-    execute: s => {
-      s.resources.wood -= 2;
-      s.resources.ember += 3;
-      writeLog(s, 'The fire climbs higher. Shadows retreat.');
-    }
-  },
-  {
-    id: 'forage',
-    glyph: '○',
-    label: 'forage',
-    detail: '+1○ +1∆',
-    visible: s => s.flags.gather,
-    execute: s => {
-      s.resources.food += 1;
-      s.threat += 1;
-      writeLog(s, 'Tracks cross your path. You return with roots.');
-    }
-  },
-  {
-    id: 'set-trap',
-    glyph: '⌁',
-    label: 'set traps',
-    detail: '5╱→1⌁',
-    visible: s => s.flags.gather,
-    enabled: s => s.resources.wood >= 5,
-    execute: s => {
-      s.resources.wood -= 5;
-      s.structures.traps += 1;
-      s.flags.trap = true;
-      writeLog(s, 'A snare waits under leaves.');
-    }
-  },
-  {
-    id: 'raise-hut',
-    glyph: '⌂',
-    label: 'raise huts',
-    detail: '12╱ 4○',
-    visible: s => s.structures.traps >= 1,
-    enabled: s => s.resources.wood >= 12 && s.resources.food >= 4,
-    execute: s => {
-      s.resources.wood -= 12;
-      s.resources.food -= 4;
-      s.structures.huts += 1;
-      s.flags.scout = true;
-      writeLog(s, 'Smoke curls from a new shelter.');
-    }
-  },
-  {
-    id: 'train-scout',
-    glyph: '⌖',
-    label: 'train scouts',
-    detail: '3○→1⌖',
-    visible: s => s.flags.scout,
-    enabled: s => s.resources.food >= 3 && totalWorkers(s) < workerCap(s),
-    execute: s => {
-      s.resources.food -= 3;
-      s.units.scouts += 1;
-      s.flags.command = true;
-      writeLog(s, 'A scout learns the paths between trees.');
-    }
-  },
-  {
-    id: 'assign-forager',
-    glyph: '∿',
-    label: 'assign foragers',
-    detail: '4○→1∿',
-    visible: s => s.flags.scout,
-    enabled: s => s.resources.food >= 4 && totalWorkers(s) < workerCap(s),
-    execute: s => {
-      s.resources.food -= 4;
-      s.units.foragers += 1;
-      writeLog(s, 'A quiet worker starts ranging for supplies.');
-    }
-  },
-  {
-    id: 'post-sentry',
-    glyph: '†',
-    label: 'post sentries',
-    detail: '5○ 3∴',
-    visible: s => s.flags.command,
-    enabled: s => s.resources.food >= 5 && s.resources.ember >= 3 && totalWorkers(s) < workerCap(s),
-    execute: s => {
-      s.resources.food -= 5;
-      s.resources.ember -= 3;
-      s.units.sentries += 1;
-      writeLog(s, 'A spear point glints at the perimeter.');
-    }
-  },
-  {
-    id: 'command-ground',
-    glyph: '⌘',
-    label: 'mark command ground',
-    detail: '25╱ 10∴',
-    visible: s => s.flags.command,
-    enabled: s => s.resources.wood >= 25 && s.resources.ember >= 10,
-    execute: s => {
-      s.resources.wood -= 25;
-      s.resources.ember -= 10;
-      s.structures.commandGrounds += 1;
-      writeLog(s, 'Orders become doctrine. The camp is now a front.');
-    }
-  },
-  {
     id: 'wait',
     glyph: '›',
-    label: 'let time pass',
+    label: 'end turn',
     detail: 'turn',
     primary: true,
     visible: () => true,
     execute: runTurn
+  },
+  {
+    id: 'mine-gold',
+    glyph: '◈',
+    label: 'mine gold',
+    detail: '+8◈',
+    visible: () => true,
+    execute: s => {
+      s.resources.gold += 8;
+      writeLog(s, 'Gold gathered.');
+    }
+  },
+  {
+    id: 'cut-lumber',
+    glyph: '▥',
+    label: 'cut lumber',
+    detail: '+6▥',
+    visible: () => true,
+    execute: s => {
+      s.resources.lumber += 6;
+      writeLog(s, 'Lumber stacked.');
+    }
+  },
+  {
+    id: 'pump-oil',
+    glyph: '≈',
+    label: 'pump oil',
+    detail: '+3≈',
+    visible: s => s.structures.barracks > 0,
+    execute: s => {
+      s.resources.oil += 3;
+      s.enemy += 1;
+      writeLog(s, 'Oil drawn from black water.');
+    }
+  },
+  {
+    id: 'train-worker',
+    glyph: '♙',
+    label: 'train worker',
+    detail: '25◈ 1□',
+    visible: () => true,
+    enabled: s => s.resources.gold >= 25 && supplyUsed(s) < supplyCap(s),
+    execute: s => {
+      s.resources.gold -= 25;
+      s.units.workers += 1;
+      writeLog(s, 'Worker ready.');
+    }
+  },
+  {
+    id: 'build-farm',
+    glyph: '□',
+    label: 'build farm',
+    detail: '25▥ +4□',
+    visible: () => true,
+    enabled: s => s.resources.lumber >= 25,
+    execute: s => {
+      s.resources.lumber -= 25;
+      s.structures.farms += 1;
+      writeLog(s, 'Farm raised.');
+    }
+  },
+  {
+    id: 'build-barracks',
+    glyph: '⌘',
+    label: 'build barracks',
+    detail: '80◈ 60▥',
+    visible: s => s.structures.farms > 0,
+    enabled: s => s.resources.gold >= 80 && s.resources.lumber >= 60,
+    execute: s => {
+      s.resources.gold -= 80;
+      s.resources.lumber -= 60;
+      s.structures.barracks += 1;
+      writeLog(s, 'Barracks complete.');
+    }
+  },
+  {
+    id: 'train-soldier',
+    glyph: '♜',
+    label: 'train soldier',
+    detail: '45◈ 2□',
+    visible: s => s.structures.barracks > 0,
+    enabled: s => s.resources.gold >= 45 && supplyUsed(s) + 2 <= supplyCap(s),
+    execute: s => {
+      s.resources.gold -= 45;
+      s.units.soldiers += 1;
+      writeLog(s, 'Soldier armed.');
+    }
+  },
+  {
+    id: 'train-archer',
+    glyph: '⋀',
+    label: 'train archer',
+    detail: '35◈ 20▥ 2□',
+    visible: s => s.structures.barracks > 0,
+    enabled: s => s.resources.gold >= 35 && s.resources.lumber >= 20 && supplyUsed(s) + 2 <= supplyCap(s),
+    execute: s => {
+      s.resources.gold -= 35;
+      s.resources.lumber -= 20;
+      s.units.archers += 1;
+      writeLog(s, 'Archer posted.');
+    }
+  },
+  {
+    id: 'strike',
+    glyph: '×',
+    label: 'strike enemy',
+    detail: 'vs ∆',
+    visible: s => armyPower(s) > 0,
+    enabled: s => armyPower(s) > 0,
+    execute: s => {
+      const hit = armyPower(s);
+      s.enemy = Math.max(0, s.enemy - hit);
+      writeLog(s, `Strike lands: ${hit}.`);
+    }
   }
 ];
 
@@ -177,31 +156,24 @@ function createGame() {
   return {
     turn: 0,
     resources: {
-      ember: 0,
-      wood: 0,
-      food: 0
+      gold: 80,
+      lumber: 40,
+      oil: 0
     },
     units: {
-      scouts: 0,
-      foragers: 0,
-      sentries: 0
+      workers: 2,
+      soldiers: 0,
+      archers: 0
     },
     structures: {
-      traps: 0,
-      huts: 0,
-      commandGrounds: 0
+      hall: 1,
+      farms: 1,
+      barracks: 0
     },
-    threat: 0,
-    flags: {
-      fire: false,
-      gather: false,
-      trap: false,
-      scout: false,
-      command: false
-    },
+    enemy: 4,
     log: [
-      'The room is dark.',
-      'Something waits beyond the tree line.'
+      'Hall online.',
+      'Enemy camp sighted.'
     ]
   };
 }
@@ -224,69 +196,67 @@ function runCommand(id) {
 
 function runTurn(state) {
   state.turn += 1;
-  produceResources(state);
-  increaseThreat(state);
-
-  if (state.threat >= raidThreshold(state)) {
-    resolveRaid(state);
-  } else {
-    writeLog(state, 'Time passes. The fire listens.');
-  }
+  harvest(state);
+  enemyTurn(state);
 }
 
-function produceResources(state) {
-  if (state.flags.fire) {
-    state.resources.ember += 1 + state.structures.commandGrounds;
+function harvest(state) {
+  const workers = state.units.workers;
+  state.resources.gold += workers * 4;
+  state.resources.lumber += workers * 2;
+
+  if (state.structures.barracks > 0) {
+    state.resources.oil += state.structures.barracks;
   }
 
-  state.resources.wood += state.units.foragers;
-  state.resources.food += Math.max(0, state.units.foragers - Math.floor(state.threat / 10));
+  writeLog(state, `Turn ${state.turn}: +${workers * 4} gold, +${workers * 2} lumber.`);
 }
 
-function increaseThreat(state) {
-  const scoutReduction = state.units.scouts > 0 ? 1 : 0;
-  state.threat += 2 - scoutReduction + state.structures.commandGrounds;
-}
+function enemyTurn(state) {
+  state.enemy += 1 + Math.floor(state.turn / 5);
 
-function resolveRaid(state) {
-  const defense = defenseValue(state);
-  const pressure = Math.ceil(state.threat / 3);
+  if (state.enemy < raidThreshold(state)) return;
 
-  if (defense >= pressure) {
-    state.structures.traps = Math.max(0, state.structures.traps - 1);
-    state.resources.food += 2;
-    writeLog(state, 'Shapes break on the traps. The camp holds.');
-  } else {
-    const loss = Math.min(state.resources.wood, pressure - defense + 2);
-    state.resources.wood -= loss;
-    state.resources.ember = Math.max(0, state.resources.ember - 2);
-    writeLog(state, `A raid cuts through the dark. Lost ${loss} wood.`);
+  const attack = state.enemy;
+  const defense = defensePower(state);
+
+  if (defense >= attack) {
+    state.enemy = Math.floor(state.enemy / 2);
+    writeLog(state, 'Raid broken.');
+    return;
   }
 
-  state.threat = Math.floor(state.threat / 3);
+  const loss = Math.min(state.resources.gold, (attack - defense) * 3);
+  state.resources.gold -= loss;
+  if (state.units.workers > 1 && attack - defense > 3) state.units.workers -= 1;
+  state.enemy = Math.floor(state.enemy / 3);
+  writeLog(state, `Raid hits. Lost ${loss} gold.`);
 }
 
-function defenseValue(state) {
-  return state.structures.traps * 2 + state.units.sentries * 3 + state.structures.commandGrounds * 5;
+function supplyUsed(state) {
+  return state.units.workers + state.units.soldiers * 2 + state.units.archers * 2;
+}
+
+function supplyCap(state) {
+  return 4 + state.structures.farms * 4 + state.structures.hall * 4;
+}
+
+function armyPower(state) {
+  return state.units.soldiers * 3 + state.units.archers * 2;
+}
+
+function defensePower(state) {
+  return armyPower(state) + state.units.workers + state.structures.barracks * 2;
 }
 
 function raidThreshold(state) {
-  return 12 + state.units.sentries * 5;
-}
-
-function totalWorkers(state) {
-  return state.units.scouts + state.units.foragers + state.units.sentries;
-}
-
-function workerCap(state) {
-  return 2 + state.structures.huts * 2 + state.structures.commandGrounds * 4;
+  return 9 + state.units.soldiers * 2 + state.units.archers;
 }
 
 function phase(state) {
-  if (!state.flags.fire) return 'Dark room';
-  if (!state.flags.command) return 'Camp survival';
-  if (!state.structures.commandGrounds) return 'Border command';
-  return 'Abstract RTS';
+  if (state.structures.barracks < 1) return 'economy';
+  if (armyPower(state) < 5) return 'mustering';
+  return 'war front';
 }
 
 function writeLog(state, line) {
@@ -298,28 +268,28 @@ function clampGame(state) {
   Object.keys(state.resources).forEach(key => {
     state.resources[key] = Math.max(0, Math.floor(state.resources[key]));
   });
-  state.threat = Math.max(0, Math.floor(state.threat));
+  state.enemy = Math.max(0, Math.floor(state.enemy));
 }
 
 function render() {
-  dom.headline.textContent = game.flags.fire ? 'FIRE' : 'DARK';
+  dom.headline.textContent = 'WAR';
   dom.phase.textContent = phase(game);
 
   renderStats(dom.stores, [
-    ['ember', GLYPHS.ember, game.resources.ember],
-    ['wood', GLYPHS.wood, game.resources.wood],
-    ['food', GLYPHS.food, game.resources.food],
-    ['threat', GLYPHS.threat, game.threat, true]
+    ['gold', GLYPHS.gold, game.resources.gold],
+    ['lumber', GLYPHS.lumber, game.resources.lumber],
+    ['oil', GLYPHS.oil, game.resources.oil],
+    ['supply', GLYPHS.supply, `${supplyUsed(game)}/${supplyCap(game)}`]
   ]);
 
   renderStats(dom.camp, [
-    ['workers', GLYPHS.workers, `${totalWorkers(game)}/${workerCap(game)}`],
-    ['scouts', GLYPHS.scouts, game.units.scouts],
-    ['foragers', GLYPHS.foragers, game.units.foragers],
-    ['sentries', GLYPHS.sentries, game.units.sentries],
-    ['traps', GLYPHS.traps, game.structures.traps],
-    ['huts', GLYPHS.huts, game.structures.huts],
-    ['command grounds', GLYPHS.commandGrounds, game.structures.commandGrounds]
+    ['workers', GLYPHS.workers, game.units.workers],
+    ['soldiers', GLYPHS.soldiers, game.units.soldiers],
+    ['archers', GLYPHS.archers, game.units.archers],
+    ['hall', GLYPHS.hall, game.structures.hall],
+    ['farms', GLYPHS.farms, game.structures.farms],
+    ['barracks', GLYPHS.barracks, game.structures.barracks],
+    ['enemy', GLYPHS.enemy, game.enemy, true]
   ]);
 
   renderOrders();
@@ -355,7 +325,6 @@ function renderOrders() {
     button.dataset.command = command.id;
     button.className = command.primary ? 'primary' : '';
     button.disabled = !canRun(command, game);
-
     button.title = command.label;
     button.setAttribute('aria-label', command.label);
 
@@ -379,6 +348,20 @@ function renderLog() {
     item.textContent = line;
     dom.log.appendChild(item);
   });
+}
+
+function installZoomGuards() {
+  let lastTouchEnd = 0;
+
+  document.addEventListener('gesturestart', event => event.preventDefault(), { passive: false });
+  document.addEventListener('gesturechange', event => event.preventDefault(), { passive: false });
+  document.addEventListener('gestureend', event => event.preventDefault(), { passive: false });
+
+  document.addEventListener('touchend', event => {
+    const now = Date.now();
+    if (now - lastTouchEnd <= 320) event.preventDefault();
+    lastTouchEnd = now;
+  }, { passive: false });
 }
 
 dom.orders.addEventListener('click', event => {

@@ -17,7 +17,8 @@ python3 -m http.server 5173
 - Plain static site: no React, no build step, GitHub Pages native.
 - Warcraft 2 mindset: simple data structures, explicit systems, one render pass.
 - Phone-first HUD: iPhone 15 Pro viewport, no body scroll; only the log scrolls.
+- Mobile zoom guarded with viewport scaling limits plus touch/gesture prevention.
+- Cache-bust `styles.css` and `app.js` query strings on every push.
 - Dark, flat styling with a tiny palette; no gradients.
 - UTF-8 symbols for the main interface, with text kept mostly in log/menu/accessibility.
-- Clicker pacing at first; strategic production and defense later.
-- Camp survival expands into scouting, logistics, perimeter defense, then army/front management.
+- Warcraft 2-style loop: gold/lumber/oil, workers/soldiers/archers, hall/farms/barracks.
