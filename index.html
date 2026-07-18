@@ -4,9 +4,40 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Ember Command</title>
+    <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
+    <main class="shell">
+      <section class="hero panel">
+        <p class="eyebrow">EMBER COMMAND</p>
+        <h1 id="headline">The room is dark.</h1>
+        <p class="lede">A tiny abstract RTS: clicker survival grows into scouting, logistics, perimeter defense, and eventually command doctrine.</p>
+        <div class="phase" id="phase">Dark room</div>
+      </section>
+
+      <section class="grid">
+        <section class="panel resources">
+          <h2>Stores</h2>
+          <div id="stores"></div>
+        </section>
+
+        <section class="panel actions">
+          <h2>Orders</h2>
+          <div id="orders"></div>
+        </section>
+
+        <section class="panel forces">
+          <h2>Camp</h2>
+          <div id="camp"></div>
+        </section>
+
+        <section class="panel log">
+          <h2>Signs</h2>
+          <div id="log"></div>
+        </section>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
   </body>
 </html>
