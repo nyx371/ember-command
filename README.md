@@ -20,5 +20,5 @@ python3 -m http.server 5173
 - Mobile zoom guarded with viewport scaling limits plus touch/gesture prevention.
 - Cache-bust `styles.css` and `app.js` query strings on every push.
 - Dark, flat styling with a tiny palette; no gradients.
-- UTF-8 symbols for the main interface, with text kept mostly in log/menu/accessibility.
+- Warcraft 2 sprite sheet icons from `assets/war2-sheet.png` for the main interface.
 - Warcraft 2-style loop: gold/lumber/oil, workers/soldiers/archers, hall/farms/barracks.

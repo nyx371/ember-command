@@ -135,10 +135,15 @@ h1 {
   padding: 6px 4px;
 }
 
-.stat .glyph {
-  color: var(--accent);
-  font-size: 18px;
-  line-height: 1;
+.sprite {
+  width: 28px;
+  height: 28px;
+  display: block;
+  image-rendering: pixelated;
+  background-image: url("assets/war2-sheet.png?v=20260718-sprites1");
+  background-size: 1000% 1800%;
+  background-position: calc(var(--sx) * 100% / 9) calc(var(--sy) * 100% / 17);
+  background-repeat: no-repeat;
 }
 
 .stat strong {
@@ -148,8 +153,8 @@ h1 {
   font-weight: 700;
 }
 
-.stat.danger .glyph,
 .stat.danger strong { color: var(--danger); }
+.stat.danger .sprite { filter: sepia(1) saturate(1.2) hue-rotate(315deg); }
 
 .orders { padding: 8px; min-height: 0; }
 .order-grid {
@@ -179,7 +184,7 @@ h1 {
 .order-grid button:active:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .order-grid button:disabled { opacity: 0.3; cursor: not-allowed; }
 .order-grid button.primary { border-color: var(--accent); color: var(--accent); }
-.order-grid .glyph { font-size: 21px; line-height: 1; }
+.order-grid .sprite { width: 30px; height: 30px; }
 .order-grid small { color: var(--muted); font-size: 9px; line-height: 1; white-space: nowrap; }
 .order-grid button.primary small { color: var(--accent); }
 
@@ -224,11 +229,11 @@ h1 {
   .shell { grid-template-rows: 48px 136px minmax(142px, 1fr) 104px; gap: 6px; padding-left: 6px; padding-right: 6px; }
   .topbar { padding: 6px 8px; }
   h1 { font-size: 19px; }
-  .stat .glyph { font-size: 16px; }
+  .sprite { width: 24px; height: 24px; }
   .stat strong { font-size: 16px; }
   .orders { padding: 6px; }
   .order-grid { gap: 5px; grid-auto-rows: minmax(42px, 1fr); }
-  .order-grid .glyph { font-size: 18px; }
+  .order-grid .sprite { width: 26px; height: 26px; }
   .order-grid small { font-size: 8px; }
   .log-lines p { font-size: 10px; padding: 4px 0; }
 }

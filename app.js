@@ -12,24 +12,26 @@ const dom = {
   log: document.querySelector('#log')
 };
 
-const GLYPHS = {
-  gold: '◈',
-  lumber: '▥',
-  oil: '≈',
-  supply: '□',
-  workers: '♙',
-  soldiers: '♜',
-  archers: '⋀',
-  hall: '⌂',
-  farms: '□',
-  barracks: '⌘',
-  enemy: '∆'
+const ICONS = {
+  gold: [6, 13],
+  lumber: [8, 13],
+  oil: [8, 15],
+  supply: [4, 13],
+  workers: [0, 0],
+  soldiers: [2, 0],
+  archers: [4, 3],
+  hall: [0, 4],
+  farms: [1, 4],
+  barracks: [2, 4],
+  enemy: [3, 8],
+  wait: [6, 17],
+  attack: [3, 8]
 };
 
 const COMMANDS = [
   {
     id: 'wait',
-    glyph: '›',
+    icon: 'wait',
     label: 'end turn',
     detail: 'turn',
     primary: true,
@@ -38,7 +40,7 @@ const COMMANDS = [
   },
   {
     id: 'mine-gold',
-    glyph: '◈',
+    icon: 'gold',
     label: 'mine gold',
     detail: '+8◈',
     visible: () => true,
@@ -49,7 +51,7 @@ const COMMANDS = [
   },
   {
     id: 'cut-lumber',
-    glyph: '▥',
+    icon: 'lumber',
     label: 'cut lumber',
     detail: '+6▥',
     visible: () => true,
@@ -60,7 +62,7 @@ const COMMANDS = [
   },
   {
     id: 'pump-oil',
-    glyph: '≈',
+    icon: 'oil',
     label: 'pump oil',
     detail: '+3≈',
     visible: s => s.structures.barracks > 0,
@@ -72,7 +74,7 @@ const COMMANDS = [
   },
   {
     id: 'train-worker',
-    glyph: '♙',
+    icon: 'workers',
     label: 'train worker',
     detail: '25◈ 1□',
     visible: () => true,
@@ -85,7 +87,7 @@ const COMMANDS = [
   },
   {
     id: 'build-farm',
-    glyph: '□',
+    icon: 'farms',
     label: 'build farm',
     detail: '25▥ +4□',
     visible: () => true,
@@ -98,7 +100,7 @@ const COMMANDS = [
   },
   {
     id: 'build-barracks',
-    glyph: '⌘',
+    icon: 'barracks',
     label: 'build barracks',
     detail: '80◈ 60▥',
     visible: s => s.structures.farms > 0,
@@ -112,7 +114,7 @@ const COMMANDS = [
   },
   {
     id: 'train-soldier',
-    glyph: '♜',
+    icon: 'soldiers',
     label: 'train soldier',
     detail: '45◈ 2□',
     visible: s => s.structures.barracks > 0,
@@ -125,7 +127,7 @@ const COMMANDS = [
   },
   {
     id: 'train-archer',
-    glyph: '⋀',
+    icon: 'archers',
     label: 'train archer',
     detail: '35◈ 20▥ 2□',
     visible: s => s.structures.barracks > 0,
@@ -139,7 +141,7 @@ const COMMANDS = [
   },
   {
     id: 'strike',
-    glyph: '×',
+    icon: 'attack',
     label: 'strike enemy',
     detail: 'vs ∆',
     visible: s => armyPower(s) > 0,
@@ -276,24 +278,32 @@ function render() {
   dom.phase.textContent = phase(game);
 
   renderStats(dom.stores, [
-    ['gold', GLYPHS.gold, game.resources.gold],
-    ['lumber', GLYPHS.lumber, game.resources.lumber],
-    ['oil', GLYPHS.oil, game.resources.oil],
-    ['supply', GLYPHS.supply, `${supplyUsed(game)}/${supplyCap(game)}`]
+    ['gold', ICONS.gold, game.resources.gold],
+    ['lumber', ICONS.lumber, game.resources.lumber],
+    ['oil', ICONS.oil, game.resources.oil],
+    ['supply', ICONS.supply, `${supplyUsed(game)}/${supplyCap(game)}`]
   ]);
 
   renderStats(dom.camp, [
-    ['workers', GLYPHS.workers, game.units.workers],
-    ['soldiers', GLYPHS.soldiers, game.units.soldiers],
-    ['archers', GLYPHS.archers, game.units.archers],
-    ['hall', GLYPHS.hall, game.structures.hall],
-    ['farms', GLYPHS.farms, game.structures.farms],
-    ['barracks', GLYPHS.barracks, game.structures.barracks],
-    ['enemy', GLYPHS.enemy, game.enemy, true]
+    ['workers', ICONS.workers, game.units.workers],
+    ['soldiers', ICONS.soldiers, game.units.soldiers],
+    ['archers', ICONS.archers, game.units.archers],
+    ['hall', ICONS.hall, game.structures.hall],
+    ['farms', ICONS.farms, game.structures.farms],
+    ['barracks', ICONS.barracks, game.structures.barracks],
+    ['enemy', ICONS.enemy, game.enemy, true]
   ]);
 
   renderOrders();
   renderLog();
+}
+
+function makeSprite(icon) {
+  const sprite = document.createElement('span');
+  sprite.className = 'sprite';
+  sprite.style.setProperty('--sx', icon[0]);
+  sprite.style.setProperty('--sy', icon[1]);
+  return sprite;
 }
 
 function renderStats(parent, stats) {
@@ -305,9 +315,7 @@ function renderStats(parent, stats) {
     row.title = label;
     row.setAttribute('aria-label', `${label}: ${value}`);
 
-    const mark = document.createElement('span');
-    mark.className = 'glyph';
-    mark.textContent = glyph;
+    const mark = makeSprite(glyph);
 
     const amount = document.createElement('strong');
     amount.textContent = value;
@@ -328,9 +336,7 @@ function renderOrders() {
     button.title = command.label;
     button.setAttribute('aria-label', command.label);
 
-    const glyph = document.createElement('span');
-    glyph.className = 'glyph';
-    glyph.textContent = command.glyph;
+    const glyph = makeSprite(ICONS[command.icon]);
 
     const detail = document.createElement('small');
     detail.textContent = command.detail;
