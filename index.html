@@ -4,40 +4,32 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no, viewport-fit=cover" />
     <title>Ember Command</title>
-    <link rel="stylesheet" href="styles.css?v=20260718-wiki1" />
+    <link rel="stylesheet" href="styles.css?v=20260718-world1" />
   </head>
   <body>
     <main class="shell">
       <header class="topbar">
-        <div>
-          <p class="mark">EMBER COMMAND</p>
-          <h1 id="headline">WAR</h1>
-        </div>
+        <div class="resources" id="stores" aria-label="resources"></div>
         <details class="menu">
           <summary aria-label="menu">☰</summary>
           <div class="menu-panel">
             <strong id="phase">economy</strong>
-            <p>cut PNG icons from 10 × 18 sheet</p>
-            <p>gold · lumber · oil · supply · workers · army · structures · enemy</p>
+            <p>Tap a structure or unit in the world. Commands appear inside the field.</p>
+            <div id="log" class="menu-log"></div>
           </div>
         </details>
       </header>
 
-      <section class="stats" aria-label="resources and forces">
-        <div id="stores" class="stat-grid"></div>
-        <div id="camp" class="stat-grid"></div>
-      </section>
-
-      <section class="orders panel" aria-label="orders">
-        <div id="orders" class="order-grid"></div>
-      </section>
-
-      <section class="log panel" aria-label="log">
-        <div class="panel-title">LOG</div>
-        <div id="log" class="log-lines"></div>
+      <section class="world panel" aria-label="world">
+        <div class="world-head">
+          <span>EMBER COMMAND</span>
+          <strong id="selected-label">TOWN HALL</strong>
+        </div>
+        <div id="world" class="world-canvas"></div>
+        <div id="orders" class="command-bar" aria-label="commands"></div>
       </section>
     </main>
 
-    <script src="app.js?v=20260718-wiki1"></script>
+    <script src="app.js?v=20260718-world1"></script>
   </body>
 </html>

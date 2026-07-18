@@ -22,3 +22,5 @@ python3 -m http.server 5173
 - Dark, flat styling with a tiny palette; no gradients.
 - Warcraft 2 icons fetched from Warcraft Wiki/wikigg into separate PNGs under `assets/icons/`.
 - Warcraft 2-style loop: gold/lumber/oil, workers/soldiers/archers, hall/farms/barracks.
+- Resources live at the top; structures, units, workers, enemy, and commands live inside the central world canvas.
+- Workers are assigned to gold/lumber/idle and harvest automatically on a cooldown.
