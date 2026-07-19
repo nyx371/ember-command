@@ -186,7 +186,7 @@ button { touch-action: manipulation; }
   min-height: 0;
   padding: 5px;
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto 1fr auto auto;
   gap: 5px;
   overflow: hidden;
 }
@@ -198,6 +198,7 @@ button { touch-action: manipulation; }
 }
 .world-group.structures { grid-template-columns: repeat(4, 1fr); align-content: start; }
 .world-group.army { grid-template-columns: repeat(4, 1fr); align-content: end; }
+.world-group.enemies { grid-template-columns: repeat(4, 1fr); align-content: end; }
 
 /* Resource nodes + idle-worker tile: a single horizontally scrollable row so
    more nodes can be added without shrinking the tiles or wrapping. */

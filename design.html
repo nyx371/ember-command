@@ -98,7 +98,7 @@
 </table></div>
 
 <h2><img class="icon" src="assets/icons/h_unit_footman.png" alt="">Units &amp; Orders</h2>
-<p><span class="status done">done</span> — Units train with real WC2 times and costs; supply is reserved while queued. Army groups (not individuals) hold one of four standing orders.</p>
+<p><span class="status done">done</span> — Units train with real WC2 times and costs; supply is reserved while queued. The army renders as <strong>one tile per standing order</strong> on its own row (enemies get a separate row below); selecting an order group moves units to other orders one tap at a time, worker-style.</p>
 
 <div class="table-wrap"><table>
   <tr><th>Unit</th><th>Cost</th><th>Time</th><th>Role</th></tr>
@@ -116,7 +116,7 @@
 </table></div>
 
 <h2><img class="icon" src="assets/icons/o_unit_grunt.png" alt="">Threat &amp; Victory</h2>
-<p><span class="status done">done</span> — Raiding parties are real grunts with hp, damage, and an attack cooldown, shown as danger tiles at the bottom while active. They approach (patrol intercepts early), then exchange volleys: they target your warriors first, then the towers shooting at them, then workers, then raze the remaining buildings one by one (town hall last). Grunts get tougher and hit harder each day. Towers shoot back; the error toast raises the alarm. Reducing enemy base strength to zero via <code>Attack</code> logs victory.</p>
+<p><span class="status done">done</span> — Raiding parties are real grunts with hp, damage, and an attack cooldown, shown as danger tiles at the bottom while active. They approach (patrol intercepts early — "Enemies approach our base!"), then exchange volleys: they cut down your patrol first, then defenders, then the towers shooting at them, then workers, then raze the remaining buildings one by one (town hall last) — with the alarm "Our town is being razed!" once your warriors are gone. Scouts and the attack force are away from the base: safe from raids, but useless against them until called back. Grunts get tougher and hit harder each day. Towers shoot back; the error toast raises the alarm. Reducing enemy base strength to zero via <code>Attack</code> logs victory.</p>
 <div class="note"><strong>Global pace lever.</strong> All build/train/upgrade durations are the real WC2 seconds × <code>TIME_SCALE</code> (currently 0.3) — one constant to retune the whole game's tempo.</div>
 <div class="note"><strong>Open — real win/loss.</strong> Victory is only a log line and there is no loss condition yet. Candidates: destroy-the-base (classic), survive-to-day-N, economic victory. Related: what a win/loss does to a future save file.</div>
 

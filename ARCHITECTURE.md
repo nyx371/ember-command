@@ -39,10 +39,12 @@ timers: `gameTick` (1s, simulation + render) and `updateProgressRings`
 - `UNITS` — per trainable unit: `producer` (structure key), `cost`, `time`,
   optional `requires: [structureKey]`, `done(state)`. Generates train
   commands, auto-attached to their producer's command list.
-- `ARMY` — per standing-order group (`game.units` keys): `icon`, `label`,
-  `singular`, `hp`/`dmg` (raid combat; first listed group soaks damage first),
-  `attack` (siege dps vs the enemy base). Generates army tiles, order
-  commands, combat.
+- `ARMY` — per unit type: `icon`, `label`, `singular`, `hp`/`dmg` (raid
+  combat; first listed type soaks damage first within a pool), `attack`
+  (siege dps vs the enemy base). Units live in per-order pools:
+  `game.army[order] = { footmen, archers, wounds }` for each of `ORDERS`
+  (defend/patrol/explore/attack). Army tiles are one per ORDER; selecting one
+  offers move-one-unit commands to the other orders (`armyGroupCommands`).
 
 **Adding a building or unit = one table entry (+ `ICONS` line if a new
 sprite).** Times/costs are real WC2 values; every duration is multiplied by
@@ -54,11 +56,14 @@ arriveIn, strikeIn, targetType, targetHp }`). Grunt stats scale with the day
 (`RAIDER_HP_PER_DAY` / `RAIDER_DMG_PER_DAY`). `spawnRaid` on the raid
 interval (`game.raid.interval` feeds the countdown ring on the enemy tile);
 `raidTick` runs volleys every `VOLLEY_EVERY` ticks — patrol strikes during
-the approach, defend+patrol+towers after arrival. Raider targeting: warriors
-→ towers (`RAID_TOWER_TARGETS`) → workers (wounds pools: `units[k].wounds`,
-`game.workerWounds`) → remaining buildings per `RAID_TARGET_ORDER` (hall
-last). Alarms go through `flashError`. Cheat buttons can force a raid and
-spawn footmen.
+the approach, defend+patrol+towers after arrival. Raider targeting: patrol
+pool → defend pool → towers (`RAID_TOWER_TARGETS`) → workers → remaining
+buildings per `RAID_TARGET_ORDER` (hall last). Explore/attack pools are away
+from the base: they neither fight raids nor get targeted. Wounds pools:
+`army[order].wounds`, `game.workerWounds`. Alarms via `flashError`
+('Enemies approach our base!' on spawn, 'Our town is under attack!' on
+arrival, 'Our town is being razed!' once warriors are gone). Cheat buttons
+can force a raid and spawn footmen.
 
 ### Timed jobs (one system)
 `game.jobs` — every in-flight timed thing. Shared shape

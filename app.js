@@ -97,22 +97,26 @@ const UNITS = {
   },
   footman: {
     icon: 'footman', label: 'footman', producer: 'barracks', time: 60, cost: { gold: 600 },
-    done: s => { s.units.footmen.count += 1; writeLog(s, 'Footman ready.'); }
+    done: s => { s.army.defend.footmen += 1; writeLog(s, 'Footman ready.'); }
   },
   archer: {
     icon: 'archer', label: 'archer', producer: 'barracks', time: 70, cost: { gold: 500, lumber: 50 },
     requires: ['lumbermill'],
-    done: s => { s.units.archers.count += 1; writeLog(s, 'Archer ready.'); }
+    done: s => { s.army.defend.archers += 1; writeLog(s, 'Archer ready.'); }
   }
 };
 
-// Army groups (standing-order units). Keys are the `game.units` keys.
-// `hp`/`dmg` drive raid combat (listed first = raiders hit it first);
-// `attack` is siege dps against the enemy base.
+// Army unit types. `hp`/`dmg` drive raid combat (listed first = soaks damage
+// first within a pool); `attack` is siege dps against the enemy base. Units
+// live in per-order pools on `game.army` (see ORDERS).
 const ARMY = {
   footmen: { icon: 'footman', label: 'footmen', singular: 'footman', hp: 60, dmg: 7, attack: 0.10 },
   archers: { icon: 'archer',  label: 'archers', singular: 'archer',  hp: 40, dmg: 5, attack: 0.06 }
 };
+
+// Standing orders an army unit can hold. Units live in one pool per order and
+// are moved between pools one at a time (workers-row style).
+const ORDERS = ['defend', 'patrol', 'explore', 'attack'];
 
 const GUARD_TOWER = { cost: { gold: 500, lumber: 150 }, time: 140 };
 
@@ -166,7 +170,10 @@ function createGame() {
     buildMenu: false,
     workers: [],
     nodes: NODE_DEFS.map(d => ({ ...d, remaining: d.capacity })),
-    units: Object.fromEntries(Object.keys(ARMY).map(k => [k, { count: 0, order: 'defend', wounds: 0 }])),
+    // One pool per standing order; each holds counts per ARMY type plus a
+    // shared wounds pool for raid damage.
+    army: Object.fromEntries(ORDERS.map(o =>
+      [o, { ...Object.fromEntries(Object.keys(ARMY).map(k => [k, 0])), wounds: 0 }])),
     structures: Object.fromEntries(Object.keys(BUILDINGS).map(k => [k, k === 'hall' ? 1 : 0])),
     enemy: { strength: 20, known: false },
     exploreProgress: 0,
@@ -476,7 +483,7 @@ function advanceJobs(state) {
 
 function supplyUsed(state) {
   return state.workers.length
-       + Object.values(state.units).reduce((sum, u) => sum + u.count, 0);
+       + ORDERS.reduce((sum, o) => sum + poolCount(state.army[o]), 0);
 }
 
 function supplyCap(state) {
@@ -497,19 +504,27 @@ function clampGame(state) {
 
 // ── Army ───────────────────────────────────────────────────────────────────
 
+function poolCount(pool) {
+  return Object.keys(ARMY).reduce((n, k) => n + pool[k], 0);
+}
+
 function unitsOnOrder(state, order) {
-  return Object.keys(ARMY).reduce((n, k) =>
-    n + (state.units[k].order === order ? state.units[k].count : 0), 0);
+  return poolCount(state.army[order]);
 }
 
 function attackDamage(state) {
-  return Object.keys(ARMY).reduce((dmg, k) =>
-    dmg + (state.units[k].order === 'attack' ? state.units[k].count * ARMY[k].attack : 0), 0);
+  return Object.keys(ARMY).reduce((dmg, k) => dmg + state.army.attack[k] * ARMY[k].attack, 0);
 }
 
-function setOrder(state, unitType, order) {
-  state.units[unitType].order = order;
-  writeLog(state, `${cap(ARMY[unitType].label)}: ${order}.`);
+// Move one unit between order pools (footmen before archers, mirroring the
+// one-worker-per-tap convention).
+function moveUnit(state, from, to) {
+  const pool = state.army[from];
+  const type = Object.keys(ARMY).find(k => pool[k] > 0);
+  if (!type) return;
+  pool[type] -= 1;
+  state.army[to][type] += 1;
+  writeLog(state, `${cap(ARMY[type].singular)} → ${to}.`);
 }
 
 // ── Raid combat ────────────────────────────────────────────────────────────
@@ -518,32 +533,34 @@ function setOrder(state, unitType, order) {
 // buildings. Units on attack/explore are away from the base and neither fight
 // raiders nor get targeted.
 
-function homeGroups(state, orders) {
-  return Object.keys(ARMY).filter(k => orders.includes(state.units[k].order) && state.units[k].count > 0);
+// Damage my side deals per volley. Only defend and patrol pools fight raids —
+// scouts and the attack force are away from the base. During a raid's approach
+// only patrol intercepts; once it arrives, defend + patrol + towers all fight.
+function poolDamage(pool) {
+  return Object.keys(ARMY).reduce((sum, k) => sum + pool[k] * ARMY[k].dmg, 0);
 }
 
-// Damage my side deals per volley. During a raid's approach only patrol
-// intercepts; once it arrives, defend + patrol + towers all fight.
 function defenseDamage(state, arrived) {
-  const orders = arrived ? ['defend', 'patrol'] : ['patrol'];
-  const unitDmg = homeGroups(state, orders)
-    .reduce((sum, k) => sum + state.units[k].count * ARMY[k].dmg, 0);
+  const unitDmg = poolDamage(state.army.patrol) + (arrived ? poolDamage(state.army.defend) : 0);
   const towerDmg = arrived
     ? Object.keys(BUILDINGS).reduce((sum, k) => sum + (BUILDINGS[k].dmg || 0) * state.structures[k], 0)
     : 0;
   return unitDmg + towerDmg;
 }
 
-// Damage flows into a wounds pool; every full hp's worth kills one unit.
-function damageGroup(state, key, dmg) {
-  const group = state.units[key];
-  group.wounds += dmg;
-  while (group.wounds >= ARMY[key].hp && group.count > 0) {
-    group.wounds -= ARMY[key].hp;
-    group.count -= 1;
-    writeLog(state, `A ${ARMY[key].singular} has fallen.`);
+// Damage flows into the pool's wounds; every full hp's worth kills one unit
+// (footmen soak before archers).
+function damagePool(state, order, dmg) {
+  const pool = state.army[order];
+  pool.wounds += dmg;
+  let type = Object.keys(ARMY).find(k => pool[k] > 0);
+  while (type && pool.wounds >= ARMY[type].hp) {
+    pool.wounds -= ARMY[type].hp;
+    pool[type] -= 1;
+    writeLog(state, `A ${ARMY[type].singular} has fallen.`);
+    type = Object.keys(ARMY).find(k => pool[k] > 0);
   }
-  if (group.count === 0) group.wounds = 0;
+  if (!type) pool.wounds = 0;
 }
 
 function damageWorkers(state, dmg) {
@@ -591,7 +608,7 @@ function spawnRaid(state) {
     targetType: null, targetHp: 0
   });
   writeLog(state, `Day ${day + 1}: ${size} raiders approaching!`);
-  flashError('Raiders approaching!');
+  flashError('Enemies approach our base!');
 }
 
 function raidTick(state) {
@@ -613,16 +630,22 @@ function raidTick(state) {
       return;
     }
 
-    // Their volley: warriors, then the towers shooting at them, then workers,
-    // then everything else.
+    // Their volley: patrol first, then defenders; scouts and the attack force
+    // are away and untouchable. Out of warriors -> towers, workers, buildings.
     if (!arrived) return;
     const dmg = raid.size * raid.grunt.dmg;
-    const defenders = homeGroups(state, ['defend', 'patrol']);
     const towersStanding = RAID_TOWER_TARGETS.some(k => state.structures[k] > 0);
-    if (defenders.length > 0) damageGroup(state, defenders[0], dmg);
-    else if (towersStanding) damageBuildings(state, raid, dmg, RAID_TOWER_TARGETS);
-    else if (state.workers.length > 0) damageWorkers(state, dmg);
-    else damageBuildings(state, raid, dmg, RAID_TARGET_ORDER);
+    if (unitsOnOrder(state, 'patrol') > 0) damagePool(state, 'patrol', dmg);
+    else if (unitsOnOrder(state, 'defend') > 0) damagePool(state, 'defend', dmg);
+    else {
+      if (!raid.razing) {
+        raid.razing = true;
+        flashError('Our town is being razed!');
+      }
+      if (towersStanding) damageBuildings(state, raid, dmg, RAID_TOWER_TARGETS);
+      else if (state.workers.length > 0) damageWorkers(state, dmg);
+      else damageBuildings(state, raid, dmg, RAID_TARGET_ORDER);
+    }
   });
   state.raids = state.raids.filter(r => r.size > 0);
 }
@@ -719,27 +742,16 @@ function guardTowerCommand() {
   };
 }
 
-function makeOrderCommands(unitType) {
-  const orders = [
-    { order: 'defend',  icon: 'defend',  cost: 'hold base' },
-    { order: 'patrol',  icon: 'patrol',  cost: 'perimeter' },
-    { order: 'explore', icon: 'explore', cost: 'scout map' }
-  ];
-  return [
-    ...orders.map(({ order, icon, cost }) => ({
-      id: `${unitType}-${order}`, icon, label: order, cost,
-      enabled: s => s.units[unitType].count > 0,
-      isActive: s => s.units[unitType].order === order,
-      run: s => setOrder(s, unitType, order)
-    })),
-    {
-      id: `${unitType}-attack`, icon: 'attack', label: 'attack', cost: 'vs enemy',
-      enabled: s => s.units[unitType].count > 0 && s.enemy.known,
-      reason: s => !s.enemy.known ? 'Enemy not found — explore first' : '',
-      isActive: s => s.units[unitType].order === 'attack',
-      run: s => setOrder(s, unitType, 'attack')
-    }
-  ];
+// Commands for a selected order group: one button per other order, each tap
+// moves one unit there (mirrors the worker rebalance taps).
+function armyGroupCommands(order) {
+  return ORDERS.filter(o => o !== order).map(o => ({
+    id: `move-${order}-${o}`, icon: orderIcon(o), label: `send to ${o}`, cost: '',
+    enabled: s => unitsOnOrder(s, order) > 0 && (o !== 'attack' || s.enemy.known),
+    reason: s => unitsOnOrder(s, order) === 0 ? 'No units in this group'
+               : (o === 'attack' && !s.enemy.known) ? 'Enemy not found — explore first' : '',
+    run: s => moveUnit(s, order, o)
+  }));
 }
 
 // Static command sets, derived from the data tables. Train commands attach to
@@ -762,7 +774,7 @@ const COMMANDS = {
     return byStructure;
   })(),
   workerGroup: [],
-  army: Object.fromEntries(Object.keys(ARMY).map(k => [k, makeOrderCommands(k)]))
+  army: Object.fromEntries(ORDERS.map(o => [o, armyGroupCommands(o)]))
 };
 
 function buildMenuCommands() {
@@ -864,7 +876,7 @@ function selectEntity(kind, type, id) {
 const SELECTION_VALID = {
   structure: (s, sel) => sel.type === 'hall' || s.structures[sel.type] > 0,
   node: (s, sel) => { const n = nodeById(s, sel.id); return !!n && n.remaining > 0; },
-  army: (s, sel) => !!s.units[sel.type] && s.units[sel.type].count > 0,
+  army: (s, sel) => ORDERS.includes(sel.type),
   workerGroup: () => true,
   enemy: () => true
 };
@@ -1129,24 +1141,26 @@ function renderWorld() {
     }));
   });
 
+  // My army: one tile per standing order, workers-row style — tap to select,
+  // then move units between orders one per tap.
   const army = document.createElement('section');
   army.className = 'world-group army';
-
-  Object.keys(ARMY).forEach(key => {
-    const group = game.units[key];
-    if (group.count <= 0) return;
+  ORDERS.forEach(order => {
+    const n = unitsOnOrder(game, order);
     army.appendChild(entityButton({
-      kind: 'army', type: key, id: 1,
-      icon: ARMY[key].icon, label: ARMY[key].label,
-      count: group.count,
-      meta: group.order,
-      jobIcon: orderIcon(group.order)
+      kind: 'army', type: order, id: 1, compact: true,
+      icon: orderIcon(order), label: order,
+      countLabel: n, countIcon: 'footman', dimmed: n === 0
     }));
   });
 
+  // Enemies get their own row below: the enemy base plus active raiding parties.
+  const enemies = document.createElement('section');
+  enemies.className = 'world-group enemies';
+
   const enemyCount = game.enemy.known ? Math.ceil(game.enemy.strength) : '??';
   const enemyMeta  = game.enemy.known ? 'enemy base' : 'uncharted';
-  army.appendChild(entityButton({
+  enemies.appendChild(entityButton({
     kind: 'enemy', type: 'enemy', id: 1,
     icon: 'enemyBase', label: 'enemy', count: enemyCount, meta: enemyMeta, danger: true,
     // Debug: ring fills as the next raid approaches (updates once per tick).
@@ -1158,13 +1172,13 @@ function renderWorld() {
     const meta = raid.arriveIn > 0 ? 'approaching'
                : raid.targetType ? `razing ${BUILDINGS[raid.targetType].label}`
                : 'attacking';
-    army.appendChild(entityButton({
+    enemies.appendChild(entityButton({
       kind: 'enemy', type: 'raid', id: raid.id,
       icon: 'enemy', label: 'raiders', count: raid.size, meta, danger: true
     }));
   });
 
-  dom.world.append(structures, workers, army);
+  dom.world.append(structures, workers, army, enemies);
 }
 
 function productionMeta(state, producer) {
@@ -1193,9 +1207,10 @@ function entityInfo(state) {
     return `${node.label} · ${status} · dist ${node.distance} · ${n} working`;
   }
   if (kind === 'army') {
-    const group = state.units[type];
-    const label = ARMY[type] ? ARMY[type].label : type;
-    return group ? `${label} ×${group.count} · ${group.order}` : label;
+    const pool = state.army[type];
+    if (!pool) return type;
+    const parts = Object.keys(ARMY).filter(k => pool[k] > 0).map(k => `${pool[k]} ${ARMY[k].label}`);
+    return `${type} · ${parts.length ? parts.join(', ') : 'no units'}`;
   }
   return '';
 }
@@ -1366,7 +1381,7 @@ document.getElementById('cheat-raid').addEventListener('click', () => {
   render();
 });
 document.getElementById('cheat-footman').addEventListener('click', () => {
-  game.units.footmen.count += 1;
+  game.army.defend.footmen += 1;
   render();
 });
 
