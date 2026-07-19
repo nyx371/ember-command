@@ -925,6 +925,10 @@ function installZoomGuards() {
   document.addEventListener('gesturechange', e => e.preventDefault(), { passive: false });
   document.addEventListener('gestureend',    e => e.preventDefault(), { passive: false });
   document.addEventListener('touchend', e => {
+    // Suppress double-tap-to-zoom on empty chrome, but never on interactive
+    // controls — preventing default there cancels the follow-up click, which
+    // is what made rapid taps (e.g. queuing several units) feel dropped.
+    if (e.target.closest('button, summary, a, [data-command], .entity, .construction-chip')) return;
     const now = Date.now();
     if (now - lastTouchEnd <= 320) e.preventDefault();
     lastTouchEnd = now;
