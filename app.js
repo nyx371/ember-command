@@ -540,7 +540,7 @@ function unitsOnOrder(state, order) {
 // drained by accumulated wounds; `total` drives the collapsed horde bar.
 function poolHp(pool) {
   const count = poolCount(pool);
-  if (count === 0) return null;
+  if (count === 0 || pool.wounds === 0) return null;   // bar only while damaged
   const type = Object.keys(ARMY).find(k => pool[k] > 0);
   const maxHp = Object.keys(ARMY).reduce((sum, k) => sum + pool[k] * ARMY[k].hp, 0);
   return {
@@ -551,7 +551,7 @@ function poolHp(pool) {
 }
 
 function raidHp(raid) {
-  if (raid.size === 0) return null;
+  if (raid.size === 0 || raid.hpPool >= raid.size * raid.grunt.hp) return null;   // bar only while damaged
   return {
     segments: raid.size,
     partial: (raid.hpPool - (raid.size - 1) * raid.grunt.hp) / raid.grunt.hp,
