@@ -52,7 +52,8 @@ const ICONS = {
   defend: 'assets/icons/c_hshield1.png',
   patrol: 'assets/icons/c_hpatrol.png',
   explore: 'assets/icons/c_hmove.png',
-  build: 'assets/icons/c_build.png'
+  build: 'assets/icons/c_build.png',
+  harvest: 'assets/icons/c_harvest.png'
 };
 
 let idCounter = 0;
@@ -188,10 +189,10 @@ const COMMANDS = {
     ]
   },
   workerGroup: [
-    { id: 'wg-gold',   icon: 'gold',   label: 'mine gold',   cost: 'move 1',
+    { id: 'wg-gold',   icon: 'harvest', overlay: 'gold',   label: 'mine gold',   cost: 'move 1',
       enabled: (s, t) => t !== 'gold'   && jobCount(s, t) > 0,
       run: (s, t) => moveWorker(s, t, 'gold') },
-    { id: 'wg-lumber', icon: 'lumber', label: 'cut lumber',  cost: 'move 1',
+    { id: 'wg-lumber', icon: 'harvest', overlay: 'lumber', label: 'cut lumber',  cost: 'move 1',
       enabled: (s, t) => t !== 'lumber' && jobCount(s, t) > 0,
       run: (s, t) => moveWorker(s, t, 'lumber') },
     { id: 'wg-idle',   icon: 'defend', label: 'stand idle',  cost: 'move 1',
@@ -854,6 +855,16 @@ function renderOrders() {
     button.setAttribute('aria-label', command.label);
 
     button.appendChild(makeIcon(ICONS[command.icon], command.label));
+
+    if (command.overlay) {
+      const overlay = document.createElement('img');
+      overlay.className = 'command-overlay';
+      overlay.src = `${ICONS[command.overlay]}?v=${ICON_VERSION}`;
+      overlay.alt = '';
+      overlay.draggable = false;
+      overlay.setAttribute('aria-hidden', 'true');
+      button.appendChild(overlay);
+    }
 
     if (index < 9) {
       const hotkey = document.createElement('span');
