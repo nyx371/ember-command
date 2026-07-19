@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no, viewport-fit=cover" />
     <title>Ember Command</title>
-    <link rel="stylesheet" href="styles.css?v=20260719-costs1" />
+    <link rel="stylesheet" href="styles.css?v=20260719-design1" />
   </head>
   <body>
     <main class="shell">
@@ -13,23 +13,25 @@
         <details class="menu">
           <summary aria-label="menu">☰</summary>
           <div class="menu-panel">
-            <strong id="phase">economy</strong>
-            <p>Tap a structure or unit in the world. Commands appear inside the field.</p>
             <div id="log" class="menu-log"></div>
+            <div class="cheat-row">
+              <button id="cheat-btn" class="cheat-btn">+10k resources</button>
+              <button id="cheat-train" class="cheat-btn cheat-toggle">fast train</button>
+              <button id="cheat-harvest" class="cheat-btn cheat-toggle">fast harvest</button>
+            </div>
           </div>
         </details>
       </header>
 
       <section class="world panel" aria-label="world">
         <div class="world-head">
-          <span>EMBER COMMAND</span>
-          <strong id="selected-label">TOWN HALL</strong>
+          <span id="day">DAY 1</span>
         </div>
         <div id="world" class="world-canvas"></div>
         <div id="orders" class="command-bar" aria-label="commands"></div>
       </section>
     </main>
 
-    <script src="app.js?v=20260719-costs1"></script>
+    <script src="app.js?v=20260719-design1"></script>
   </body>
 </html>
