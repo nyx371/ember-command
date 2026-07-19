@@ -59,8 +59,7 @@ const ICONS = {
   patrol: 'assets/icons/c_hpatrol.png',
   explore: 'assets/icons/c_hmove.png',
   build: 'assets/icons/c_build.png',
-  harvest: 'assets/icons/c_harvest.png',
-  return: 'assets/icons/c_hreturn.png'
+  harvest: 'assets/icons/c_harvest.png'
 };
 
 let idCounter = 0;
@@ -74,6 +73,7 @@ function createGame() {
     production: [],
     constructions: [],
     buildMenu: false,
+    buildSource: null,
     workers: [],
     nodes: NODE_DEFS.map(d => ({ ...d, remaining: d.capacity })),
     units: {
@@ -169,7 +169,7 @@ const COMMANDS = {
         run: s => startProduction(s, {
           id: 'train-worker', producer: 'hall', icon: 'worker', label: 'worker', duration: 5,
           cost: { gold: 400 },
-          complete: state => { state.workers.push(createWorker('idle')); writeLog(state, 'Worker ready.'); }
+          complete: state => { state.workers.push(createWorker('idle')); autoAssignWorkers(state); writeLog(state, 'Worker ready.'); }
         })
       }
     ],
@@ -199,15 +199,7 @@ const COMMANDS = {
   workerGroup: [
     { id: 'wg-construct', icon: 'build', label: 'construct', cost: 'idle worker',
       enabled: s => jobCount(s, 'idle') > 0,
-      run: s => { s.buildMenu = true; } }
-  ],
-  node: [
-    { id: 'node-assign', icon: 'harvest', label: 'send worker', cost: 'from idle',
-      enabled: (s, type) => jobCount(s, 'idle') > 0 && activeNode(s, type) != null,
-      run: (s, type) => sendWorkerToType(s, type) },
-    { id: 'node-recall', icon: 'return', label: 'recall worker', cost: 'to idle',
-      enabled: (s, type) => jobCount(s, type) > 0,
-      run: (s, type) => recallWorkerFromType(s, type) }
+      run: s => { s.buildMenu = true; s.buildSource = 'idle'; } }
   ],
   army: {
     soldiers: makeOrderCommands('soldiers'),
@@ -248,22 +240,33 @@ function workersAtNode(state, node) {
     : [];
 }
 
+// A worker to spare for a new task: prefer an idle one, otherwise pull one off
+// the other resource so tapping a node rebalances labour without micromanaging.
+function spareWorker(state, forType) {
+  return state.workers.find(w => w.job === 'idle')
+      || state.workers.find(w => (w.job === 'gold' || w.job === 'lumber') && w.job !== forType);
+}
+
 function sendWorkerToType(state, type) {
   const node = activeNode(state, type);
   if (!node) return;
-  const worker = state.workers.find(w => w.job === 'idle');
+  const worker = spareWorker(state, type);
   if (!worker) return;
   worker.job = type;
   worker.cooldown = nodeCooldown(node);
   writeLog(state, `Worker → ${type}.`);
 }
 
-function recallWorkerFromType(state, type) {
-  const worker = state.workers.find(w => w.job === type);
-  if (!worker) return;
-  worker.job = 'idle';
-  worker.cooldown = 0;
-  writeLog(state, `Worker recalled to idle.`);
+// Idle workers don't sit around: they mine gold, or cut wood if no gold is
+// left. Keeps the economy running without manual assignment.
+function autoAssignWorkers(state) {
+  state.workers.forEach(w => {
+    if (w.job !== 'idle') return;
+    const type = activeNode(state, 'gold') ? 'gold' : (activeNode(state, 'lumber') ? 'lumber' : null);
+    if (!type) return;
+    w.job = type;
+    w.cooldown = nodeCooldown(activeNode(state, type));
+  });
 }
 
 // ── Production helpers ─────────────────────────────────────────────────────
@@ -347,10 +350,13 @@ function startConstruction(state, workerType, building) {
   const worker = state.workers.find(w => w.job === workerType);
   if (!worker) return;
   spend(state, building.cost);
+  // Where the builder heads back once done: to the resource it was on, so a
+  // worker pulled off gold/lumber returns there (or auto-reassigns if depleted).
+  const returnTo = (worker.job === 'gold' || worker.job === 'lumber') ? worker.job : 'idle';
   worker.job = 'building';
   worker.cooldown = 0;
   state.constructions.push({
-    id: nextId(), workerId: worker.id, type: building.type,
+    id: nextId(), workerId: worker.id, type: building.type, returnTo,
     icon: building.icon, label: building.label,
     duration: building.duration, remaining: building.duration,
     cost: building.cost, complete: building.complete
@@ -359,11 +365,17 @@ function startConstruction(state, workerType, building) {
   writeLog(state, `${building.label}: worker dispatched.`);
 }
 
-function releaseBuilder(state, workerId) {
+function releaseBuilder(state, workerId, returnTo = 'idle') {
   const worker = state.workers.find(w => w.id === workerId);
   if (!worker) return;
-  worker.job = 'idle';
-  worker.cooldown = 0;
+  const node = (returnTo === 'gold' || returnTo === 'lumber') ? activeNode(state, returnTo) : null;
+  if (node) {
+    worker.job = returnTo;
+    worker.cooldown = nodeCooldown(node);
+  } else {
+    worker.job = 'idle';        // original resource is gone; auto-assign re-routes it
+    worker.cooldown = 0;
+  }
 }
 
 function cancelConstruction(state, id) {
@@ -371,7 +383,7 @@ function cancelConstruction(state, id) {
   if (!c) return;
   state.constructions = state.constructions.filter(x => x.id !== id);
   Object.keys(c.cost).forEach(k => { state.resources[k] += c.cost[k]; });
-  releaseBuilder(state, c.workerId);
+  releaseBuilder(state, c.workerId, c.returnTo);
   writeLog(state, `${c.label}: cancelled, refunded.`);
 }
 
@@ -381,7 +393,7 @@ function advanceConstructions(state) {
   const done = state.constructions.filter(c => c.remaining <= 0);
   state.constructions = state.constructions.filter(c => c.remaining > 0);
   done.forEach(c => {
-    releaseBuilder(state, c.workerId);
+    releaseBuilder(state, c.workerId, c.returnTo);
     c.complete(state);
   });
 }
@@ -436,8 +448,12 @@ function gameTick() {
   game.tick += 1;
   lastTickAt = performance.now();
 
-  // Harvest — each worker draws from the specific node it's assigned to, which
-  // depletes; when a node runs dry its workers fall back to idle.
+  // Idle workers pick up gold (or wood) on their own before harvesting resolves.
+  autoAssignWorkers(game);
+
+  // Harvest — each worker draws from the nearest live node of its resource type,
+  // which depletes; when every node of that type is dry the worker goes idle
+  // (and auto-assign will re-route it next tick).
   const harvestStep = game.cheats.fastHarvest ? CHEAT_SPEED : 1;
   game.workers.forEach(worker => {
     if (worker.job !== 'gold' && worker.job !== 'lumber') return;
@@ -505,31 +521,35 @@ function gameTick() {
 // ── Selection ──────────────────────────────────────────────────────────────
 
 function selectedCommands(state) {
-  if (state.selected.kind === 'structure') return COMMANDS.structure[state.selected.type] || [];
-  if (state.selected.kind === 'workerGroup') {
-    if (state.buildMenu) {
-      return [
-        ...BUILDABLE_STRUCTURES.map(b => ({
-          id: `build-${b.type}`, icon: b.icon, label: b.label, cost: costIcons(b.cost),
-          enabled: s => canAfford(s, b.cost) && jobCount(s, 'idle') > 0,
-          run: s => startConstruction(s, 'idle', b)
-        })),
-        { id: 'build-menu-stop', icon: 'stop', label: 'stop', cost: '',
-          enabled: () => true,
-          run: s => { s.buildMenu = false; } }
-      ];
-    }
-    return COMMANDS.workerGroup;
+  // Build menu is modal over whatever is selected; buildSource records which
+  // worker pool to pull the builder from (idle, or a resource type from a node).
+  if (state.buildMenu) {
+    const source = state.buildSource || 'idle';
+    return [
+      ...BUILDABLE_STRUCTURES.map(b => ({
+        id: `build-${b.type}`, icon: b.icon, label: b.label, cost: costIcons(b.cost),
+        enabled: s => canAfford(s, b.cost) && s.workers.some(w => w.job === source),
+        run: s => startConstruction(s, source, b)
+      })),
+      { id: 'build-menu-stop', icon: 'stop', label: 'stop', cost: '',
+        enabled: () => true,
+        run: s => { s.buildMenu = false; } }
+    ];
   }
+  if (state.selected.kind === 'structure') return COMMANDS.structure[state.selected.type] || [];
+  if (state.selected.kind === 'workerGroup') return COMMANDS.workerGroup;
   if (state.selected.kind === 'node') {
     const node = nodeById(state, state.selected.id);
-    const type = node ? node.type : state.selected.type;
-    return COMMANDS.node.map(cmd => ({
-      ...cmd,
-      overlay: cmd.id === 'node-assign' ? type : cmd.overlay,
-      enabled: s => cmd.enabled(s, type),
-      run: s => cmd.run(s, type)
-    }));
+    if (!node) return [];
+    const type = node.type;
+    return [
+      { id: 'node-assign', icon: 'harvest', overlay: type, label: `harvest ${type}`, cost: '',
+        enabled: s => activeNode(s, type) != null && spareWorker(s, type) != null,
+        run: s => sendWorkerToType(s, type) },
+      { id: 'node-build', icon: 'build', label: 'build', cost: '',
+        enabled: s => workersAtNode(s, node).length > 0,
+        run: s => { s.buildMenu = true; s.buildSource = type; } }
+    ];
   }
   if (state.selected.kind === 'army') return COMMANDS.army[state.selected.type] || [];
   return [];
@@ -546,6 +566,7 @@ function runCommand(id) {
 function selectEntity(kind, type, id) {
   game.selected = { kind, type, id };
   game.buildMenu = false;
+  game.buildSource = null;
   render();
 }
 
@@ -869,14 +890,14 @@ function productionMeta(state, producer) {
 
 function entityInfo(state) {
   const { kind, type } = state.selected;
+  if (state.buildMenu) return 'Choose a building';
   if (kind === 'structure') {
     if (type === 'hall')     return `Town Hall · ${productionMeta(state, 'hall') || 'ready'}`;
     if (type === 'barracks') return `Barracks · ${productionMeta(state, 'barracks') || 'ready'}`;
     if (type === 'farm')     return `Farm · +4 supply`;
   }
   if (kind === 'workerGroup') {
-    const base = `idle workers ×${jobCount(state, 'idle')}`;
-    return state.buildMenu ? `${base} · choose building` : base;
+    return `idle workers ×${jobCount(state, 'idle')}`;
   }
   if (kind === 'node') {
     const node = nodeById(state, state.selected.id);
