@@ -70,7 +70,7 @@ function createGame() {
   return {
     tick: 0,
     selected: { kind: 'structure', type: 'hall', id: 1 },
-    resources: { gold: 1200, lumber: 800, oil: 0 },
+    resources: { gold: 100, lumber: 100, oil: 0 },
     production: [],
     constructions: [],
     buildMenu: false,
@@ -141,7 +141,7 @@ function makeOrderCommands(unitType) {
 
 function setOrder(state, unitType, order) {
   state.units[unitType].order = order;
-  writeLog(state, `${unitType === 'soldiers' ? 'Soldiers' : 'Archers'}: ${order}.`);
+  writeLog(state, `${unitType === 'soldiers' ? 'Footmen' : 'Archers'}: ${order}.`);
 }
 
 const BUILDABLE_STRUCTURES = [
@@ -180,14 +180,14 @@ const COMMANDS = {
     barracks: [
       {
         id: 'train-soldier',
-        icon: 'soldier', label: 'train soldier', cost: [{ icon: 'gold', n: 600 }, { icon: 'supply', n: 1 }], duration: 6, producer: 'barracks',
+        icon: 'soldier', label: 'train footman', cost: [{ icon: 'gold', n: 600 }, { icon: 'supply', n: 1 }], duration: 6, producer: 'barracks',
         enabled: s => s.structures.barracks > 0 && s.resources.gold >= 600 && supplyUsed(s) + supplyReserved(s) < supplyCap(s) && queueLength(s, 'barracks') < queueMax(s, 'barracks'),
         reason: s => supplyUsed(s) + supplyReserved(s) >= supplyCap(s) ? 'Supply capped — build a farm'
                    : queueLength(s, 'barracks') >= queueMax(s, 'barracks') ? 'Queue full' : '',
         run: s => startProduction(s, {
-          id: 'train-soldier', producer: 'barracks', icon: 'soldier', label: 'soldier', duration: 6,
+          id: 'train-soldier', producer: 'barracks', icon: 'soldier', label: 'footman', duration: 6,
           cost: { gold: 600 },
-          complete: state => { state.units.soldiers.count += 1; writeLog(state, 'Soldier ready.'); }
+          complete: state => { state.units.soldiers.count += 1; writeLog(state, 'Footman ready.'); }
         })
       },
       {
@@ -775,6 +775,11 @@ function orderIcon(order) {
 // ── Render ─────────────────────────────────────────────────────────────────
 
 function render() {
+  // A selected node that's been depleted is hidden; fall back to the town hall.
+  if (game.selected.kind === 'node') {
+    const n = nodeById(game, game.selected.id);
+    if (!n || n.remaining <= 0) game.selected = { kind: 'structure', type: 'hall', id: 1 };
+  }
   const day = currentDay(game);
   dom.day.textContent = `DAY ${day + 1}`;
   renderResources();
@@ -859,22 +864,26 @@ function renderWorld() {
   const trainingQueue = renderTrainingQueue();
   if (trainingQueue) structures.appendChild(trainingQueue);
 
-  // Idle workers, then one tile per resource node — a horizontally scrollable
-  // row (see .world-group.workers). Node tiles show the number of workers on
-  // them and a harvest ring per worker; the amount remaining is in the command
-  // card. Workers assigned to a resource type appear on its nearest live node.
+  // A horizontally scrollable row (see .world-group.workers) of the live
+  // resource nodes — each shows its worker count and a harvest ring per worker;
+  // the amount remaining is in the command card. Depleted nodes are hidden. The
+  // idle-workers tile only appears when there's nothing left to harvest.
   const workers = document.createElement('section');
   workers.className = 'world-group workers';
 
-  const idleCount = jobCount(game, 'idle');
-  workers.appendChild(entityButton({
-    kind: 'workerGroup', type: 'idle', id: 1,
-    icon: 'worker', label: 'idle workers', compact: true,
-    countLabel: idleCount, dimmed: idleCount === 0
-  }));
+  const liveNodes = game.nodes.filter(n => n.remaining > 0);
+
+  if (liveNodes.length === 0) {
+    const idleCount = jobCount(game, 'idle');
+    workers.appendChild(entityButton({
+      kind: 'workerGroup', type: 'idle', id: 1,
+      icon: 'worker', label: 'idle workers', compact: true,
+      countLabel: idleCount, dimmed: idleCount === 0
+    }));
+  }
 
   const harvestStep = game.cheats.fastHarvest ? CHEAT_SPEED : 1;
-  game.nodes.forEach(node => {
+  liveNodes.forEach(node => {
     const nodeWorkers = workersAtNode(game, node);
     const cd = nodeCooldown(node);
     const progressBars = nodeWorkers.map(w =>
@@ -883,8 +892,7 @@ function renderWorld() {
       kind: 'node', type: node.type, id: node.id,
       icon: node.icon, label: `${node.label} (dist ${node.distance})`, compact: true,
       progressBars, progressKey: `node:${node.id}`,
-      countLabel: nodeWorkers.length, countIcon: 'worker',
-      dimmed: node.remaining <= 0
+      countLabel: nodeWorkers.length, countIcon: 'worker'
     }));
   });
 
@@ -894,7 +902,7 @@ function renderWorld() {
   if (game.units.soldiers.count > 0) {
     army.appendChild(entityButton({
       kind: 'army', type: 'soldiers', id: 1,
-      icon: 'soldier', label: 'soldiers',
+      icon: 'soldier', label: 'footmen',
       count: game.units.soldiers.count,
       meta: game.units.soldiers.order,
       jobIcon: orderIcon(game.units.soldiers.order)
@@ -949,7 +957,8 @@ function entityInfo(state) {
   }
   if (kind === 'army') {
     const u = state.units[type];
-    return u ? `${type} ×${u.count} · ${u.order}` : type;
+    const name = type === 'soldiers' ? 'footmen' : type;
+    return u ? `${name} ×${u.count} · ${u.order}` : name;
   }
   return '';
 }
@@ -1120,17 +1129,16 @@ function bindCheatToggle(buttonId, key) {
 bindCheatToggle('cheat-train', 'fastTrain');
 bindCheatToggle('cheat-harvest', 'fastHarvest');
 
-function spawnStartingWorkers(rounds) {
-  if (rounds.length === 0) return;
-  const [[goldCd, lumberCd], ...rest] = rounds;
-  game.workers.push(createWorker('gold', 'gold-1', goldCd));
-  game.workers.push(createWorker('lumber', 'forest-1', lumberCd));
+function spawnStartingWorkers(remaining) {
+  if (remaining <= 0) return;
+  game.workers.push(createWorker('idle'));
+  autoAssignWorkers(game);   // heads to gold immediately
   render();
-  if (rest.length > 0) setTimeout(() => spawnStartingWorkers(rest), 300);
+  if (remaining > 1) setTimeout(() => spawnStartingWorkers(remaining - 1), 1000);
 }
 
 render();
-spawnStartingWorkers([[6, 10], [2, 4]]);
+spawnStartingWorkers(4);
 function updateProgressRings() {
   document.querySelectorAll('.job-badge[data-progress-key]').forEach(badge => {
     const key = badge.dataset.progressKey;
