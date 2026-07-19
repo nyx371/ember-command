@@ -36,7 +36,8 @@ const dom = {
   world: document.querySelector('#world'),
   orders: document.querySelector('#orders'),
   log: document.querySelector('#log'),
-  day: document.querySelector('#day')
+  day: document.querySelector('#day'),
+  error: document.querySelector('#error')
 };
 
 const ICONS = {
@@ -131,6 +132,7 @@ function makeOrderCommands(unitType) {
       id: `${unitType}-attack`,
       icon: 'attack', label: 'attack', cost: 'vs enemy',
       enabled: s => s.units[unitType].count > 0 && s.enemy.known,
+      reason: s => !s.enemy.known ? 'Enemy not found — explore first' : '',
       isActive: s => s.units[unitType].order === 'attack',
       run: s => setOrder(s, unitType, 'attack')
     }
@@ -166,6 +168,8 @@ const COMMANDS = {
         id: 'train-worker',
         icon: 'worker', label: 'train worker', cost: [{ icon: 'gold', n: 400 }, { icon: 'supply', n: 1 }], duration: 5, producer: 'hall',
         enabled: s => s.resources.gold >= 400 && supplyUsed(s) + supplyReserved(s) < supplyCap(s) && queueLength(s, 'hall') < queueMax(s, 'hall'),
+        reason: s => supplyUsed(s) + supplyReserved(s) >= supplyCap(s) ? 'Supply capped — build a farm'
+                   : queueLength(s, 'hall') >= queueMax(s, 'hall') ? 'Queue full' : '',
         run: s => startProduction(s, {
           id: 'train-worker', producer: 'hall', icon: 'worker', label: 'worker', duration: 5,
           cost: { gold: 400 },
@@ -178,6 +182,8 @@ const COMMANDS = {
         id: 'train-soldier',
         icon: 'soldier', label: 'train soldier', cost: [{ icon: 'gold', n: 600 }, { icon: 'supply', n: 1 }], duration: 6, producer: 'barracks',
         enabled: s => s.structures.barracks > 0 && s.resources.gold >= 600 && supplyUsed(s) + supplyReserved(s) < supplyCap(s) && queueLength(s, 'barracks') < queueMax(s, 'barracks'),
+        reason: s => supplyUsed(s) + supplyReserved(s) >= supplyCap(s) ? 'Supply capped — build a farm'
+                   : queueLength(s, 'barracks') >= queueMax(s, 'barracks') ? 'Queue full' : '',
         run: s => startProduction(s, {
           id: 'train-soldier', producer: 'barracks', icon: 'soldier', label: 'soldier', duration: 6,
           cost: { gold: 600 },
@@ -188,6 +194,8 @@ const COMMANDS = {
         id: 'train-archer',
         icon: 'archer', label: 'train archer', cost: [{ icon: 'gold', n: 500 }, { icon: 'lumber', n: 50 }, { icon: 'supply', n: 1 }], duration: 7, producer: 'barracks',
         enabled: s => s.structures.barracks > 0 && s.resources.gold >= 500 && s.resources.lumber >= 50 && supplyUsed(s) + supplyReserved(s) < supplyCap(s) && queueLength(s, 'barracks') < queueMax(s, 'barracks'),
+        reason: s => supplyUsed(s) + supplyReserved(s) >= supplyCap(s) ? 'Supply capped — build a farm'
+                   : queueLength(s, 'barracks') >= queueMax(s, 'barracks') ? 'Queue full' : '',
         run: s => startProduction(s, {
           id: 'train-archer', producer: 'barracks', icon: 'archer', label: 'archer', duration: 7,
           cost: { gold: 500, lumber: 50 },
@@ -529,6 +537,7 @@ function selectedCommands(state) {
       ...BUILDABLE_STRUCTURES.map(b => ({
         id: `build-${b.type}`, icon: b.icon, label: b.label, cost: costIcons(b.cost),
         enabled: s => canAfford(s, b.cost) && s.workers.some(w => w.job === source),
+        reason: s => !s.workers.some(w => w.job === source) ? 'No worker available' : '',
         run: s => startConstruction(s, source, b)
       })),
       { id: 'build-menu-stop', icon: 'stop', label: 'stop', cost: '',
@@ -545,9 +554,11 @@ function selectedCommands(state) {
     return [
       { id: 'node-assign', icon: 'harvest', overlay: type, label: `harvest ${type}`, cost: '',
         enabled: s => activeNode(s, type) != null && spareWorker(s, type) != null,
+        reason: s => activeNode(s, type) == null ? `${type} depleted` : 'No spare workers',
         run: s => sendWorkerToType(s, type) },
       { id: 'node-build', icon: 'build', label: 'build', cost: '',
         enabled: s => workersAtNode(s, node).length > 0,
+        reason: () => 'No workers here to build',
         run: s => { s.buildMenu = true; s.buildSource = type; } }
     ];
   }
@@ -557,10 +568,39 @@ function selectedCommands(state) {
 
 function runCommand(id) {
   const command = selectedCommands(game).find(item => item.id === id);
-  if (!command || !command.enabled(game)) return;
+  if (!command) return;
+  if (!command.enabled(game)) {
+    flashError(commandError(game, command));
+    return;
+  }
   command.run(game);
   clampGame(game);
   render();
+}
+
+const RESOURCE_KEYS = ['gold', 'lumber', 'oil'];
+
+// Why a tapped command couldn't run: resource shortfalls come straight from its
+// cost, everything else from an optional per-command reason().
+function commandError(state, command) {
+  if (Array.isArray(command.cost)) {
+    for (const { icon, n } of command.cost) {
+      if (RESOURCE_KEYS.includes(icon) && state.resources[icon] < n) {
+        return `Not enough ${icon}`;
+      }
+    }
+  }
+  const r = command.reason ? command.reason(state) : '';
+  return r || 'Can’t do that right now';
+}
+
+let errorTimer = null;
+function flashError(message) {
+  if (!message) return;
+  dom.error.textContent = message;
+  dom.error.classList.add('show');
+  if (errorTimer) clearTimeout(errorTimer);
+  errorTimer = setTimeout(() => dom.error.classList.remove('show'), 2200);
 }
 
 function selectEntity(kind, type, id) {
@@ -949,7 +989,7 @@ function renderOrders() {
     const button = document.createElement('button');
     button.className = 'command';
     button.dataset.command = command.id;
-    button.disabled = !command.enabled(game);
+    if (!command.enabled(game)) button.classList.add('unavailable');
     if (command.isActive && command.isActive(game)) button.classList.add('active-order');
     button.title = command.label;
     button.setAttribute('aria-label', command.label);
