@@ -140,6 +140,8 @@
   <li><strong>Radial progress rings</strong> — canvas conic-gradient rings (<code>radialProgressCanvas</code>), stacked semi-transparent when several timers share a tile, animated smoothly between ticks.</li>
   <li><strong>Job chips</strong> — every in-flight timed job (training, construction, upgrade) is one tappable chip: its own ring, tap to cancel and refund.</li>
   <li><strong>Icon-only commands</strong> — WC2-style command card; cost renders as an overlay strip of icon+number pairs, left-aligned; number-key hotkeys on desktop, hidden on touch.</li>
+  <li><strong>Flash feedback</strong> — tiles flash translucent red when taking damage and translucent white on arrivals (worker assigned to a node, new unit/building). Driven by a keyed registry so the full-rebuild render doesn't restart them.</li>
+  <li><strong>Segmented hp bars</strong> — army order tiles and raiding-party tiles carry a thin bottom bar, one segment per unit (green for yours, red for theirs), the last segment draining with accumulated wounds; collapses to one continuous bar for hordes.</li>
   <li><strong>Errors in the toast, events in the log</strong> — a refused tap explains itself in the floating error label; the menu log narrates gameplay. Fading marks non-resource unavailability only.</li>
   <li><strong>Instant touch</strong> — selection on <code>pointerup</code> with a move threshold (so scrolling the node row doesn't select); zoom guards exempt interactive controls; 14px minimum font.</li>
   <li><strong>Cheat toggles</strong> — <code>fast train</code> / <code>fast harvest</code> multiply timers by <code>CHEAT_SPEED</code>; keep them working, they're the dev loop.</li>

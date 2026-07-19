@@ -105,6 +105,13 @@ army | enemy`. `validateSelection` (top of `render()`) resets anything that no
 longer renders to the town hall — keep `SELECTION_VALID` in sync when adding a
 kind. `selected.id` is compared with `String()` (node ids are strings).
 
+### Tile feedback (flashes + hp bars)
+`flashTile(key, 'damage'|'spawn')` registers a transient flash for a tile key
+(`kind:type:id`); `entityButton` applies the class while fresh (`FLASH_MS`).
+Pass `hp: { segments, partial, total }` (from `poolHp`/`raidHp`) to
+`entityButton` for the segmented hp bar (green for own tiles, red under
+`.danger`).
+
 ### Progress rings
 `radialProgressCanvas(p, siblings)` draws one ring. The 100ms animator has
 exactly two branches: `.construction-chip[data-job-uid]` and

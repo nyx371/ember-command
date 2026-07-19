@@ -276,6 +276,45 @@ button { touch-action: manipulation; }
 }
 .entity.selected { outline: 1px solid var(--accent); outline-offset: -1px; }
 .entity.danger { outline: 1px solid #4a2620; outline-offset: -1px; }
+
+/* Transient feedback flashes — driven by the tileFlashes registry in app.js,
+   so a tile keeps (re)playing its flash only while the entry is fresh. */
+@keyframes flash-damage {
+  0%   { background: rgba(214, 58, 40, 0.32); }
+  100% { background: transparent; }
+}
+@keyframes flash-spawn {
+  0%   { background: rgba(255, 255, 255, 0.28); }
+  100% { background: transparent; }
+}
+.entity.flash-damage { animation: flash-damage 0.6s ease-out; }
+.entity.flash-spawn  { animation: flash-spawn 0.6s ease-out; }
+
+/* Segmented hp bar along a tile's bottom edge: one segment per unit, drained
+   left-to-right; collapses to one continuous bar for hordes (>20). */
+.hp-bar {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  bottom: 1px;
+  height: 3px;
+  display: flex;
+  gap: 1px;
+  pointer-events: none;
+}
+.hp-seg {
+  flex: 1;
+  min-width: 0;
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 1px;
+  overflow: hidden;
+}
+.hp-seg i {
+  display: block;
+  height: 100%;
+  background: #7cbf6a;
+}
+.entity.danger .hp-seg i { background: var(--danger); }
 .entity.danger strong { color: var(--danger); }
 .entity.danger .icon { filter: sepia(1) saturate(1.2) hue-rotate(315deg); }
 .entity-body { min-width: 0; display: grid; gap: 4px; }

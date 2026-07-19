@@ -93,16 +93,22 @@ const BUILDINGS = {
 const UNITS = {
   worker: {
     icon: 'worker', label: 'worker', producer: 'hall', time: 45, cost: { gold: 400 },
-    done: s => { s.workers.push(createWorker()); autoAssignWorkers(s); writeLog(s, 'Worker ready.'); }
+    done: s => {
+      const w = createWorker();
+      s.workers.push(w);
+      autoAssignWorkers(s);
+      if (w.nodeId) flashTile(`node:${w.job}:${w.nodeId}`, 'spawn');
+      writeLog(s, 'Worker ready.');
+    }
   },
   footman: {
     icon: 'footman', label: 'footman', producer: 'barracks', time: 60, cost: { gold: 600 },
-    done: s => { s.army.defend.footmen += 1; writeLog(s, 'Footman ready.'); }
+    done: s => { s.army.defend.footmen += 1; flashTile('army:defend:1', 'spawn'); writeLog(s, 'Footman ready.'); }
   },
   archer: {
     icon: 'archer', label: 'archer', producer: 'barracks', time: 70, cost: { gold: 500, lumber: 50 },
     requires: ['lumbermill'],
-    done: s => { s.army.defend.archers += 1; writeLog(s, 'Archer ready.'); }
+    done: s => { s.army.defend.archers += 1; flashTile('army:defend:1', 'spawn'); writeLog(s, 'Archer ready.'); }
   }
 };
 
@@ -306,6 +312,7 @@ function sendWorkerToNode(state, node) {
   const worker = spareWorker(state, node);
   if (!worker) return;
   assignWorker(worker, node);
+  flashTile(`node:${node.type}:${node.id}`, 'spawn');
   writeLog(state, `Worker → ${node.label}.`);
 }
 
@@ -420,6 +427,7 @@ function startConstruction(state, key) {
     cost: b.build.cost,
     complete: s => {
       s.structures[key] += 1;
+      flashTile(`structure:${key}:1`, 'spawn');
       writeLog(s, `${cap(b.label)} complete.`);
       if (b.onBuilt) b.onBuilt(s);
     }
@@ -512,6 +520,29 @@ function unitsOnOrder(state, order) {
   return poolCount(state.army[order]);
 }
 
+// Segmented-hp payloads for entityButton: one segment per unit, the last one
+// drained by accumulated wounds; `total` drives the collapsed horde bar.
+function poolHp(pool) {
+  const count = poolCount(pool);
+  if (count === 0) return null;
+  const type = Object.keys(ARMY).find(k => pool[k] > 0);
+  const maxHp = Object.keys(ARMY).reduce((sum, k) => sum + pool[k] * ARMY[k].hp, 0);
+  return {
+    segments: count,
+    partial: 1 - pool.wounds / ARMY[type].hp,
+    total: (maxHp - pool.wounds) / maxHp
+  };
+}
+
+function raidHp(raid) {
+  if (raid.size === 0) return null;
+  return {
+    segments: raid.size,
+    partial: (raid.hpPool - (raid.size - 1) * raid.grunt.hp) / raid.grunt.hp,
+    total: raid.hpPool / (raid.size * raid.grunt.hp)
+  };
+}
+
 function attackDamage(state) {
   return Object.keys(ARMY).reduce((dmg, k) => dmg + state.army.attack[k] * ARMY[k].attack, 0);
 }
@@ -552,6 +583,7 @@ function defenseDamage(state, arrived) {
 // (footmen soak before archers).
 function damagePool(state, order, dmg) {
   const pool = state.army[order];
+  flashTile(`army:${order}:1`, 'damage');
   pool.wounds += dmg;
   let type = Object.keys(ARMY).find(k => pool[k] > 0);
   while (type && pool.wounds >= ARMY[type].hp) {
@@ -574,6 +606,7 @@ function damageWorkers(state, dmg) {
       state.jobs = state.jobs.filter(j => !(j.kind === 'construct' && j.workerId === victim.id));
       writeLog(state, 'A builder was slain — construction abandoned.');
     } else {
+      if (victim.nodeId) flashTile(`node:${victim.job}:${victim.nodeId}`, 'damage');
       writeLog(state, 'A worker has been slain.');
     }
     state.workers = state.workers.filter(w => w !== victim);
@@ -589,6 +622,7 @@ function damageBuildings(state, raid, dmg, order) {
     raid.targetHp = raid.targetType ? BUILDINGS[raid.targetType].hp : 0;
   }
   if (!raid.targetType) return;   // nothing left standing
+  flashTile(`structure:${raid.targetType}:1`, 'damage');
   raid.targetHp -= dmg;
   if (raid.targetHp <= 0) {
     state.structures[raid.targetType] -= 1;
@@ -623,7 +657,9 @@ function raidTick(state) {
     raid.strikeIn = VOLLEY_EVERY;
 
     // My volley (patrol only while they approach).
-    raid.hpPool -= defenseDamage(state, arrived);
+    const dealt = defenseDamage(state, arrived);
+    if (dealt > 0) flashTile(`enemy:raid:${raid.id}`, 'damage');
+    raid.hpPool -= dealt;
     raid.size = Math.max(0, Math.ceil(raid.hpPool / raid.grunt.hp));
     if (raid.size <= 0) {
       writeLog(state, 'Raid repelled!');
@@ -736,6 +772,7 @@ function guardTowerCommand() {
       complete: st => {
         st.structures.tower -= 1;
         st.structures.guardtower += 1;
+        flashTile('structure:guardtower:1', 'spawn');
         writeLog(st, 'Guard tower ready.');
       }
     })
@@ -851,6 +888,26 @@ function commandError(state, command) {
 // without one (no resource cost) fade whenever they're disabled.
 function commandFaded(state, command) {
   return command.available ? !command.available(state) : !command.enabled(state);
+}
+
+// Transient tile flashes (red = taking damage, white = spawn/assignment).
+// Keyed by tile identity so they survive the full-rebuild render; entityButton
+// applies the class while the entry is fresh, then it expires.
+const FLASH_MS = 600;
+const tileFlashes = new Map();
+
+function flashTile(key, kind) {
+  tileFlashes.set(key, { kind, until: performance.now() + FLASH_MS });
+}
+
+function tileFlashClass(key) {
+  const f = tileFlashes.get(key);
+  if (!f) return null;
+  if (f.until <= performance.now()) {
+    tileFlashes.delete(key);
+    return null;
+  }
+  return f.kind === 'damage' ? 'flash-damage' : 'flash-spawn';
 }
 
 let errorTimer = null;
@@ -974,12 +1031,14 @@ function nodeProgressBars(state, node) {
     .map(w => Math.min(1, ((cd - w.cooldown) + tickFraction(step)) / cd));
 }
 
-function entityButton({ kind, type, id, icon, label, count, meta, danger, compact, jobIcon, progressBars, nodeId, countLabel, countIcon, dimmed }) {
+function entityButton({ kind, type, id, icon, label, count, meta, danger, compact, jobIcon, progressBars, nodeId, countLabel, countIcon, hp, dimmed }) {
   const button = document.createElement('button');
   const classes = ['entity'];
   if (danger)  classes.push('danger');
   if (compact) classes.push('compact');
   if (dimmed)  classes.push('dimmed');
+  const flash = tileFlashClass(`${kind}:${type}:${id}`);
+  if (flash) classes.push(flash);
   button.className = classes.join(' ');
   if (game.selected.kind === kind && game.selected.type === type && String(game.selected.id) === String(id)) {
     button.classList.add('selected');
@@ -1002,6 +1061,25 @@ function entityButton({ kind, type, id, icon, label, count, meta, danger, compac
       progressBars.forEach(p => badge.appendChild(radialProgressCanvas(p, progressBars.length)));
     }
     button.appendChild(badge);
+  }
+
+  // Segmented hp bar: one segment per unit, the last partially drained by the
+  // pool's accumulated wounds. Collapses to a single continuous bar for hordes.
+  if (hp && hp.segments > 0) {
+    const bar = document.createElement('span');
+    bar.className = 'hp-bar';
+    const segs = hp.segments <= 20 ? hp.segments : 1;
+    for (let i = 0; i < segs; i += 1) {
+      const seg = document.createElement('span');
+      seg.className = 'hp-seg';
+      const fill = document.createElement('i');
+      const isLast = i === segs - 1;
+      const pct = segs === 1 ? hp.total : (isLast ? hp.partial : 1);
+      fill.style.width = `${Math.round(Math.max(0, Math.min(1, pct)) * 100)}%`;
+      seg.appendChild(fill);
+      bar.appendChild(seg);
+    }
+    button.appendChild(bar);
   }
 
   if (countLabel != null) {
@@ -1150,7 +1228,8 @@ function renderWorld() {
     army.appendChild(entityButton({
       kind: 'army', type: order, id: 1, compact: true,
       icon: orderIcon(order), label: order,
-      countLabel: n, countIcon: 'footman', dimmed: n === 0
+      countLabel: n, countIcon: 'footman', dimmed: n === 0,
+      hp: poolHp(game.army[order])
     }));
   });
 
@@ -1174,7 +1253,8 @@ function renderWorld() {
                : 'attacking';
     enemies.appendChild(entityButton({
       kind: 'enemy', type: 'raid', id: raid.id,
-      icon: 'enemy', label: 'raiders', count: raid.size, meta, danger: true
+      icon: 'enemy', label: 'raiders', count: raid.size, meta, danger: true,
+      hp: raidHp(raid)
     }));
   });
 
