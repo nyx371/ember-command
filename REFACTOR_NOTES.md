@@ -6,6 +6,44 @@ adding gameplay (buildings, units, upgrades, orders, economy rules), so the
 overriding refactor goal is: **make adding a new building / unit / order / timed
 process cheap and hard to get wrong.**
 
+## Refactor status (2026-07-19, applied)
+
+The refactor pass has been applied to `app.js`. What changed:
+
+- **One job system.** `production`/`constructions`/`upgrades` collapsed into
+  `game.jobs` (kind ∈ `train|construct|upgrade`) with one `advanceJobs`, one
+  `cancelJob`, one `jobProgress`, one `jobChip`/`renderJobQueue`. Train jobs
+  carry `{ producer, supply }`, construct jobs `{ workerId, returnTo }`,
+  upgrades `{ tag }`.
+- **Single-source ring animation.** `updateProgressRings` has exactly two
+  uniform branches — `.construction-chip[data-job-uid]` and
+  `.job-badge[data-node-id]` — and `nodeProgressBars` is shared with the
+  initial render. New job kinds/nodes need no animator changes.
+- **Data tables drive everything.** `BUILDINGS` (icon, label, `build` cost/time,
+  `supply`, `defense`, `blurb`, `onBuilt`) generates state keys, structure
+  tiles, the build menu, info blurbs, supply cap, and raid tower defense.
+  `UNITS` (producer, cost, time, `requires`, `done`) generates the train
+  commands, attached to producers automatically. `ARMY` (power, attack, icon,
+  label) generates army tiles, order commands, and combat math. **Adding a
+  building or unit = one table entry (+ an ICONS line).**
+- **Composable gates.** `gated(checks)` derives `available()`/`reason()` from
+  one ordered `[test, reason]` list, so fade and toast can't drift.
+- **Naming normalized.** `structures` keys all singular (`farm`, `tower`,
+  `guardtower`, …); internal `units.soldiers` → `units.footmen`; icon key
+  `soldier` → `footman`; worker-job counting is `workerCount` (the word "job"
+  now means a timed job).
+- **General stale-selection rule.** `validateSelection` + `SELECTION_VALID`
+  (per kind) run at the top of `render()`; anything that no longer renders
+  falls back to the town hall.
+- Verified by a DOM-stubbed smoke test (24 assertions over spawn/harvest/
+  depletion-migration, train/cancel/refund, build, tech gates, upgrade,
+  selection fallback) — kept out of the repo, in the session scratchpad.
+
+Remaining debt (unchanged below, renumbered here): sim/view split (item 5),
+persistence (item 10), and `design.html` is still out of sync with the code.
+The sections below describe the PRE-refactor state where they conflict with
+this status block — kept for the reasoning; trust this block and the code.
+
 See `design.html` for the game-design intent and `CLAUDE.md` for working
 conventions. NOTE: `design.html` is currently out of sync with the code (it
 still describes an older harvesting model) — trust the code, not the doc.

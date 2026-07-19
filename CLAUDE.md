@@ -29,6 +29,13 @@ This is a separate mode of work from the design-doc process above — most day-t
 
 ## Where things stand (as of 2026-07-19)
 
+- `app.js` has been refactored to be table-driven: `BUILDINGS` / `UNITS` /
+  `ARMY` data tables generate tiles, commands, tech gates, supply, and raid
+  defense; all timed work (training, construction, upgrades) runs through one
+  `game.jobs` system. **Adding a building/unit should normally mean editing
+  only those tables.** See `REFACTOR_NOTES.md` (status block at top) before
+  making structural changes.
+
 - Core loop (workers, harvest, farms, barracks, training) is `done`, plus a layer of UI polish on top: grouped worker/farm/barracks tiles, stacked radial progress bars (2x size, transparent-white, alpha divided by sibling count), staggered game-start worker spawn-in, fast-train/fast-harvest cheat toggles, icon-only square command buttons with overlay cost badges, and a top-right tappable production queue (cancel + refund).
 - `Command Categories (from WC2 Strategy Research)`, `Upgrades` (incremental + hall tier), and `Persistence / Save Progress` sections are newly added, all `idea` status — design only, not implemented.
 - Known open questions living in notes: army-assignment granularity (aggregate vs. per-unit-type vs. hero override), Raid vs. Attack split, win/loss save behavior.
