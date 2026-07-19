@@ -1,5 +1,10 @@
 // ── Tunables ───────────────────────────────────────────────────────────────
 
+// Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
+// they render at the top of the menu so a stale cache is immediately visible.
+const VERSION = '0.01';
+const VERSION_TAG = 'version + latest-change tag in menu';
+
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
 const TICK_MS = 1000;
@@ -1516,6 +1521,8 @@ function bindCheatToggle(buttonId, key) {
 }
 bindCheatToggle('cheat-train', 'fastTrain');
 bindCheatToggle('cheat-harvest', 'fastHarvest');
+
+document.getElementById('version').textContent = `v${VERSION} · ${VERSION_TAG}`;
 
 document.getElementById('cheat-raid').addEventListener('click', () => {
   spawnRaid(game);

@@ -24,6 +24,12 @@ This is a separate mode of work from the design-doc process above — most day-t
   patterns (data tables, unified jobs, command gates, worker lifecycle), and
   has recipes for adding buildings/units/upgrades/nodes.
 
+- **Every pushed change bumps the version.** In `app.js`: `VERSION` +0.01 and
+  rewrite `VERSION_TAG` with a very short description of the change. In
+  `index.html`: update both `?v=` query strings to the new version. The
+  version + tag show at the top of the in-game menu so the user can verify
+  which build they're running regardless of caching.
+
 - The app is `index.html` + `app.js` + `styles.css`, no build step, no framework. `game` (in `app.js`) is the single mutable state object; `render()` fully rebuilds the relevant DOM subtree from it on every change — there's no diffing, so wholesale `replaceChildren()` rebuilds (see `renderWorld()`, `renderOrders()`) are the norm, not something to optimize away.
 - Established UI conventions (grouped tiles with count badges, stacked/transparent radial progress rings, tappable queue chips for cancel+refund, icon-only command buttons with overlay cost badges, 14px minimum font, persistent cheat toggles) are documented in `design.html` under **"UI Conventions Established So Far"** — read that before adding a new tile/badge/progress pattern so it matches rather than invents a new one.
 - **Watch for layout jump.** Elements whose presence/size depends on transient state (queue chips, disabled buttons) should not shift other elements around when that state changes — prefer `position: absolute` overlays or keeping disabled-but-present elements (`button.disabled`) over conditionally adding/removing grid rows.

@@ -127,6 +127,14 @@ button { touch-action: manipulation; }
   border-radius: 10px;
   box-shadow: 0 14px 38px rgba(0, 0, 0, 0.42);
 }
+.menu-version {
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #242424;
+  color: var(--accent);
+  font-size: 14px;
+}
+
 .menu-log { max-height: 150px; overflow-y: auto; touch-action: pan-y; -webkit-overflow-scrolling: touch; }
 .menu-log p { margin: 0; padding: 5px 0; color: var(--muted); border-top: 1px solid #242424; font-size: 14px; line-height: 1.25; }
 .menu-log p:first-child { color: var(--text); border-top: 0; }
