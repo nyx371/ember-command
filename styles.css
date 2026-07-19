@@ -131,6 +131,21 @@ button { touch-action: manipulation; }
 .menu-log p { margin: 0; padding: 5px 0; color: var(--muted); border-top: 1px solid #242424; font-size: 14px; line-height: 1.25; }
 .menu-log p:first-child { color: var(--text); border-top: 0; }
 
+.menu-link {
+  display: block;
+  margin-top: 10px;
+  padding: 9px 10px;
+  color: var(--accent);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: center;
+  text-decoration: none;
+}
+.menu-link:active { background: #1a1a2a; }
+
 .cheat-row { display: grid; gap: 6px; margin-top: 10px; }
 .cheat-btn {
   width: 100%;
