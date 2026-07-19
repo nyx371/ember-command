@@ -931,6 +931,11 @@ function installZoomGuards() {
   }, { passive: false });
 }
 
+const menu = document.querySelector('.menu');
+document.addEventListener('click', event => {
+  if (menu.open && !menu.contains(event.target)) menu.open = false;
+});
+
 dom.world.addEventListener('click', event => {
   const button = event.target.closest('.entity');
   if (!button) return;
