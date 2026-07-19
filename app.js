@@ -24,11 +24,14 @@ const RAID_BASE_SIZE = 3;       // grunts in a day-0 raiding party
 const RAID_SIZE_PER_DAY = 2;
 const RAID_ARRIVE_TICKS = 6;    // approach window — only patrol strikes during it
 const VOLLEY_EVERY = 2;         // ticks between combat volleys (attack cooldown, both sides)
-const RAIDER = { hp: 60, dmg: 7 };   // per grunt (WC2 grunt ≈ footman)
+const RAIDER = { hp: 60, dmg: 7 };   // per grunt at day 0 (WC2 grunt ≈ footman)
+const RAIDER_HP_PER_DAY = 6;    // grunts toughen and hit harder as days pass
+const RAIDER_DMG_PER_DAY = 1;
 const WORKER_HP = 30;
-// Raiders target defenders first, then workers, then buildings in this order —
-// the town hall falls last.
-const RAID_TARGET_ORDER = ['farm', 'barracks', 'lumbermill', 'blacksmith', 'tower', 'guardtower', 'hall'];
+// Raider targeting: warriors first, then the towers shooting at them, then
+// workers, then the remaining buildings — the town hall falls last.
+const RAID_TOWER_TARGETS = ['guardtower', 'tower'];
+const RAID_TARGET_ORDER = ['farm', 'barracks', 'lumbermill', 'blacksmith', 'hall'];
 
 const NODE_DEFS = [
   { id: 'gold-1',   type: 'gold',   label: 'gold mine',  icon: 'goldSite',   distance: 1, capacity: 20000 },
@@ -167,7 +170,7 @@ function createGame() {
     structures: Object.fromEntries(Object.keys(BUILDINGS).map(k => [k, k === 'hall' ? 1 : 0])),
     enemy: { strength: 20, known: false },
     exploreProgress: 0,
-    raid: { nextIn: RAID_INTERVAL_BASE },
+    raid: { nextIn: RAID_INTERVAL_BASE, interval: RAID_INTERVAL_BASE },
     raids: [],            // active raiding parties (see spawnRaid)
     workerWounds: 0,      // damage accumulated toward the next worker death
     log: ['Town hall ready.', 'Workers await orders.'],
@@ -562,10 +565,10 @@ function damageWorkers(state, dmg) {
 }
 
 // Raiders razing buildings: chew through the current target's hp, then destroy
-// it and pick the next per RAID_TARGET_ORDER.
-function damageBuildings(state, raid, dmg) {
-  if (!raid.targetType || state.structures[raid.targetType] <= 0) {
-    raid.targetType = RAID_TARGET_ORDER.find(k => state.structures[k] > 0) || null;
+// it and pick the next from the given priority list.
+function damageBuildings(state, raid, dmg, order) {
+  if (!raid.targetType || !order.includes(raid.targetType) || state.structures[raid.targetType] <= 0) {
+    raid.targetType = order.find(k => state.structures[k] > 0) || null;
     raid.targetHp = raid.targetType ? BUILDINGS[raid.targetType].hp : 0;
   }
   if (!raid.targetType) return;   // nothing left standing
@@ -579,13 +582,15 @@ function damageBuildings(state, raid, dmg) {
 }
 
 function spawnRaid(state) {
-  const size = RAID_BASE_SIZE + currentDay(state) * RAID_SIZE_PER_DAY;
+  const day = currentDay(state);
+  const size = RAID_BASE_SIZE + day * RAID_SIZE_PER_DAY;
+  const grunt = { hp: RAIDER.hp + day * RAIDER_HP_PER_DAY, dmg: RAIDER.dmg + day * RAIDER_DMG_PER_DAY };
   state.raids.push({
-    id: nextId(), size, hpPool: size * RAIDER.hp,
+    id: nextId(), size, grunt, hpPool: size * grunt.hp,
     arriveIn: RAID_ARRIVE_TICKS, strikeIn: VOLLEY_EVERY,
     targetType: null, targetHp: 0
   });
-  writeLog(state, `Day ${currentDay(state) + 1}: ${size} raiders approaching!`);
+  writeLog(state, `Day ${day + 1}: ${size} raiders approaching!`);
   flashError('Raiders approaching!');
 }
 
@@ -602,19 +607,22 @@ function raidTick(state) {
 
     // My volley (patrol only while they approach).
     raid.hpPool -= defenseDamage(state, arrived);
-    raid.size = Math.max(0, Math.ceil(raid.hpPool / RAIDER.hp));
+    raid.size = Math.max(0, Math.ceil(raid.hpPool / raid.grunt.hp));
     if (raid.size <= 0) {
       writeLog(state, 'Raid repelled!');
       return;
     }
 
-    // Their volley: defenders, then workers, then buildings.
+    // Their volley: warriors, then the towers shooting at them, then workers,
+    // then everything else.
     if (!arrived) return;
-    const dmg = raid.size * RAIDER.dmg;
+    const dmg = raid.size * raid.grunt.dmg;
     const defenders = homeGroups(state, ['defend', 'patrol']);
+    const towersStanding = RAID_TOWER_TARGETS.some(k => state.structures[k] > 0);
     if (defenders.length > 0) damageGroup(state, defenders[0], dmg);
+    else if (towersStanding) damageBuildings(state, raid, dmg, RAID_TOWER_TARGETS);
     else if (state.workers.length > 0) damageWorkers(state, dmg);
-    else damageBuildings(state, raid, dmg);
+    else damageBuildings(state, raid, dmg, RAID_TARGET_ORDER);
   });
   state.raids = state.raids.filter(r => r.size > 0);
 }
@@ -659,7 +667,8 @@ function gameTick() {
   game.raid.nextIn -= 1;
   if (game.raid.nextIn <= 0) {
     spawnRaid(game);
-    game.raid.nextIn = Math.max(RAID_INTERVAL_MIN, RAID_INTERVAL_BASE - currentDay(game) * RAID_INTERVAL_SCALE);
+    game.raid.interval = Math.max(RAID_INTERVAL_MIN, RAID_INTERVAL_BASE - currentDay(game) * RAID_INTERVAL_SCALE);
+    game.raid.nextIn = game.raid.interval;
   }
   raidTick(game);
 
@@ -1139,7 +1148,9 @@ function renderWorld() {
   const enemyMeta  = game.enemy.known ? 'enemy base' : 'uncharted';
   army.appendChild(entityButton({
     kind: 'enemy', type: 'enemy', id: 1,
-    icon: 'enemyBase', label: 'enemy', count: enemyCount, meta: enemyMeta, danger: true
+    icon: 'enemyBase', label: 'enemy', count: enemyCount, meta: enemyMeta, danger: true,
+    // Debug: ring fills as the next raid approaches (updates once per tick).
+    progressBars: [Math.max(0, Math.min(1, (game.raid.interval - game.raid.nextIn) / game.raid.interval))]
   }));
 
   // Active raiding parties, one danger tile each: grunt count + what they're up to.
@@ -1349,6 +1360,15 @@ function bindCheatToggle(buttonId, key) {
 }
 bindCheatToggle('cheat-train', 'fastTrain');
 bindCheatToggle('cheat-harvest', 'fastHarvest');
+
+document.getElementById('cheat-raid').addEventListener('click', () => {
+  spawnRaid(game);
+  render();
+});
+document.getElementById('cheat-footman').addEventListener('click', () => {
+  game.units.footmen.count += 1;
+  render();
+});
 
 // ── Boot ───────────────────────────────────────────────────────────────────
 

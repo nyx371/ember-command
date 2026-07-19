@@ -49,12 +49,16 @@ sprite).** Times/costs are real WC2 values; every duration is multiplied by
 `TIME_SCALE` (via `scaledTime`) when a job starts.
 
 ### Raid combat
-`game.raids` holds live raiding parties (`{ size, hpPool, arriveIn, strikeIn,
-targetType, targetHp }`). `spawnRaid` on the raid interval; `raidTick` runs
-volleys every `VOLLEY_EVERY` ticks — patrol strikes during the approach,
-defend+patrol+towers after arrival. Raiders target defenders first, then
-workers (wounds pools: `units[k].wounds`, `game.workerWounds`), then buildings
-per `RAID_TARGET_ORDER` (hall last). Alarms go through `flashError`.
+`game.raids` holds live raiding parties (`{ size, grunt: {hp, dmg}, hpPool,
+arriveIn, strikeIn, targetType, targetHp }`). Grunt stats scale with the day
+(`RAIDER_HP_PER_DAY` / `RAIDER_DMG_PER_DAY`). `spawnRaid` on the raid
+interval (`game.raid.interval` feeds the countdown ring on the enemy tile);
+`raidTick` runs volleys every `VOLLEY_EVERY` ticks — patrol strikes during
+the approach, defend+patrol+towers after arrival. Raider targeting: warriors
+→ towers (`RAID_TOWER_TARGETS`) → workers (wounds pools: `units[k].wounds`,
+`game.workerWounds`) → remaining buildings per `RAID_TARGET_ORDER` (hall
+last). Alarms go through `flashError`. Cheat buttons can force a raid and
+spawn footmen.
 
 ### Timed jobs (one system)
 `game.jobs` — every in-flight timed thing. Shared shape
