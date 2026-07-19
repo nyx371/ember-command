@@ -215,8 +215,10 @@ button { touch-action: manipulation; }
 .world-group.workers::-webkit-scrollbar { display: none; }
 .world-group.workers > .entity {
   flex: 0 0 auto;
-  width: 68px;
-  height: 58px;
+  /* Match a building button: same width as one cell of the 4-column structures
+     grid, same height. */
+  width: calc((100% - 9px) / 4);
+  height: 42px;
 }
 
 .construction-queue {
@@ -329,7 +331,7 @@ button { touch-action: manipulation; }
   line-height: 16px;
   pointer-events: none;
 }
-.count-badge .icon { width: 14px; height: 14px; object-fit: cover; image-rendering: pixelated; }
+.count-badge .icon { width: 11px; height: 11px; object-fit: cover; image-rendering: pixelated; }
 .entity.dimmed { opacity: 0.35; }
 
 .command-info {

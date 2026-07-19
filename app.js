@@ -21,6 +21,8 @@ const SOLDIER_ATTACK = 0.10;    // enemy strength reduced per soldier per tick o
 const ARCHER_ATTACK = 0.06;
 const ENEMY_REBUILD = 0.05;     // enemy strength rebuilt per tick
 const RAID_BASE_STRENGTH = 3;   // raid strength = this + day * 2
+const TOWER_POWER = 2;          // base-defense contribution per tower
+const GUARD_TOWER_POWER = 4;    // per guard tower
 const CHEAT_SPEED = 5;          // multiplier applied by fast-train / fast-harvest toggles
 
 installZoomGuards();
@@ -53,6 +55,10 @@ const ICONS = {
   hall: 'assets/icons/h_bld_townhall.png',
   farm: 'assets/icons/h_bld_farm.png',
   barracks: 'assets/icons/h_bld_barracks.png',
+  lumbermill: 'assets/icons/h_bld_lumbermill.png',
+  blacksmith: 'assets/icons/h_bld_blacksmith.png',
+  tower: 'assets/icons/h_bld_tower.png',
+  guardtower: 'assets/icons/h_bld_watchtower.png',
   enemy: 'assets/icons/o_unit_grunt.png',
   attack: 'assets/icons/c_sword1.png',
   stop: 'assets/icons/c_stop.png',
@@ -84,8 +90,13 @@ function createGame() {
     structures: {
       hall: 1,
       farms: 0,
-      barracks: 0
+      barracks: 0,
+      lumbermill: 0,
+      blacksmith: 0,
+      towers: 0,
+      guardtowers: 0
     },
+    upgrades: [],
     enemy: { strength: 20, known: false },
     exploreProgress: 0,
     raid: { nextIn: RAID_INTERVAL_BASE },
@@ -144,18 +155,37 @@ function setOrder(state, unitType, order) {
   writeLog(state, `${unitType === 'soldiers' ? 'Footmen' : 'Archers'}: ${order}.`);
 }
 
+// Build times are the real Warcraft II values (in seconds).
 const BUILDABLE_STRUCTURES = [
   {
-    type: 'farm', icon: 'farm', label: 'build farm', duration: 10,
+    type: 'farm', icon: 'farm', label: 'build farm', duration: 100,
     cost: { gold: 500, lumber: 250 },
     complete: state => { state.structures.farms += 1; writeLog(state, 'Farm complete.'); }
   },
   {
-    type: 'barracks', icon: 'barracks', label: 'build barracks', duration: 20,
+    type: 'barracks', icon: 'barracks', label: 'build barracks', duration: 200,
     cost: { gold: 700, lumber: 450 },
     complete: state => { state.structures.barracks += 1; selectEntity('structure', 'barracks', 1); writeLog(state, 'Barracks complete.'); }
+  },
+  {
+    type: 'lumbermill', icon: 'lumbermill', label: 'build lumber mill', duration: 150,
+    cost: { gold: 600, lumber: 450 },
+    complete: state => { state.structures.lumbermill += 1; writeLog(state, 'Lumber mill complete.'); }
+  },
+  {
+    type: 'blacksmith', icon: 'blacksmith', label: 'build blacksmith', duration: 200,
+    cost: { gold: 800, lumber: 450 },
+    complete: state => { state.structures.blacksmith += 1; writeLog(state, 'Blacksmith complete.'); }
+  },
+  {
+    type: 'tower', icon: 'tower', label: 'build tower', duration: 60,
+    cost: { gold: 550, lumber: 200 },
+    complete: state => { state.structures.towers += 1; writeLog(state, 'Tower complete.'); }
   }
 ];
+
+const GUARD_TOWER_COST = { gold: 500, lumber: 150 };
+const GUARD_TOWER_TIME = 140;
 
 function costIcons(cost) {
   return Object.entries(cost).map(([icon, n]) => ({ icon, n }));
@@ -166,12 +196,13 @@ const COMMANDS = {
     hall: [
       {
         id: 'train-worker',
-        icon: 'worker', label: 'train worker', cost: [{ icon: 'gold', n: 400 }, { icon: 'supply', n: 1 }], duration: 5, producer: 'hall',
+        icon: 'worker', label: 'train worker', cost: [{ icon: 'gold', n: 400 }, { icon: 'supply', n: 1 }], duration: 45, producer: 'hall',
+        available: s => supplyUsed(s) + supplyReserved(s) < supplyCap(s) && queueLength(s, 'hall') < queueMax(s, 'hall'),
         enabled: s => s.resources.gold >= 400 && supplyUsed(s) + supplyReserved(s) < supplyCap(s) && queueLength(s, 'hall') < queueMax(s, 'hall'),
         reason: s => supplyUsed(s) + supplyReserved(s) >= supplyCap(s) ? 'Supply capped — build a farm'
                    : queueLength(s, 'hall') >= queueMax(s, 'hall') ? 'Queue full' : '',
         run: s => startProduction(s, {
-          id: 'train-worker', producer: 'hall', icon: 'worker', label: 'worker', duration: 5,
+          id: 'train-worker', producer: 'hall', icon: 'worker', label: 'worker', duration: 45,
           cost: { gold: 400 },
           complete: state => { state.workers.push(createWorker('idle')); autoAssignWorkers(state); writeLog(state, 'Worker ready.'); }
         })
@@ -180,28 +211,44 @@ const COMMANDS = {
     barracks: [
       {
         id: 'train-soldier',
-        icon: 'soldier', label: 'train footman', cost: [{ icon: 'gold', n: 600 }, { icon: 'supply', n: 1 }], duration: 6, producer: 'barracks',
+        icon: 'soldier', label: 'train footman', cost: [{ icon: 'gold', n: 600 }, { icon: 'supply', n: 1 }], duration: 60, producer: 'barracks',
+        available: s => s.structures.barracks > 0 && supplyUsed(s) + supplyReserved(s) < supplyCap(s) && queueLength(s, 'barracks') < queueMax(s, 'barracks'),
         enabled: s => s.structures.barracks > 0 && s.resources.gold >= 600 && supplyUsed(s) + supplyReserved(s) < supplyCap(s) && queueLength(s, 'barracks') < queueMax(s, 'barracks'),
         reason: s => supplyUsed(s) + supplyReserved(s) >= supplyCap(s) ? 'Supply capped — build a farm'
                    : queueLength(s, 'barracks') >= queueMax(s, 'barracks') ? 'Queue full' : '',
         run: s => startProduction(s, {
-          id: 'train-soldier', producer: 'barracks', icon: 'soldier', label: 'footman', duration: 6,
+          id: 'train-soldier', producer: 'barracks', icon: 'soldier', label: 'footman', duration: 60,
           cost: { gold: 600 },
           complete: state => { state.units.soldiers.count += 1; writeLog(state, 'Footman ready.'); }
         })
       },
       {
         id: 'train-archer',
-        icon: 'archer', label: 'train archer', cost: [{ icon: 'gold', n: 500 }, { icon: 'lumber', n: 50 }, { icon: 'supply', n: 1 }], duration: 7, producer: 'barracks',
-        enabled: s => s.structures.barracks > 0 && s.resources.gold >= 500 && s.resources.lumber >= 50 && supplyUsed(s) + supplyReserved(s) < supplyCap(s) && queueLength(s, 'barracks') < queueMax(s, 'barracks'),
-        reason: s => supplyUsed(s) + supplyReserved(s) >= supplyCap(s) ? 'Supply capped — build a farm'
+        icon: 'archer', label: 'train archer', cost: [{ icon: 'gold', n: 500 }, { icon: 'lumber', n: 50 }, { icon: 'supply', n: 1 }], duration: 70, producer: 'barracks',
+        available: s => s.structures.barracks > 0 && s.structures.lumbermill > 0 && supplyUsed(s) + supplyReserved(s) < supplyCap(s) && queueLength(s, 'barracks') < queueMax(s, 'barracks'),
+        enabled: s => s.structures.barracks > 0 && s.structures.lumbermill > 0 && s.resources.gold >= 500 && s.resources.lumber >= 50 && supplyUsed(s) + supplyReserved(s) < supplyCap(s) && queueLength(s, 'barracks') < queueMax(s, 'barracks'),
+        reason: s => s.structures.lumbermill === 0 ? 'Need a lumber mill'
+                   : supplyUsed(s) + supplyReserved(s) >= supplyCap(s) ? 'Supply capped — build a farm'
                    : queueLength(s, 'barracks') >= queueMax(s, 'barracks') ? 'Queue full' : '',
         run: s => startProduction(s, {
-          id: 'train-archer', producer: 'barracks', icon: 'archer', label: 'archer', duration: 7,
+          id: 'train-archer', producer: 'barracks', icon: 'archer', label: 'archer', duration: 70,
           cost: { gold: 500, lumber: 50 },
           complete: state => { state.units.archers.count += 1; writeLog(state, 'Archer ready.'); }
         })
       },
+    ],
+    tower: [
+      {
+        id: 'upgrade-guardtower', icon: 'guardtower', label: 'upgrade to guard tower', cost: costIcons(GUARD_TOWER_COST),
+        available: s => s.structures.towers > pendingGuardTowers(s) && s.structures.lumbermill > 0,
+        enabled: s => s.structures.towers > pendingGuardTowers(s) && s.structures.lumbermill > 0 && canAfford(s, GUARD_TOWER_COST),
+        reason: s => s.structures.lumbermill === 0 ? 'Need a lumber mill'
+                   : s.structures.towers <= pendingGuardTowers(s) ? 'No tower free to upgrade' : '',
+        run: s => startUpgrade(s, {
+          kind: 'guardtower', icon: 'guardtower', label: 'guard tower', duration: GUARD_TOWER_TIME, cost: GUARD_TOWER_COST,
+          complete: st => { st.structures.towers -= 1; st.structures.guardtowers += 1; writeLog(st, 'Guard tower ready.'); }
+        })
+      }
     ]
   },
   workerGroup: [
@@ -411,6 +458,35 @@ function advanceConstructions(state) {
   });
 }
 
+// ── Upgrades (timed building upgrades, no worker) ───────────────────────────
+
+function pendingGuardTowers(state) {
+  return state.upgrades.filter(u => u.kind === 'guardtower').length;
+}
+
+function startUpgrade(state, spec) {
+  if (!canAfford(state, spec.cost)) return;
+  spend(state, spec.cost);
+  state.upgrades.push({ id: nextId(), remaining: spec.duration, ...spec });
+  writeLog(state, `${spec.label}: upgrading.`);
+}
+
+function cancelUpgrade(state, id) {
+  const u = state.upgrades.find(x => x.id === id);
+  if (!u) return;
+  state.upgrades = state.upgrades.filter(x => x.id !== id);
+  Object.keys(u.cost).forEach(k => { state.resources[k] += u.cost[k]; });
+  writeLog(state, `${u.label}: upgrade cancelled, refunded.`);
+}
+
+function advanceUpgrades(state) {
+  const step = state.cheats.fastTrain ? CHEAT_SPEED : 1;
+  state.upgrades.forEach(u => { u.remaining -= step; });
+  const done = state.upgrades.filter(u => u.remaining <= 0);
+  state.upgrades = state.upgrades.filter(u => u.remaining > 0);
+  done.forEach(u => u.complete(state));
+}
+
 // ── Army helpers ───────────────────────────────────────────────────────────
 
 function orderPower(state, order) {
@@ -438,7 +514,8 @@ function triggerRaid(state) {
     return;
   }
 
-  const defendPower = orderPower(state, 'defend');
+  const towerPower = state.structures.towers * TOWER_POWER + state.structures.guardtowers * GUARD_TOWER_POWER;
+  const defendPower = orderPower(state, 'defend') + towerPower;
   const afterDefend = Math.max(0, afterPatrol - defendPower);
 
   if (afterDefend === 0) {
@@ -523,6 +600,7 @@ function gameTick() {
 
   advanceProduction(game);
   advanceConstructions(game);
+  advanceUpgrades(game);
   clampGame(game);
   render();
 }
@@ -537,6 +615,7 @@ function selectedCommands(state) {
     return [
       ...BUILDABLE_STRUCTURES.map(b => ({
         id: `build-${b.type}`, icon: b.icon, label: b.label, cost: costIcons(b.cost),
+        available: s => s.workers.some(w => matchesSource(w, source)),
         enabled: s => canAfford(s, b.cost) && s.workers.some(w => matchesSource(w, source)),
         reason: s => !s.workers.some(w => matchesSource(w, source)) ? 'No worker available' : '',
         run: s => startConstruction(s, source, b)
@@ -593,6 +672,13 @@ function commandError(state, command) {
   }
   const r = command.reason ? command.reason(state) : '';
   return r || 'Can’t do that right now';
+}
+
+// Fade a command only when it's unavailable for a NON-resource reason. A command
+// with an available() reports its non-resource prerequisites; commands without
+// one (no resource cost) fade whenever they're disabled.
+function commandFaded(state, command) {
+  return command.available ? !command.available(state) : !command.enabled(state);
 }
 
 let errorTimer = null;
@@ -832,6 +918,28 @@ function renderConstructionQueue() {
   return list;
 }
 
+function renderUpgradeQueue() {
+  if (!game.upgrades.length) return null;
+  const step = game.cheats.fastTrain ? CHEAT_SPEED : 1;
+  const list = document.createElement('div');
+  list.className = 'construction-queue';
+  game.upgrades.forEach(u => {
+    const chip = document.createElement('button');
+    chip.className = 'construction-chip';
+    chip.dataset.upgradeId = u.id;
+    chip.title = `${u.label} — tap to cancel, refund resources`;
+    chip.setAttribute('aria-label', `cancel ${u.label}`);
+    chip.appendChild(makeIcon(ICONS[u.icon], u.label));
+    chip.appendChild(radialProgressCanvas(Math.min(1, ((u.duration - u.remaining) + tickFraction(step)) / u.duration)));
+    chip.addEventListener('click', () => {
+      cancelUpgrade(game, u.id);
+      render();
+    });
+    list.appendChild(chip);
+  });
+  return list;
+}
+
 function renderWorld() {
   dom.world.replaceChildren();
 
@@ -842,27 +950,32 @@ function renderWorld() {
     icon: 'hall', label: 'town hall'
   }));
 
-  if (game.structures.farms > 0) {
-    structures.appendChild(entityButton({
-      kind: 'structure', type: 'farm', id: 1, compact: true,
-      icon: 'farm', label: 'farms',
-      countLabel: game.structures.farms
-    }));
-  }
-
-  if (game.structures.barracks > 0) {
-    structures.appendChild(entityButton({
-      kind: 'structure', type: 'barracks', id: 1, compact: true,
-      icon: 'barracks', label: 'barracks',
-      countLabel: game.structures.barracks
-    }));
-  }
+  // One tile per built structure type (with a count badge).
+  const STRUCTURE_TILES = [
+    { type: 'farm',       key: 'farms',       icon: 'farm',       label: 'farms' },
+    { type: 'barracks',   key: 'barracks',    icon: 'barracks',   label: 'barracks' },
+    { type: 'lumbermill', key: 'lumbermill',  icon: 'lumbermill', label: 'lumber mill' },
+    { type: 'blacksmith', key: 'blacksmith',  icon: 'blacksmith', label: 'blacksmith' },
+    { type: 'tower',      key: 'towers',      icon: 'tower',      label: 'tower' },
+    { type: 'guardtower', key: 'guardtowers', icon: 'guardtower', label: 'guard tower' }
+  ];
+  STRUCTURE_TILES.forEach(({ type, key, icon, label }) => {
+    if (game.structures[key] > 0) {
+      structures.appendChild(entityButton({
+        kind: 'structure', type, id: 1, compact: true,
+        icon, label, countLabel: game.structures[key]
+      }));
+    }
+  });
 
   const constructionQueue = renderConstructionQueue();
   if (constructionQueue) structures.appendChild(constructionQueue);
 
   const trainingQueue = renderTrainingQueue();
   if (trainingQueue) structures.appendChild(trainingQueue);
+
+  const upgradeQueue = renderUpgradeQueue();
+  if (upgradeQueue) structures.appendChild(upgradeQueue);
 
   // A horizontally scrollable row (see .world-group.workers) of the live
   // resource nodes — each shows its worker count and a harvest ring per worker;
@@ -941,9 +1054,13 @@ function entityInfo(state) {
   const { kind, type } = state.selected;
   if (state.buildMenu) return 'Choose a building';
   if (kind === 'structure') {
-    if (type === 'hall')     return `Town Hall · ${productionMeta(state, 'hall') || 'ready'}`;
-    if (type === 'barracks') return `Barracks · ${productionMeta(state, 'barracks') || 'ready'}`;
-    if (type === 'farm')     return `Farm · +4 supply`;
+    if (type === 'hall')       return `Town Hall · ${productionMeta(state, 'hall') || 'ready'}`;
+    if (type === 'barracks')   return `Barracks · ${productionMeta(state, 'barracks') || 'ready'}`;
+    if (type === 'farm')       return `Farm · +4 supply`;
+    if (type === 'lumbermill') return `Lumber Mill · unlocks archers`;
+    if (type === 'blacksmith') return `Blacksmith`;
+    if (type === 'tower')      return `Tower · upgradable to guard tower`;
+    if (type === 'guardtower') return `Guard Tower · base defense`;
   }
   if (kind === 'workerGroup') {
     return `idle workers ×${jobCount(state, 'idle')}`;
@@ -999,7 +1116,7 @@ function renderOrders() {
     const button = document.createElement('button');
     button.className = 'command';
     button.dataset.command = command.id;
-    if (!command.enabled(game)) button.classList.add('unavailable');
+    if (commandFaded(game, command)) button.classList.add('unavailable');
     if (command.isActive && command.isActive(game)) button.classList.add('active-order');
     button.title = command.label;
     button.setAttribute('aria-label', command.label);
@@ -1168,6 +1285,15 @@ function updateProgressRings() {
     if (!c) return;
     const step = game.cheats.fastTrain ? CHEAT_SPEED : 1;
     const p = Math.min(1, ((c.duration - c.remaining) + tickFraction(step)) / c.duration);
+    chip.querySelectorAll('.radial-progress').forEach(el => el.remove());
+    chip.appendChild(radialProgressCanvas(p));
+  });
+
+  document.querySelectorAll('.construction-chip[data-upgrade-id]').forEach(chip => {
+    const u = game.upgrades.find(x => x.id === Number(chip.dataset.upgradeId));
+    if (!u) return;
+    const step = game.cheats.fastTrain ? CHEAT_SPEED : 1;
+    const p = Math.min(1, ((u.duration - u.remaining) + tickFraction(step)) / u.duration);
     chip.querySelectorAll('.radial-progress').forEach(el => el.remove());
     chip.appendChild(radialProgressCanvas(p));
   });
