@@ -94,8 +94,8 @@ function createGame() {
   };
 }
 
-function createWorker(job = 'idle', cooldown = 0) {
-  return { id: nextId(), job, cooldown };
+function createWorker(job = 'idle', nodeId = null, cooldown = 0) {
+  return { id: nextId(), job, nodeId, cooldown };
 }
 
 function nextId() {
@@ -231,38 +231,34 @@ function nodeCooldown(node) {
   return HARVEST_GATHER[node.type] + node.distance * TRAVEL_PER_DISTANCE;
 }
 
-// The node a given resource type is currently worked at: nearest (lowest
-// distance) node of that type that still has resources. Workers are assigned to
-// a resource type, not a specific node, and always target this one.
-function activeNode(state, type) {
-  return state.nodes
-    .filter(n => n.type === type && n.remaining > 0)
-    .sort((a, b) => a.distance - b.distance)[0] || null;
-}
-
-// Workers shown as "at" a node: those harvesting its resource type, but only on
-// the node that's currently active for that type (nearest with resources).
+// Workers are pinned to a specific node (worker.nodeId); this lists the ones on
+// a given node. No "nearest" routing — a worker stays on its node until it's
+// depleted, then goes idle and auto-assign re-places it.
 function workersAtNode(state, node) {
-  return activeNode(state, node.type) === node
-    ? state.workers.filter(w => w.job === node.type)
-    : [];
+  return state.workers.filter(w => w.nodeId === node.id);
 }
 
-// A worker to spare for a new task: prefer an idle one, otherwise pull one off
-// the other resource so tapping a node rebalances labour without micromanaging.
-function spareWorker(state, forType) {
+// First live node of a resource type (array order), used for auto-assignment.
+function firstNodeOfType(state, type) {
+  return state.nodes.find(n => n.type === type && n.remaining > 0) || null;
+}
+
+// A worker to spare when assigning to `node`: an idle one first, then one from
+// another node of the SAME resource, then one from a different resource.
+function spareWorker(state, node) {
   return state.workers.find(w => w.job === 'idle')
-      || state.workers.find(w => (w.job === 'gold' || w.job === 'lumber') && w.job !== forType);
+      || state.workers.find(w => w.job === node.type && w.nodeId !== node.id)
+      || state.workers.find(w => (w.job === 'gold' || w.job === 'lumber') && w.job !== node.type);
 }
 
-function sendWorkerToType(state, type) {
-  const node = activeNode(state, type);
-  if (!node) return;
-  const worker = spareWorker(state, type);
+function sendWorkerToNode(state, node) {
+  if (node.remaining <= 0) return;
+  const worker = spareWorker(state, node);
   if (!worker) return;
-  worker.job = type;
+  worker.job = node.type;
+  worker.nodeId = node.id;
   worker.cooldown = nodeCooldown(node);
-  writeLog(state, `Worker → ${type}.`);
+  writeLog(state, `Worker → ${node.label}.`);
 }
 
 // Idle workers don't sit around: they mine gold, or cut wood if no gold is
@@ -270,10 +266,11 @@ function sendWorkerToType(state, type) {
 function autoAssignWorkers(state) {
   state.workers.forEach(w => {
     if (w.job !== 'idle') return;
-    const type = activeNode(state, 'gold') ? 'gold' : (activeNode(state, 'lumber') ? 'lumber' : null);
-    if (!type) return;
-    w.job = type;
-    w.cooldown = nodeCooldown(activeNode(state, type));
+    const node = firstNodeOfType(state, 'gold') || firstNodeOfType(state, 'lumber');
+    if (!node) return;
+    w.job = node.type;
+    w.nodeId = node.id;
+    w.cooldown = nodeCooldown(node);
   });
 }
 
@@ -353,15 +350,21 @@ function advanceProduction(state) {
 
 // ── Construction (worker-built structures) ──────────────────────────────────
 
-function startConstruction(state, workerType, building) {
+// source is 'idle' or a node id — which worker pool to pull the builder from.
+function matchesSource(worker, source) {
+  return source === 'idle' ? worker.job === 'idle' : worker.nodeId === source;
+}
+
+function startConstruction(state, source, building) {
   if (!canAfford(state, building.cost)) return;
-  const worker = state.workers.find(w => w.job === workerType);
+  const worker = state.workers.find(w => matchesSource(w, source));
   if (!worker) return;
   spend(state, building.cost);
-  // Where the builder heads back once done: to the resource it was on, so a
-  // worker pulled off gold/lumber returns there (or auto-reassigns if depleted).
-  const returnTo = (worker.job === 'gold' || worker.job === 'lumber') ? worker.job : 'idle';
+  // The builder remembers which node it came off, so it returns there when done
+  // (or auto-reassigns if that node has been depleted meanwhile).
+  const returnTo = worker.nodeId;
   worker.job = 'building';
+  worker.nodeId = null;
   worker.cooldown = 0;
   state.constructions.push({
     id: nextId(), workerId: worker.id, type: building.type, returnTo,
@@ -373,15 +376,17 @@ function startConstruction(state, workerType, building) {
   writeLog(state, `${building.label}: worker dispatched.`);
 }
 
-function releaseBuilder(state, workerId, returnTo = 'idle') {
+function releaseBuilder(state, workerId, returnTo = null) {
   const worker = state.workers.find(w => w.id === workerId);
   if (!worker) return;
-  const node = (returnTo === 'gold' || returnTo === 'lumber') ? activeNode(state, returnTo) : null;
-  if (node) {
-    worker.job = returnTo;
+  const node = returnTo ? nodeById(state, returnTo) : null;
+  if (node && node.remaining > 0) {
+    worker.job = node.type;
+    worker.nodeId = node.id;
     worker.cooldown = nodeCooldown(node);
   } else {
-    worker.job = 'idle';        // original resource is gone; auto-assign re-routes it
+    worker.job = 'idle';        // original node is gone/depleted; auto-assign re-routes it
+    worker.nodeId = null;
     worker.cooldown = 0;
   }
 }
@@ -459,15 +464,14 @@ function gameTick() {
   // Idle workers pick up gold (or wood) on their own before harvesting resolves.
   autoAssignWorkers(game);
 
-  // Harvest — each worker draws from the nearest live node of its resource type,
-  // which depletes; when every node of that type is dry the worker goes idle
-  // (and auto-assign will re-route it next tick).
+  // Harvest — each worker draws from the specific node it's pinned to; when that
+  // node runs dry the worker goes idle (auto-assign re-places it next tick).
   const harvestStep = game.cheats.fastHarvest ? CHEAT_SPEED : 1;
   game.workers.forEach(worker => {
     if (worker.job !== 'gold' && worker.job !== 'lumber') return;
-    const node = activeNode(game, worker.job);
-    if (!node) {
-      worker.job = 'idle'; worker.cooldown = 0;   // every node of this type is dry
+    const node = nodeById(game, worker.nodeId);
+    if (!node || node.remaining <= 0) {
+      worker.job = 'idle'; worker.nodeId = null; worker.cooldown = 0;
       return;
     }
     worker.cooldown -= harvestStep;
@@ -476,14 +480,11 @@ function gameTick() {
     node.remaining -= gained;
     if (worker.job === 'gold')   game.resources.gold   += gained;
     if (worker.job === 'lumber') game.resources.lumber += gained;
+    worker.cooldown = nodeCooldown(node);
     if (node.remaining <= 0) {
       node.remaining = 0;
       writeLog(game, `${node.label} depleted.`);
     }
-    // Next cycle targets whatever node is nearest-available now (may have just
-    // shifted to a farther one), so travel time updates accordingly.
-    const next = activeNode(game, worker.job);
-    worker.cooldown = nodeCooldown(next || node);
   });
 
   // Exploration — accumulate per exploring unit; discover when threshold reached
@@ -536,8 +537,8 @@ function selectedCommands(state) {
     return [
       ...BUILDABLE_STRUCTURES.map(b => ({
         id: `build-${b.type}`, icon: b.icon, label: b.label, cost: costIcons(b.cost),
-        enabled: s => canAfford(s, b.cost) && s.workers.some(w => w.job === source),
-        reason: s => !s.workers.some(w => w.job === source) ? 'No worker available' : '',
+        enabled: s => canAfford(s, b.cost) && s.workers.some(w => matchesSource(w, source)),
+        reason: s => !s.workers.some(w => matchesSource(w, source)) ? 'No worker available' : '',
         run: s => startConstruction(s, source, b)
       })),
       { id: 'build-menu-stop', icon: 'stop', label: 'stop', cost: '',
@@ -553,13 +554,13 @@ function selectedCommands(state) {
     const type = node.type;
     return [
       { id: 'node-assign', icon: 'harvest', overlay: type, label: `harvest ${type}`, cost: '',
-        enabled: s => activeNode(s, type) != null && spareWorker(s, type) != null,
-        reason: s => activeNode(s, type) == null ? `${type} depleted` : 'No spare workers',
-        run: s => sendWorkerToType(s, type) },
+        enabled: s => node.remaining > 0 && spareWorker(s, node) != null,
+        reason: s => node.remaining <= 0 ? `${node.label} depleted` : 'No spare workers',
+        run: s => sendWorkerToNode(s, node) },
       { id: 'node-build', icon: 'build', label: 'build', cost: '',
         enabled: s => workersAtNode(s, node).length > 0,
         reason: () => 'No workers here to build',
-        run: s => { s.buildMenu = true; s.buildSource = type; } }
+        run: s => { s.buildMenu = true; s.buildSource = node.id; } }
     ];
   }
   if (state.selected.kind === 'army') return COMMANDS.army[state.selected.type] || [];
@@ -942,9 +943,9 @@ function entityInfo(state) {
   if (kind === 'node') {
     const node = nodeById(state, state.selected.id);
     if (!node) return type;
-    const n = jobCount(state, node.type);
+    const n = workersAtNode(state, node).length;
     const status = node.remaining <= 0 ? 'depleted' : `${fmtQty(node.remaining)} left`;
-    return `${node.label} · ${status} · dist ${node.distance} · ${n} on ${node.type}`;
+    return `${node.label} · ${status} · dist ${node.distance} · ${n} working`;
   }
   if (kind === 'army') {
     const u = state.units[type];
@@ -1122,8 +1123,8 @@ bindCheatToggle('cheat-harvest', 'fastHarvest');
 function spawnStartingWorkers(rounds) {
   if (rounds.length === 0) return;
   const [[goldCd, lumberCd], ...rest] = rounds;
-  game.workers.push(createWorker('gold', goldCd));
-  game.workers.push(createWorker('lumber', lumberCd));
+  game.workers.push(createWorker('gold', 'gold-1', goldCd));
+  game.workers.push(createWorker('lumber', 'forest-1', lumberCd));
   render();
   if (rest.length > 0) setTimeout(() => spawnStartingWorkers(rest), 300);
 }
