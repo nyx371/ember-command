@@ -59,7 +59,8 @@ const ICONS = {
   patrol: 'assets/icons/c_hpatrol.png',
   explore: 'assets/icons/c_hmove.png',
   build: 'assets/icons/c_build.png',
-  harvest: 'assets/icons/c_harvest.png'
+  harvest: 'assets/icons/c_harvest.png',
+  return: 'assets/icons/c_hreturn.png'
 };
 
 let idCounter = 0;
@@ -92,8 +93,8 @@ function createGame() {
   };
 }
 
-function createWorker(job = 'idle', nodeId = null, cooldown = 0) {
-  return { id: nextId(), job, nodeId, cooldown };
+function createWorker(job = 'idle', cooldown = 0) {
+  return { id: nextId(), job, cooldown };
 }
 
 function nextId() {
@@ -164,7 +165,7 @@ const COMMANDS = {
       {
         id: 'train-worker',
         icon: 'worker', label: 'train worker', cost: [{ icon: 'gold', n: 400 }, { icon: 'supply', n: 1 }], duration: 5, producer: 'hall',
-        enabled: s => s.resources.gold >= 400 && supplyUsed(s) + supplyReserved(s) < supplyCap(s) && queueLength(s, 'hall') < QUEUE_MAX,
+        enabled: s => s.resources.gold >= 400 && supplyUsed(s) + supplyReserved(s) < supplyCap(s) && queueLength(s, 'hall') < queueMax(s, 'hall'),
         run: s => startProduction(s, {
           id: 'train-worker', producer: 'hall', icon: 'worker', label: 'worker', duration: 5,
           cost: { gold: 400 },
@@ -176,7 +177,7 @@ const COMMANDS = {
       {
         id: 'train-soldier',
         icon: 'soldier', label: 'train soldier', cost: [{ icon: 'gold', n: 600 }, { icon: 'supply', n: 1 }], duration: 6, producer: 'barracks',
-        enabled: s => s.structures.barracks > 0 && s.resources.gold >= 600 && supplyUsed(s) + supplyReserved(s) < supplyCap(s) && queueLength(s, 'barracks') < QUEUE_MAX,
+        enabled: s => s.structures.barracks > 0 && s.resources.gold >= 600 && supplyUsed(s) + supplyReserved(s) < supplyCap(s) && queueLength(s, 'barracks') < queueMax(s, 'barracks'),
         run: s => startProduction(s, {
           id: 'train-soldier', producer: 'barracks', icon: 'soldier', label: 'soldier', duration: 6,
           cost: { gold: 600 },
@@ -186,7 +187,7 @@ const COMMANDS = {
       {
         id: 'train-archer',
         icon: 'archer', label: 'train archer', cost: [{ icon: 'gold', n: 500 }, { icon: 'lumber', n: 50 }, { icon: 'supply', n: 1 }], duration: 7, producer: 'barracks',
-        enabled: s => s.structures.barracks > 0 && s.resources.gold >= 500 && s.resources.lumber >= 50 && supplyUsed(s) + supplyReserved(s) < supplyCap(s) && queueLength(s, 'barracks') < QUEUE_MAX,
+        enabled: s => s.structures.barracks > 0 && s.resources.gold >= 500 && s.resources.lumber >= 50 && supplyUsed(s) + supplyReserved(s) < supplyCap(s) && queueLength(s, 'barracks') < queueMax(s, 'barracks'),
         run: s => startProduction(s, {
           id: 'train-archer', producer: 'barracks', icon: 'archer', label: 'archer', duration: 7,
           cost: { gold: 500, lumber: 50 },
@@ -201,12 +202,12 @@ const COMMANDS = {
       run: s => { s.buildMenu = true; } }
   ],
   node: [
-    { id: 'node-assign', icon: 'harvest', label: 'assign worker', cost: 'from idle',
-      enabled: (s, id) => jobCount(s, 'idle') > 0 && (nodeById(s, id)?.remaining ?? 0) > 0,
-      run: (s, id) => assignWorkerToNode(s, id) },
-    { id: 'node-recall', icon: 'stop', label: 'recall worker', cost: 'to idle',
-      enabled: (s, id) => workersOnNode(s, id).length > 0,
-      run: (s, id) => recallWorkerFromNode(s, id) }
+    { id: 'node-assign', icon: 'harvest', label: 'send worker', cost: 'from idle',
+      enabled: (s, type) => jobCount(s, 'idle') > 0 && activeNode(s, type) != null,
+      run: (s, type) => sendWorkerToType(s, type) },
+    { id: 'node-recall', icon: 'return', label: 'recall worker', cost: 'to idle',
+      enabled: (s, type) => jobCount(s, type) > 0,
+      run: (s, type) => recallWorkerFromType(s, type) }
   ],
   army: {
     soldiers: makeOrderCommands('soldiers'),
@@ -230,35 +231,51 @@ function nodeCooldown(node) {
   return HARVEST_GATHER[node.type] + node.distance * TRAVEL_PER_DISTANCE;
 }
 
-function workersOnNode(state, nodeId) {
-  return state.workers.filter(w => w.nodeId === nodeId);
+// The node a given resource type is currently worked at: nearest (lowest
+// distance) node of that type that still has resources. Workers are assigned to
+// a resource type, not a specific node, and always target this one.
+function activeNode(state, type) {
+  return state.nodes
+    .filter(n => n.type === type && n.remaining > 0)
+    .sort((a, b) => a.distance - b.distance)[0] || null;
 }
 
-function assignWorkerToNode(state, nodeId) {
-  const node = nodeById(state, nodeId);
-  if (!node || node.remaining <= 0) return;
+// Workers shown as "at" a node: those harvesting its resource type, but only on
+// the node that's currently active for that type (nearest with resources).
+function workersAtNode(state, node) {
+  return activeNode(state, node.type) === node
+    ? state.workers.filter(w => w.job === node.type)
+    : [];
+}
+
+function sendWorkerToType(state, type) {
+  const node = activeNode(state, type);
+  if (!node) return;
   const worker = state.workers.find(w => w.job === 'idle');
   if (!worker) return;
-  worker.job = node.type;
-  worker.nodeId = node.id;
+  worker.job = type;
   worker.cooldown = nodeCooldown(node);
-  writeLog(state, `Worker → ${node.label}.`);
+  writeLog(state, `Worker → ${type}.`);
 }
 
-function recallWorkerFromNode(state, nodeId) {
-  const node = nodeById(state, nodeId);
-  const worker = state.workers.find(w => w.nodeId === nodeId);
+function recallWorkerFromType(state, type) {
+  const worker = state.workers.find(w => w.job === type);
   if (!worker) return;
   worker.job = 'idle';
-  worker.nodeId = null;
   worker.cooldown = 0;
-  writeLog(state, `Worker recalled from ${node ? node.label : 'node'}.`);
+  writeLog(state, `Worker recalled to idle.`);
 }
 
 // ── Production helpers ─────────────────────────────────────────────────────
 
 function queueLength(state, producer) {
   return state.production.filter(job => job.producer === producer).length;
+}
+
+// Total queue depth allowed scales with building count: QUEUE_MAX per structure
+// (5 barracks → up to 25 queued, with producerCapacity advancing at once).
+function queueMax(state, producer) {
+  return QUEUE_MAX * producerCapacity(state, producer);
 }
 
 function producerCapacity(state, producer) {
@@ -284,7 +301,7 @@ function supplyReserved(state) {
 }
 
 function startProduction(state, job) {
-  if (queueLength(state, job.producer) >= QUEUE_MAX || !canAfford(state, job.cost)) return;
+  if (queueLength(state, job.producer) >= queueMax(state, job.producer) || !canAfford(state, job.cost)) return;
   spend(state, job.cost);
   state.production.push({ ...job, uid: nextId(), remaining: job.duration });
   const depth = queueLength(state, job.producer);
@@ -331,7 +348,6 @@ function startConstruction(state, workerType, building) {
   if (!worker) return;
   spend(state, building.cost);
   worker.job = 'building';
-  worker.nodeId = null;
   worker.cooldown = 0;
   state.constructions.push({
     id: nextId(), workerId: worker.id, type: building.type,
@@ -347,7 +363,6 @@ function releaseBuilder(state, workerId) {
   const worker = state.workers.find(w => w.id === workerId);
   if (!worker) return;
   worker.job = 'idle';
-  worker.nodeId = null;
   worker.cooldown = 0;
 }
 
@@ -426,9 +441,9 @@ function gameTick() {
   const harvestStep = game.cheats.fastHarvest ? CHEAT_SPEED : 1;
   game.workers.forEach(worker => {
     if (worker.job !== 'gold' && worker.job !== 'lumber') return;
-    const node = nodeById(game, worker.nodeId);
-    if (!node || node.remaining <= 0) {
-      worker.job = 'idle'; worker.nodeId = null; worker.cooldown = 0;
+    const node = activeNode(game, worker.job);
+    if (!node) {
+      worker.job = 'idle'; worker.cooldown = 0;   // every node of this type is dry
       return;
     }
     worker.cooldown -= harvestStep;
@@ -437,12 +452,14 @@ function gameTick() {
     node.remaining -= gained;
     if (worker.job === 'gold')   game.resources.gold   += gained;
     if (worker.job === 'lumber') game.resources.lumber += gained;
-    worker.cooldown = nodeCooldown(node);
     if (node.remaining <= 0) {
       node.remaining = 0;
-      writeLog(game, `${node.label} depleted — workers idle.`);
-      workersOnNode(game, node.id).forEach(w => { w.job = 'idle'; w.nodeId = null; w.cooldown = 0; });
+      writeLog(game, `${node.label} depleted.`);
     }
+    // Next cycle targets whatever node is nearest-available now (may have just
+    // shifted to a farther one), so travel time updates accordingly.
+    const next = activeNode(game, worker.job);
+    worker.cooldown = nodeCooldown(next || node);
   });
 
   // Exploration — accumulate per exploring unit; discover when threshold reached
@@ -505,13 +522,13 @@ function selectedCommands(state) {
     return COMMANDS.workerGroup;
   }
   if (state.selected.kind === 'node') {
-    const id = state.selected.id;
-    const node = nodeById(state, id);
+    const node = nodeById(state, state.selected.id);
+    const type = node ? node.type : state.selected.type;
     return COMMANDS.node.map(cmd => ({
       ...cmd,
-      overlay: cmd.id === 'node-assign' && node ? node.type : cmd.overlay,
-      enabled: s => cmd.enabled(s, id),
-      run: s => cmd.run(s, id)
+      overlay: cmd.id === 'node-assign' ? type : cmd.overlay,
+      enabled: s => cmd.enabled(s, type),
+      run: s => cmd.run(s, type)
     }));
   }
   if (state.selected.kind === 'army') return COMMANDS.army[state.selected.type] || [];
@@ -631,7 +648,7 @@ function fmtQty(n) {
   return String(n);
 }
 
-function entityButton({ kind, type, id, icon, label, count, meta, danger, compact, jobIcon, progress, progressBars, progressKey, countLabel, countIcon, quantity, quantityIcon, dimmed }) {
+function entityButton({ kind, type, id, icon, label, count, meta, danger, compact, jobIcon, progress, progressBars, progressKey, countLabel, countIcon, dimmed }) {
   const button = document.createElement('button');
   const classes = ['entity'];
   if (danger)  classes.push('danger');
@@ -671,16 +688,6 @@ function entityButton({ kind, type, id, icon, label, count, meta, danger, compac
     text.textContent = countLabel;
     cnt.appendChild(text);
     button.appendChild(cnt);
-  }
-
-  if (quantity != null) {
-    const qty = document.createElement('span');
-    qty.className = 'qty-bar';
-    if (quantityIcon) qty.appendChild(makeIcon(ICONS[quantityIcon], quantityIcon));
-    const text = document.createElement('span');
-    text.textContent = fmtQty(quantity);
-    qty.appendChild(text);
-    button.appendChild(qty);
   }
 
   if (!compact) {
@@ -791,8 +798,9 @@ function renderWorld() {
   if (trainingQueue) structures.appendChild(trainingQueue);
 
   // Idle workers, then one tile per resource node — a horizontally scrollable
-  // row (see .world-group.workers). Node tiles show remaining quantity, the
-  // number of workers on them, and a harvest ring per worker.
+  // row (see .world-group.workers). Node tiles show the number of workers on
+  // them and a harvest ring per worker; the amount remaining is in the command
+  // card. Workers assigned to a resource type appear on its nearest live node.
   const workers = document.createElement('section');
   workers.className = 'world-group workers';
 
@@ -805,7 +813,7 @@ function renderWorld() {
 
   const harvestStep = game.cheats.fastHarvest ? CHEAT_SPEED : 1;
   game.nodes.forEach(node => {
-    const nodeWorkers = workersOnNode(game, node.id);
+    const nodeWorkers = workersAtNode(game, node);
     const cd = nodeCooldown(node);
     const progressBars = nodeWorkers.map(w =>
       Math.min(1, ((cd - w.cooldown) + tickFraction(harvestStep)) / cd));
@@ -814,7 +822,6 @@ function renderWorld() {
       icon: node.icon, label: `${node.label} (dist ${node.distance})`, compact: true,
       progressBars, progressKey: `node:${node.id}`,
       countLabel: nodeWorkers.length, countIcon: 'worker',
-      quantity: node.remaining, quantityIcon: node.type,
       dimmed: node.remaining <= 0
     }));
   });
@@ -874,9 +881,9 @@ function entityInfo(state) {
   if (kind === 'node') {
     const node = nodeById(state, state.selected.id);
     if (!node) return type;
-    const n = workersOnNode(state, node.id).length;
+    const n = jobCount(state, node.type);
     const status = node.remaining <= 0 ? 'depleted' : `${fmtQty(node.remaining)} left`;
-    return `${node.label} · ${status} · dist ${node.distance} · ${n} working`;
+    return `${node.label} · ${status} · dist ${node.distance} · ${n} on ${node.type}`;
   }
   if (kind === 'army') {
     const u = state.units[type];
@@ -1054,8 +1061,8 @@ bindCheatToggle('cheat-harvest', 'fastHarvest');
 function spawnStartingWorkers(rounds) {
   if (rounds.length === 0) return;
   const [[goldCd, lumberCd], ...rest] = rounds;
-  game.workers.push(createWorker('gold', 'gold-1', goldCd));
-  game.workers.push(createWorker('lumber', 'forest-1', lumberCd));
+  game.workers.push(createWorker('gold', goldCd));
+  game.workers.push(createWorker('lumber', lumberCd));
   render();
   if (rest.length > 0) setTimeout(() => spawnStartingWorkers(rest), 300);
 }
@@ -1071,7 +1078,7 @@ function updateProgressRings() {
       if (node) {
         const cd = nodeCooldown(node);
         const step = game.cheats.fastHarvest ? CHEAT_SPEED : 1;
-        values = workersOnNode(game, node.id)
+        values = workersAtNode(game, node)
           .map(w => Math.min(1, ((cd - w.cooldown) + tickFraction(step)) / cd));
       }
     }

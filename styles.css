@@ -330,23 +330,6 @@ button { touch-action: manipulation; }
   pointer-events: none;
 }
 .count-badge .icon { width: 14px; height: 14px; object-fit: cover; image-rendering: pixelated; }
-.qty-bar {
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  background: rgba(0, 0, 0, 0.78);
-  color: var(--text);
-  font-size: 12px;
-  font-family: monospace;
-  padding: 0 3px;
-  border-radius: 2px;
-  line-height: 15px;
-  pointer-events: none;
-}
-.qty-bar .icon { width: 12px; height: 12px; object-fit: cover; image-rendering: pixelated; }
 .entity.dimmed { opacity: 0.35; }
 
 .command-info {
