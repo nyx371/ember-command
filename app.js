@@ -5,6 +5,8 @@ const ICON_VERSION = '20260719-design1';
 const TICK_MS = 1000;
 const DAY_TICKS = 60;
 const CHEAT_SPEED = 5;          // multiplier applied by fast-train / fast-harvest toggles
+const TIME_SCALE = 0.3;         // global multiplier on ALL build/train/upgrade durations
+                                // (tables keep real WC2 seconds; this scales them at job start)
 
 const HARVEST_YIELD = 100;
 const HARVEST_GATHER = { gold: 6, lumber: 12 };   // ticks spent gathering at the node itself
@@ -18,9 +20,15 @@ const ENEMY_REBUILD = 0.05;     // enemy strength rebuilt per tick
 const RAID_INTERVAL_BASE = 90;  // ticks between raids on day 0
 const RAID_INTERVAL_SCALE = 8;  // reduce interval by this per day
 const RAID_INTERVAL_MIN = 25;
-const RAID_BASE_STRENGTH = 3;
-const RAID_STRENGTH_PER_DAY = 2;
-const RAID_GOLD_PER_STRENGTH = 40;
+const RAID_BASE_SIZE = 3;       // grunts in a day-0 raiding party
+const RAID_SIZE_PER_DAY = 2;
+const RAID_ARRIVE_TICKS = 6;    // approach window — only patrol strikes during it
+const VOLLEY_EVERY = 2;         // ticks between combat volleys (attack cooldown, both sides)
+const RAIDER = { hp: 60, dmg: 7 };   // per grunt (WC2 grunt ≈ footman)
+const WORKER_HP = 30;
+// Raiders target defenders first, then workers, then buildings in this order —
+// the town hall falls last.
+const RAID_TARGET_ORDER = ['farm', 'barracks', 'lumbermill', 'blacksmith', 'tower', 'guardtower', 'hall'];
 
 const NODE_DEFS = [
   { id: 'gold-1',   type: 'gold',   label: 'gold mine',  icon: 'goldSite',   distance: 1, capacity: 20000 },
@@ -33,46 +41,46 @@ const NODE_DEFS = [
 // (plus an ICONS entry if it uses a new sprite).
 
 // Buildings. `build` marks worker-constructable ones (cost + real WC2 seconds);
-// `supply` adds to the supply cap; `defense` contributes to raid defense;
-// `blurb` feeds the command-info line (string or fn(state)); `onBuilt` runs
-// after the count increments.
+// `supply` adds to the supply cap; `hp` is what raiders must chew through to
+// destroy one; `dmg` makes it shoot back at raiders each volley; `blurb` feeds
+// the command-info line (string or fn(state)); `onBuilt` runs after the count
+// increments.
 const BUILDINGS = {
   hall: {
     icon: 'hall', label: 'town hall',
-    supply: 4,
+    supply: 4, hp: 1200,
     blurb: s => `Town Hall · ${productionMeta(s, 'hall') || 'ready'}`
   },
   farm: {
     icon: 'farm', label: 'farm',
-    supply: 4,
+    supply: 4, hp: 400,
     build: { cost: { gold: 500, lumber: 250 }, time: 100 },
     blurb: 'Farm · +4 supply'
   },
   barracks: {
-    icon: 'barracks', label: 'barracks',
+    icon: 'barracks', label: 'barracks', hp: 800,
     build: { cost: { gold: 700, lumber: 450 }, time: 200 },
     blurb: s => `Barracks · ${productionMeta(s, 'barracks') || 'ready'}`,
     onBuilt: s => { s.selected = { kind: 'structure', type: 'barracks', id: 1 }; }
   },
   lumbermill: {
-    icon: 'lumbermill', label: 'lumber mill',
+    icon: 'lumbermill', label: 'lumber mill', hp: 600,
     build: { cost: { gold: 600, lumber: 450 }, time: 150 },
     blurb: 'Lumber Mill · unlocks archers'
   },
   blacksmith: {
-    icon: 'blacksmith', label: 'blacksmith',
+    icon: 'blacksmith', label: 'blacksmith', hp: 775,
     build: { cost: { gold: 800, lumber: 450 }, time: 200 },
     blurb: 'Blacksmith'
   },
   tower: {
-    icon: 'tower', label: 'tower',
+    icon: 'tower', label: 'tower', hp: 100, dmg: 3,
     build: { cost: { gold: 550, lumber: 200 }, time: 60 },
-    defense: 2,
     blurb: 'Tower · upgradable to guard tower'
   },
   guardtower: {
     icon: 'guardtower', label: 'guard tower',   // via tower upgrade, not the build menu
-    defense: 4,
+    hp: 130, dmg: 8,
     blurb: 'Guard Tower · base defense'
   }
 };
@@ -96,9 +104,11 @@ const UNITS = {
 };
 
 // Army groups (standing-order units). Keys are the `game.units` keys.
+// `hp`/`dmg` drive raid combat (listed first = raiders hit it first);
+// `attack` is siege dps against the enemy base.
 const ARMY = {
-  footmen: { icon: 'footman', label: 'footmen', power: 3, attack: 0.10 },
-  archers: { icon: 'archer',  label: 'archers', power: 2, attack: 0.06 }
+  footmen: { icon: 'footman', label: 'footmen', singular: 'footman', hp: 60, dmg: 7, attack: 0.10 },
+  archers: { icon: 'archer',  label: 'archers', singular: 'archer',  hp: 40, dmg: 5, attack: 0.06 }
 };
 
 const GUARD_TOWER = { cost: { gold: 500, lumber: 150 }, time: 140 };
@@ -121,6 +131,7 @@ const ICONS = {
   tower: 'assets/icons/h_bld_tower.png',
   guardtower: 'assets/icons/h_bld_watchtower.png',
   enemy: 'assets/icons/o_unit_grunt.png',
+  enemyBase: 'assets/icons/o_bld_greathall.png',
   attack: 'assets/icons/c_sword1.png',
   stop: 'assets/icons/c_stop.png',
   defend: 'assets/icons/c_hshield1.png',
@@ -152,11 +163,13 @@ function createGame() {
     buildMenu: false,
     workers: [],
     nodes: NODE_DEFS.map(d => ({ ...d, remaining: d.capacity })),
-    units: Object.fromEntries(Object.keys(ARMY).map(k => [k, { count: 0, order: 'defend' }])),
+    units: Object.fromEntries(Object.keys(ARMY).map(k => [k, { count: 0, order: 'defend', wounds: 0 }])),
     structures: Object.fromEntries(Object.keys(BUILDINGS).map(k => [k, k === 'hall' ? 1 : 0])),
     enemy: { strength: 20, known: false },
     exploreProgress: 0,
     raid: { nextIn: RAID_INTERVAL_BASE },
+    raids: [],            // active raiding parties (see spawnRaid)
+    workerWounds: 0,      // damage accumulated toward the next worker death
     log: ['Town hall ready.', 'Workers await orders.'],
     cheats: { fastTrain: false, fastHarvest: false }
   };
@@ -201,6 +214,12 @@ function spend(state, cost) {
 
 function refund(state, cost) {
   Object.keys(cost).forEach(key => { state.resources[key] += cost[key]; });
+}
+
+// All build/train/upgrade durations pass through this — TIME_SCALE compresses
+// the real WC2 seconds kept in the tables.
+function scaledTime(seconds) {
+  return Math.max(1, Math.round(seconds * TIME_SCALE));
 }
 
 function costIcons(cost) {
@@ -364,9 +383,10 @@ function trainUnit(state, key) {
   const u = UNITS[key];
   if (queueLength(state, u.producer) >= queueMax(state, u.producer) || !canAfford(state, u.cost)) return;
   spend(state, u.cost);
+  const time = scaledTime(u.time);
   state.jobs.push({
     uid: nextId(), kind: 'train', producer: u.producer, supply: 1,
-    icon: u.icon, label: u.label, duration: u.time, remaining: u.time,
+    icon: u.icon, label: u.label, duration: time, remaining: time,
     cost: u.cost, complete: u.done
   });
   const depth = queueLength(state, u.producer);
@@ -383,9 +403,10 @@ function startConstruction(state, key) {
   worker.job = 'building';
   worker.nodeId = null;
   worker.cooldown = 0;
+  const time = scaledTime(b.build.time);
   state.jobs.push({
     uid: nextId(), kind: 'construct', workerId: worker.id, returnTo,
-    icon: b.icon, label: b.label, duration: b.build.time, remaining: b.build.time,
+    icon: b.icon, label: b.label, duration: time, remaining: time,
     cost: b.build.cost,
     complete: s => {
       s.structures[key] += 1;
@@ -400,9 +421,10 @@ function startConstruction(state, key) {
 function startUpgrade(state, spec) {
   if (!canAfford(state, spec.cost)) return;
   spend(state, spec.cost);
+  const time = scaledTime(spec.time);
   state.jobs.push({
     uid: nextId(), kind: 'upgrade', tag: spec.tag,
-    icon: spec.icon, label: spec.label, duration: spec.time, remaining: spec.time,
+    icon: spec.icon, label: spec.label, duration: time, remaining: time,
     cost: spec.cost, complete: spec.complete
   });
   writeLog(state, `${spec.label}: upgrading.`);
@@ -472,11 +494,6 @@ function clampGame(state) {
 
 // ── Army ───────────────────────────────────────────────────────────────────
 
-function orderPower(state, order) {
-  return Object.keys(ARMY).reduce((power, k) =>
-    power + (state.units[k].order === order ? state.units[k].count * ARMY[k].power : 0), 0);
-}
-
 function unitsOnOrder(state, order) {
   return Object.keys(ARMY).reduce((n, k) =>
     n + (state.units[k].order === order ? state.units[k].count : 0), 0);
@@ -487,37 +504,119 @@ function attackDamage(state) {
     dmg + (state.units[k].order === 'attack' ? state.units[k].count * ARMY[k].attack : 0), 0);
 }
 
-function towerDefense(state) {
-  return Object.keys(BUILDINGS)
-    .reduce((sum, k) => sum + (BUILDINGS[k].defense || 0) * state.structures[k], 0);
-}
-
 function setOrder(state, unitType, order) {
   state.units[unitType].order = order;
   writeLog(state, `${cap(ARMY[unitType].label)}: ${order}.`);
 }
 
-// ── Raid ───────────────────────────────────────────────────────────────────
+// ── Raid combat ────────────────────────────────────────────────────────────
+// Raiding parties are real: grunts with hp/damage arrive, exchange volleys
+// every VOLLEY_EVERY ticks, and target defenders first, then workers, then
+// buildings. Units on attack/explore are away from the base and neither fight
+// raiders nor get targeted.
 
-function triggerRaid(state) {
-  const day = currentDay(state);
-  const strength = RAID_BASE_STRENGTH + day * RAID_STRENGTH_PER_DAY;
+function homeGroups(state, orders) {
+  return Object.keys(ARMY).filter(k => orders.includes(state.units[k].order) && state.units[k].count > 0);
+}
 
-  const afterPatrol = Math.max(0, strength - orderPower(state, 'patrol'));
-  if (afterPatrol === 0) {
-    writeLog(state, `Day ${day + 1}: Raid intercepted by patrol.`);
-    return;
+// Damage my side deals per volley. During a raid's approach only patrol
+// intercepts; once it arrives, defend + patrol + towers all fight.
+function defenseDamage(state, arrived) {
+  const orders = arrived ? ['defend', 'patrol'] : ['patrol'];
+  const unitDmg = homeGroups(state, orders)
+    .reduce((sum, k) => sum + state.units[k].count * ARMY[k].dmg, 0);
+  const towerDmg = arrived
+    ? Object.keys(BUILDINGS).reduce((sum, k) => sum + (BUILDINGS[k].dmg || 0) * state.structures[k], 0)
+    : 0;
+  return unitDmg + towerDmg;
+}
+
+// Damage flows into a wounds pool; every full hp's worth kills one unit.
+function damageGroup(state, key, dmg) {
+  const group = state.units[key];
+  group.wounds += dmg;
+  while (group.wounds >= ARMY[key].hp && group.count > 0) {
+    group.wounds -= ARMY[key].hp;
+    group.count -= 1;
+    writeLog(state, `A ${ARMY[key].singular} has fallen.`);
   }
+  if (group.count === 0) group.wounds = 0;
+}
 
-  const afterDefend = Math.max(0, afterPatrol - orderPower(state, 'defend') - towerDefense(state));
-  if (afterDefend === 0) {
-    writeLog(state, `Day ${day + 1}: Raid repelled at base.`);
-    return;
+function damageWorkers(state, dmg) {
+  state.workerWounds += dmg;
+  while (state.workerWounds >= WORKER_HP && state.workers.length > 0) {
+    state.workerWounds -= WORKER_HP;
+    // Builders die last; a dead builder takes its construction down with it.
+    const victim = state.workers.filter(w => w.job !== 'building').pop()
+                || state.workers[state.workers.length - 1];
+    if (victim.job === 'building') {
+      state.jobs = state.jobs.filter(j => !(j.kind === 'construct' && j.workerId === victim.id));
+      writeLog(state, 'A builder was slain — construction abandoned.');
+    } else {
+      writeLog(state, 'A worker has been slain.');
+    }
+    state.workers = state.workers.filter(w => w !== victim);
   }
+  if (state.workers.length === 0) state.workerWounds = 0;
+}
 
-  const goldLost = afterDefend * RAID_GOLD_PER_STRENGTH;
-  state.resources.gold = Math.max(0, state.resources.gold - goldLost);
-  writeLog(state, `Day ${day + 1}: Base raided! ${goldLost} gold lost.`);
+// Raiders razing buildings: chew through the current target's hp, then destroy
+// it and pick the next per RAID_TARGET_ORDER.
+function damageBuildings(state, raid, dmg) {
+  if (!raid.targetType || state.structures[raid.targetType] <= 0) {
+    raid.targetType = RAID_TARGET_ORDER.find(k => state.structures[k] > 0) || null;
+    raid.targetHp = raid.targetType ? BUILDINGS[raid.targetType].hp : 0;
+  }
+  if (!raid.targetType) return;   // nothing left standing
+  raid.targetHp -= dmg;
+  if (raid.targetHp <= 0) {
+    state.structures[raid.targetType] -= 1;
+    writeLog(state, `${cap(BUILDINGS[raid.targetType].label)} destroyed by raiders!`);
+    if (raid.targetType === 'hall') flashError('The town hall has fallen!');
+    raid.targetType = null;
+  }
+}
+
+function spawnRaid(state) {
+  const size = RAID_BASE_SIZE + currentDay(state) * RAID_SIZE_PER_DAY;
+  state.raids.push({
+    id: nextId(), size, hpPool: size * RAIDER.hp,
+    arriveIn: RAID_ARRIVE_TICKS, strikeIn: VOLLEY_EVERY,
+    targetType: null, targetHp: 0
+  });
+  writeLog(state, `Day ${currentDay(state) + 1}: ${size} raiders approaching!`);
+  flashError('Raiders approaching!');
+}
+
+function raidTick(state) {
+  state.raids.forEach(raid => {
+    const arrived = raid.arriveIn <= 0;
+    if (!arrived) {
+      raid.arriveIn -= 1;
+      if (raid.arriveIn <= 0) flashError('Our town is under attack!');
+    }
+    raid.strikeIn -= 1;
+    if (raid.strikeIn > 0) return;
+    raid.strikeIn = VOLLEY_EVERY;
+
+    // My volley (patrol only while they approach).
+    raid.hpPool -= defenseDamage(state, arrived);
+    raid.size = Math.max(0, Math.ceil(raid.hpPool / RAIDER.hp));
+    if (raid.size <= 0) {
+      writeLog(state, 'Raid repelled!');
+      return;
+    }
+
+    // Their volley: defenders, then workers, then buildings.
+    if (!arrived) return;
+    const dmg = raid.size * RAIDER.dmg;
+    const defenders = homeGroups(state, ['defend', 'patrol']);
+    if (defenders.length > 0) damageGroup(state, defenders[0], dmg);
+    else if (state.workers.length > 0) damageWorkers(state, dmg);
+    else damageBuildings(state, raid, dmg);
+  });
+  state.raids = state.raids.filter(r => r.size > 0);
 }
 
 // ── Tick ───────────────────────────────────────────────────────────────────
@@ -556,13 +655,13 @@ function gameTick() {
   // Enemy slowly rebuilds
   game.enemy.strength += ENEMY_REBUILD;
 
-  // Raids
+  // Raids — spawn on a shrinking interval, then fight tick by tick.
   game.raid.nextIn -= 1;
   if (game.raid.nextIn <= 0) {
-    triggerRaid(game);
-    const day = currentDay(game);
-    game.raid.nextIn = Math.max(RAID_INTERVAL_MIN, RAID_INTERVAL_BASE - day * RAID_INTERVAL_SCALE);
+    spawnRaid(game);
+    game.raid.nextIn = Math.max(RAID_INTERVAL_MIN, RAID_INTERVAL_BASE - currentDay(game) * RAID_INTERVAL_SCALE);
   }
+  raidTick(game);
 
   advanceJobs(game);
   clampGame(game);
@@ -1040,8 +1139,19 @@ function renderWorld() {
   const enemyMeta  = game.enemy.known ? 'enemy base' : 'uncharted';
   army.appendChild(entityButton({
     kind: 'enemy', type: 'enemy', id: 1,
-    icon: 'enemy', label: 'enemy', count: enemyCount, meta: enemyMeta, danger: true
+    icon: 'enemyBase', label: 'enemy', count: enemyCount, meta: enemyMeta, danger: true
   }));
+
+  // Active raiding parties, one danger tile each: grunt count + what they're up to.
+  game.raids.forEach(raid => {
+    const meta = raid.arriveIn > 0 ? 'approaching'
+               : raid.targetType ? `razing ${BUILDINGS[raid.targetType].label}`
+               : 'attacking';
+    army.appendChild(entityButton({
+      kind: 'enemy', type: 'raid', id: raid.id,
+      icon: 'enemy', label: 'raiders', count: raid.size, meta, danger: true
+    }));
+  });
 
   dom.world.append(structures, workers, army);
 }

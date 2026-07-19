@@ -39,11 +39,21 @@ timers: `gameTick` (1s, simulation + render) and `updateProgressRings`
   optional `requires: [structureKey]`, `done(state)`. Generates train
   commands, auto-attached to their producer's command list.
 - `ARMY` — per standing-order group (`game.units` keys): `icon`, `label`,
-  `power` (defense math), `attack` (siege dps). Generates army tiles, order
+  `singular`, `hp`/`dmg` (raid combat; first listed group soaks damage first),
+  `attack` (siege dps vs the enemy base). Generates army tiles, order
   commands, combat.
 
 **Adding a building or unit = one table entry (+ `ICONS` line if a new
-sprite).** Times/costs are real WC2 values.
+sprite).** Times/costs are real WC2 values; every duration is multiplied by
+`TIME_SCALE` (via `scaledTime`) when a job starts.
+
+### Raid combat
+`game.raids` holds live raiding parties (`{ size, hpPool, arriveIn, strikeIn,
+targetType, targetHp }`). `spawnRaid` on the raid interval; `raidTick` runs
+volleys every `VOLLEY_EVERY` ticks — patrol strikes during the approach,
+defend+patrol+towers after arrival. Raiders target defenders first, then
+workers (wounds pools: `units[k].wounds`, `game.workerWounds`), then buildings
+per `RAID_TARGET_ORDER` (hall last). Alarms go through `flashError`.
 
 ### Timed jobs (one system)
 `game.jobs` — every in-flight timed thing. Shared shape
