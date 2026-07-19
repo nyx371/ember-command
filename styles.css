@@ -197,8 +197,27 @@ button { touch-action: manipulation; }
   gap: 3px;
 }
 .world-group.structures { grid-template-columns: repeat(4, 1fr); align-content: start; }
-.world-group.workers { grid-template-columns: repeat(4, 1fr); align-content: center; }
 .world-group.army { grid-template-columns: repeat(4, 1fr); align-content: end; }
+
+/* Resource nodes + idle-worker tile: a single horizontally scrollable row so
+   more nodes can be added without shrinking the tiles or wrapping. */
+.world-group.workers {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 3px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x;
+  scrollbar-width: none;
+}
+.world-group.workers::-webkit-scrollbar { display: none; }
+.world-group.workers > .entity {
+  flex: 0 0 auto;
+  width: 68px;
+  height: 58px;
+}
 
 .construction-queue {
   grid-column: 1 / -1;
@@ -311,6 +330,23 @@ button { touch-action: manipulation; }
   pointer-events: none;
 }
 .count-badge .icon { width: 14px; height: 14px; object-fit: cover; image-rendering: pixelated; }
+.qty-bar {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: rgba(0, 0, 0, 0.78);
+  color: var(--text);
+  font-size: 12px;
+  font-family: monospace;
+  padding: 0 3px;
+  border-radius: 2px;
+  line-height: 15px;
+  pointer-events: none;
+}
+.qty-bar .icon { width: 12px; height: 12px; object-fit: cover; image-rendering: pixelated; }
 .entity.dimmed { opacity: 0.35; }
 
 .command-info {
@@ -390,6 +426,10 @@ button { touch-action: manipulation; }
   image-rendering: pixelated;
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.9));
   pointer-events: none;
+}
+/* Number-key hints are keyboard-only; hide them on touch devices. */
+@media (hover: none) {
+  .command-hotkey { display: none; }
 }
 
 @media (max-height: 760px) {
