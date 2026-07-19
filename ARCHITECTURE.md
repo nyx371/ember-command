@@ -32,9 +32,10 @@ timers: `gameTick` (1s, simulation + render) and `updateProgressRings`
 
 ### Data tables drive content
 - `BUILDINGS` — per building: `icon`, `label`, optional `build {cost, time}`
-  (worker-constructable), `supply`, `defense` (raid), `blurb` (info line,
-  string or `fn(state)`), `onBuilt`. Generates: `game.structures` keys,
-  structure tiles, the build menu, supply cap, tower defense, info text.
+  (worker-constructable), `supply`, `hp` (raiders must raze it), `dmg` (shoots
+  back at raiders), `blurb` (info line, string or `fn(state)`), `onBuilt`.
+  Generates: `game.structures` keys, structure tiles, the build menu, supply
+  cap, tower damage, info text.
 - `UNITS` — per trainable unit: `producer` (structure key), `cost`, `time`,
   optional `requires: [structureKey]`, `done(state)`. Generates train
   commands, auto-attached to their producer's command list.
@@ -104,7 +105,7 @@ badge animates for free — never add a third lookup scheme.
 ## Recipes
 
 - **New building**: entry in `BUILDINGS` (+`ICONS`). `build:` puts it in the
-  build menu; `supply`/`defense`/`blurb`/`onBuilt` as needed. Done.
+  build menu; `supply`/`hp`/`dmg`/`blurb`/`onBuilt` as needed. Done.
 - **New trainable unit**: entry in `UNITS` (+`ICONS`); if it's an army group,
   add the `ARMY` entry and have `done` increment `units.<key>.count`.
 - **New upgrade**: a command via `gated(...)` calling `startUpgrade` with a
@@ -113,7 +114,7 @@ badge animates for free — never add a third lookup scheme.
 - **New resource node**: entry in `NODE_DEFS`. Tiles, harvest, depletion,
   auto-assign all follow.
 - **New standing order**: add to `makeOrderCommands` and `orderIcon`; hook
-  behavior in `gameTick`/`triggerRaid` via `unitsOnOrder`/`orderPower`.
+  behavior in `gameTick`/`raidTick` via `unitsOnOrder`/`homeGroups`.
 
 ## Invariants (don't break)
 
