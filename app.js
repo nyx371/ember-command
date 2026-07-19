@@ -237,10 +237,6 @@ function activeProductionJobs(state, producer) {
     .slice(0, producerCapacity(state, producer));
 }
 
-function activeProduction(state, producer) {
-  return state.production.find(job => job.producer === producer) || null;
-}
-
 function canAfford(state, cost) {
   return Object.keys(cost).every(key => state.resources[key] >= cost[key]);
 }
@@ -256,18 +252,25 @@ function supplyReserved(state) {
 function startProduction(state, job) {
   if (queueLength(state, job.producer) >= QUEUE_MAX || !canAfford(state, job.cost)) return;
   spend(state, job.cost);
-  state.production.push({ ...job, remaining: job.duration });
+  state.production.push({ ...job, uid: nextId(), remaining: job.duration });
   const depth = queueLength(state, job.producer);
   writeLog(state, depth > 1 ? `${job.label}: queued (${depth}).` : `${job.label}: started.`);
 }
 
-function cancelJob(state, producer, jobId) {
-  const jobs = state.production.filter(j => j.producer === producer && j.id === jobId);
-  if (!jobs.length) return;
-  const job = jobs[jobs.length - 1];
+function cancelJobByUid(state, uid) {
+  const job = state.production.find(j => j.uid === uid);
+  if (!job) return;
   state.production = state.production.filter(j => j !== job);
   Object.keys(job.cost).forEach(k => { state.resources[k] += job.cost[k]; });
   writeLog(state, `${job.label}: cancelled, refunded.`);
+}
+
+// Progress for a single queued/training unit. Only the first `capacity` jobs
+// per producer are actually advancing; jobs beyond that are still queued (0).
+function jobProgress(state, job) {
+  if (!activeProductionJobs(state, job.producer).includes(job)) return 0;
+  const step = state.cheats.fastTrain ? CHEAT_SPEED : 1;
+  return Math.min(1, ((job.duration - job.remaining) + tickFraction(step)) / job.duration);
 }
 
 function advanceProduction(state) {
@@ -701,10 +704,7 @@ function renderWorld() {
   structures.className = 'world-group structures';
   structures.appendChild(entityButton({
     kind: 'structure', type: 'hall', id: 1, compact: true,
-    icon: 'hall', label: 'town hall',
-    jobIcon: productionIcon(game, 'hall'),
-    progress: productionProgress(game, 'hall'),
-    progressKey: 'production:hall'
+    icon: 'hall', label: 'town hall'
   }));
 
   if (game.structures.farms > 0) {
@@ -719,9 +719,6 @@ function renderWorld() {
     structures.appendChild(entityButton({
       kind: 'structure', type: 'barracks', id: 1, compact: true,
       icon: 'barracks', label: 'barracks',
-      jobIcon: productionIcon(game, 'barracks'),
-      progressBars: productionProgressBars(game, 'barracks'),
-      progressKey: 'production:barracks',
       countLabel: game.structures.barracks
     }));
   }
@@ -795,20 +792,6 @@ function productionMeta(state, producer) {
   const queued = jobs.length - 1;
   return queued > 0 ? `${jobs[0].label} ${jobs[0].remaining}s +${queued}` : `${jobs[0].label} ${jobs[0].remaining}s`;
 }
-function productionIcon(state, producer) {
-  const job = activeProduction(state, producer);
-  return job ? job.icon : '';
-}
-function productionProgress(state, producer) {
-  const job = activeProduction(state, producer);
-  if (!job) return 0;
-  const step = state.cheats.fastTrain ? CHEAT_SPEED : 1;
-  return Math.min(1, ((job.duration - job.remaining) + tickFraction(step)) / job.duration);
-}
-function productionProgressBars(state, producer) {
-  const step = state.cheats.fastTrain ? CHEAT_SPEED : 1;
-  return activeProductionJobs(state, producer).map(job => Math.min(1, ((job.duration - job.remaining) + tickFraction(step)) / job.duration));
-}
 
 function entityInfo(state) {
   const { kind, type } = state.selected;
@@ -832,27 +815,20 @@ function entityInfo(state) {
 function renderTrainingQueue() {
   if (!game.production.length) return null;
 
-  const groups = [];
-  game.production.forEach(job => {
-    const group = groups.find(g => g.producer === job.producer && g.id === job.id);
-    if (group) group.count += 1;
-    else groups.push({ id: job.id, producer: job.producer, icon: job.icon, label: job.label, count: 1 });
-  });
-
+  // One chip per unit in training/queue — each carries the unit icon, its own
+  // progress ring, and cancels just that unit when tapped.
   const list = document.createElement('div');
   list.className = 'construction-queue';
-  groups.forEach(({ id, producer, icon, label, count }) => {
+  game.production.forEach(job => {
     const chip = document.createElement('button');
     chip.className = 'construction-chip';
-    chip.title = `${label} ×${count} — tap to cancel one, refund resources`;
-    chip.setAttribute('aria-label', `cancel queued ${label}`);
-    chip.appendChild(makeIcon(ICONS[icon], label));
-    const badge = document.createElement('span');
-    badge.className = 'queue-count';
-    badge.textContent = count;
-    chip.appendChild(badge);
+    chip.dataset.uid = job.uid;
+    chip.title = `${job.label} — tap to cancel, refund resources`;
+    chip.setAttribute('aria-label', `cancel ${job.label}`);
+    chip.appendChild(makeIcon(ICONS[job.icon], job.label));
+    chip.appendChild(radialProgressCanvas(jobProgress(game, job)));
     chip.addEventListener('click', () => {
-      cancelJob(game, producer, id);
+      cancelJobByUid(game, job.uid);
       render();
     });
     list.appendChild(chip);
@@ -995,11 +971,7 @@ function updateProgressRings() {
   document.querySelectorAll('.job-badge[data-progress-key]').forEach(badge => {
     const key = badge.dataset.progressKey;
     let values = [];
-    if (key === 'production:hall') {
-      values = [productionProgress(game, 'hall')];
-    } else if (key === 'production:barracks') {
-      values = productionProgressBars(game, 'barracks');
-    } else if (key.startsWith('harvest:')) {
+    if (key.startsWith('harvest:')) {
       const type = key.slice('harvest:'.length);
       const step = game.cheats.fastHarvest ? CHEAT_SPEED : 1;
       values = game.workers.filter(w => w.job === type)
@@ -1007,6 +979,13 @@ function updateProgressRings() {
     }
     badge.querySelectorAll('.radial-progress').forEach(el => el.remove());
     values.forEach(p => badge.appendChild(radialProgressCanvas(p, values.length)));
+  });
+
+  document.querySelectorAll('.construction-chip[data-uid]').forEach(chip => {
+    const job = game.production.find(j => j.uid === Number(chip.dataset.uid));
+    if (!job) return;
+    chip.querySelectorAll('.radial-progress').forEach(el => el.remove());
+    chip.appendChild(radialProgressCanvas(jobProgress(game, job)));
   });
 
   document.querySelectorAll('.construction-chip[data-construction-id]').forEach(chip => {

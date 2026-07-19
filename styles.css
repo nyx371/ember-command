@@ -324,19 +324,6 @@ button { touch-action: manipulation; }
   text-overflow: ellipsis;
 }
 
-.queue-count {
-  position: absolute;
-  bottom: 0;
-  right: 0;
-  background: rgba(0, 0, 0, 0.78);
-  color: var(--text);
-  font-size: 14px;
-  font-family: monospace;
-  padding: 0 3px;
-  line-height: 16px;
-  pointer-events: none;
-}
-
 .command-cost-icons {
   position: absolute;
   left: 0;
