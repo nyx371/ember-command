@@ -150,7 +150,6 @@ function createGame() {
     // jobs add { tag }.
     jobs: [],
     buildMenu: false,
-    buildSource: null,
     workers: [],
     nodes: NODE_DEFS.map(d => ({ ...d, remaining: d.capacity })),
     units: Object.fromEntries(Object.keys(ARMY).map(k => [k, { count: 0, order: 'defend' }])),
@@ -291,6 +290,18 @@ function autoAssignWorkers(state) {
   });
 }
 
+// Builder to dispatch for a construction: an idle worker first, otherwise one
+// pulled off the most plentiful live node (the crew we can most afford to
+// shrink). Null when nobody can be spared.
+function builderWorker(state) {
+  const idle = state.workers.find(w => w.job === 'idle');
+  if (idle) return idle;
+  const richest = state.nodes
+    .filter(n => n.remaining > 0 && workersAtNode(state, n).length > 0)
+    .sort((a, b) => b.remaining - a.remaining)[0];
+  return richest ? workersAtNode(state, richest)[0] : null;
+}
+
 // Builder released from a finished/cancelled construction: back to its node if
 // it still has resources, otherwise idle (auto-assign re-routes it next tick).
 function releaseBuilder(state, workerId, returnTo) {
@@ -362,15 +373,10 @@ function trainUnit(state, key) {
   writeLog(state, depth > 1 ? `${u.label}: queued (${depth}).` : `${u.label}: started.`);
 }
 
-// source is 'idle' or a node id — which worker pool to pull the builder from.
-function matchesSource(worker, source) {
-  return source === 'idle' ? worker.job === 'idle' : worker.nodeId === source;
-}
-
-function startConstruction(state, source, key) {
+function startConstruction(state, key) {
   const b = BUILDINGS[key];
   if (!canAfford(state, b.build.cost)) return;
-  const worker = state.workers.find(w => matchesSource(w, source));
+  const worker = builderWorker(state);
   if (!worker) return;
   spend(state, b.build.cost);
   const returnTo = worker.nodeId;
@@ -629,8 +635,8 @@ function makeOrderCommands(unitType) {
 }
 
 // Static command sets, derived from the data tables. Train commands attach to
-// their producer automatically; extra per-structure commands (upgrades) are
-// appended after.
+// their producer automatically; extra per-structure commands (the hall's build
+// menu, tower upgrades) are appended after.
 const COMMANDS = {
   structure: (() => {
     const byStructure = {};
@@ -638,29 +644,29 @@ const COMMANDS = {
       const producer = UNITS[key].producer;
       (byStructure[producer] = byStructure[producer] || []).push(trainCommand(key));
     });
+    (byStructure.hall = byStructure.hall || []).push({
+      id: 'open-build', icon: 'build', label: 'construct building', cost: '',
+      enabled: s => builderWorker(s) != null,
+      reason: () => 'No worker available',
+      run: s => { s.buildMenu = true; }
+    });
     (byStructure.tower = byStructure.tower || []).push(guardTowerCommand());
     return byStructure;
   })(),
-  workerGroup: [
-    { id: 'wg-construct', icon: 'build', label: 'construct', cost: 'idle worker',
-      enabled: s => workerCount(s, 'idle') > 0,
-      run: s => { s.buildMenu = true; s.buildSource = 'idle'; } }
-  ],
+  workerGroup: [],
   army: Object.fromEntries(Object.keys(ARMY).map(k => [k, makeOrderCommands(k)]))
 };
 
-function buildMenuCommands(state) {
-  const source = state.buildSource || 'idle';
-  const hasWorker = s => s.workers.some(w => matchesSource(w, source));
+function buildMenuCommands() {
   return [
     ...Object.keys(BUILDINGS).filter(key => BUILDINGS[key].build).map(key => {
       const b = BUILDINGS[key];
       return {
         id: `build-${key}`, icon: b.icon, label: `build ${b.label}`, cost: costIcons(b.build.cost),
-        available: hasWorker,
-        reason: s => !hasWorker(s) ? 'No worker available' : '',
-        enabled: s => hasWorker(s) && canAfford(s, b.build.cost),
-        run: s => startConstruction(s, source, key)
+        available: s => builderWorker(s) != null,
+        reason: s => builderWorker(s) == null ? 'No worker available' : '',
+        enabled: s => builderWorker(s) != null && canAfford(s, b.build.cost),
+        run: s => startConstruction(s, key)
       };
     }),
     { id: 'build-menu-stop', icon: 'stop', label: 'stop', cost: '',
@@ -674,18 +680,14 @@ function nodeCommands(state, node) {
     { id: 'node-assign', icon: 'harvest', overlay: node.type, label: `harvest ${node.type}`, cost: '',
       enabled: s => node.remaining > 0 && spareWorker(s, node) != null,
       reason: s => node.remaining <= 0 ? `${node.label} depleted` : 'No spare workers',
-      run: s => sendWorkerToNode(s, node) },
-    { id: 'node-build', icon: 'build', label: 'build', cost: '',
-      enabled: s => workersAtNode(s, node).length > 0,
-      reason: () => 'No workers here to build',
-      run: s => { s.buildMenu = true; s.buildSource = node.id; } }
+      run: s => sendWorkerToNode(s, node) }
   ];
 }
 
 function selectedCommands(state) {
-  // Build menu is modal over whatever is selected; buildSource records which
-  // worker pool to pull the builder from (idle, or a specific node).
-  if (state.buildMenu) return buildMenuCommands(state);
+  // Build menu is modal over whatever is selected; the builder is chosen at
+  // dispatch time by builderWorker (idle first, then richest node's crew).
+  if (state.buildMenu) return buildMenuCommands();
   if (state.selected.kind === 'structure') return COMMANDS.structure[state.selected.type] || [];
   if (state.selected.kind === 'workerGroup') return COMMANDS.workerGroup;
   if (state.selected.kind === 'node') {
@@ -745,7 +747,6 @@ function flashError(message) {
 function selectEntity(kind, type, id) {
   game.selected = { kind, type, id };
   game.buildMenu = false;
-  game.buildSource = null;
   render();
 }
 

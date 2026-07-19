@@ -215,10 +215,11 @@ button { touch-action: manipulation; }
 .world-group.workers::-webkit-scrollbar { display: none; }
 .world-group.workers > .entity {
   flex: 0 0 auto;
-  /* Match a building button: same width as one cell of the 4-column structures
-     grid, same height. */
+  /* Match a building button exactly: same width as one cell of the 4-column
+     structures grid (3 × 3px gaps), height from .entity.compact's min-height
+     so the small-screen media query applies to both alike. Overflowing tiles
+     scroll horizontally. */
   width: calc((100% - 9px) / 4);
-  height: 42px;
 }
 
 .construction-queue {
