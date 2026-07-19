@@ -316,6 +316,22 @@ function sendWorkerToNode(state, node) {
   writeLog(state, `Worker → ${node.label}.`);
 }
 
+// Long-press variant: pull every spare worker to this node. spareWorker stops
+// matching once everyone is already here, which terminates the loop.
+function sendAllWorkersToNode(state, node) {
+  if (node.remaining <= 0) return;
+  let moved = 0;
+  let worker;
+  while (moved < 200 && (worker = spareWorker(state, node))) {
+    assignWorker(worker, node);
+    moved += 1;
+  }
+  if (moved > 0) {
+    flashTile(`node:${node.type}:${node.id}`, 'spawn');
+    writeLog(state, `${moved} workers → ${node.label}.`);
+  }
+}
+
 // Idle workers don't sit around: they mine gold, or cut wood if no gold is
 // left. Keeps the economy running without manual assignment.
 function autoAssignWorkers(state) {
@@ -548,14 +564,27 @@ function attackDamage(state) {
 }
 
 // Move one unit between order pools (footmen before archers, mirroring the
-// one-worker-per-tap convention).
+// one-worker-per-tap convention). Long-press moves the whole pool.
 function moveUnit(state, from, to) {
   const pool = state.army[from];
   const type = Object.keys(ARMY).find(k => pool[k] > 0);
   if (!type) return;
   pool[type] -= 1;
   state.army[to][type] += 1;
+  if (poolCount(pool) === 0) pool.wounds = 0;
   writeLog(state, `${cap(ARMY[type].singular)} → ${to}.`);
+}
+
+function moveAllUnits(state, from, to) {
+  const pool = state.army[from];
+  let moved = 0;
+  Object.keys(ARMY).forEach(k => {
+    moved += pool[k];
+    state.army[to][k] += pool[k];
+    pool[k] = 0;
+  });
+  pool.wounds = 0;
+  if (moved > 0) writeLog(state, `${moved} units → ${to}.`);
 }
 
 // ── Raid combat ────────────────────────────────────────────────────────────
@@ -787,7 +816,8 @@ function armyGroupCommands(order) {
     enabled: s => unitsOnOrder(s, order) > 0 && (o !== 'attack' || s.enemy.known),
     reason: s => unitsOnOrder(s, order) === 0 ? 'No units in this group'
                : (o === 'attack' && !s.enemy.known) ? 'Enemy not found — explore first' : '',
-    run: s => moveUnit(s, order, o)
+    run: s => moveUnit(s, order, o),
+    runAll: s => moveAllUnits(s, order, o)
   }));
 }
 
@@ -837,7 +867,8 @@ function nodeCommands(state, node) {
     { id: 'node-assign', icon: 'harvest', overlay: node.type, label: `harvest ${node.type}`, cost: '',
       enabled: s => node.remaining > 0 && spareWorker(s, node) != null,
       reason: s => node.remaining <= 0 ? `${node.label} depleted` : 'No spare workers',
-      run: s => sendWorkerToNode(s, node) }
+      run: s => sendWorkerToNode(s, node),
+      runAll: s => sendAllWorkersToNode(s, node) }
   ];
 }
 
@@ -855,14 +886,15 @@ function selectedCommands(state) {
   return [];
 }
 
-function runCommand(id) {
+function runCommand(id, all = false) {
   const command = selectedCommands(game).find(item => item.id === id);
   if (!command) return;
   if (!command.enabled(game)) {
     flashError(commandError(game, command));
     return;
   }
-  command.run(game);
+  if (all && command.runAll) command.runAll(game);
+  else command.run(game);
   clampGame(game);
   render();
 }
@@ -1309,7 +1341,7 @@ function renderOrders() {
     button.dataset.command = command.id;
     if (commandFaded(game, command)) button.classList.add('unavailable');
     if (command.isActive && command.isActive(game)) button.classList.add('active-order');
-    button.title = command.label;
+    button.title = command.runAll ? `${command.label} — hold to move all` : command.label;
     button.setAttribute('aria-label', command.label);
 
     button.appendChild(makeIcon(ICONS[command.icon], command.label));
@@ -1423,9 +1455,38 @@ dom.world.addEventListener('pointerup', event => {
 }, { passive: true });
 dom.world.addEventListener('pointercancel', () => { worldTap = null; });
 
+// Press-and-hold on a command with a runAll (harvest, army moves) transfers
+// everything at once; a quick tap still moves one. The hold timer fires the
+// bulk action and suppresses the click that follows pointerup.
+const HOLD_MS = 500;
+let orderHold = null;
+dom.orders.addEventListener('pointerdown', event => {
+  const button = event.target.closest('button[data-command]');
+  if (!button) return;
+  const id = button.dataset.command;
+  orderHold = {
+    id, fired: false,
+    timer: setTimeout(() => {
+      if (!orderHold || orderHold.id !== id) return;
+      orderHold.fired = true;
+      runCommand(id, true);
+    }, HOLD_MS)
+  };
+}, { passive: true });
+['pointerup', 'pointercancel', 'pointerleave'].forEach(type => {
+  dom.orders.addEventListener(type, () => {
+    if (orderHold) clearTimeout(orderHold.timer);
+  }, { passive: true });
+});
+dom.orders.addEventListener('contextmenu', event => event.preventDefault());
 dom.orders.addEventListener('click', event => {
   const button = event.target.closest('button[data-command]');
   if (!button) return;
+  if (orderHold && orderHold.fired && orderHold.id === button.dataset.command) {
+    orderHold = null;   // the hold already ran the bulk action
+    return;
+  }
+  orderHold = null;
   runCommand(button.dataset.command);
 });
 

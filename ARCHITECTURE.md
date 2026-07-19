@@ -86,6 +86,8 @@ reason?(s), isActive?(s), run(s) }`, resolved per selection by
   (`commandFaded`). A costed command missing only resources stays lit.
 - `reason` — toast text when a disabled command is tapped. Buttons are never
   natively `disabled`; `runCommand` routes refusals to `flashError`.
+- `runAll` — optional bulk variant fired by press-and-hold (`HOLD_MS` in the
+  orders-bar pointer handlers); tap still runs `run` once.
 - Build `available`/`reason` from one `gated([[test, 'reason'], …])`
   checklist so they can't drift.
 - Errors → toast only. Gameplay events → `writeLog` (menu log).
