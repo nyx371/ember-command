@@ -51,206 +51,103 @@
 <main>
 
 <h1>Ember Command</h1>
-<p class="subtitle">game design document — last updated 2026-07-19</p>
-
-<h2>Command Categories (from WC2 Strategy Research)</h2>
-<p>Warcraft II strategy guides converge on a small set of recurring player actions, regardless of the specific match. Categorizing them is the basis for the command set this game ultimately exposes — each category becomes one or more standing orders rather than a one-off click.</p>
-
-<div class="table-wrap"><table>
-  <tr><th>Category</th><th>What WC2 players actually do</th><th>Abstract command(s)</th></tr>
-  <tr><td><strong>Economy scaling</strong></td><td>Pump peasants continuously; never stockpile gold — always be spending on peons, farms, or units; claim a second gold mine when the first thins out</td><td><code>Train worker</code>, <code>Harvest gold</code> / <code>Harvest lumber</code>, future <code>Expand</code> (claim new resource patch discovered by Explore)</td></tr>
-  <tr><td><strong>Production tempo</strong></td><td>Keep the build queue full; add farms before hitting supply cap, not after; add a second barracks/hall if throughput-bound</td><td><code>Build farm</code>, <code>Build barracks</code>, stackable structure slots</td></tr>
-  <tr><td><strong>Scouting</strong></td><td>Send a unit out immediately to find the enemy base; the early game is about information, not fighting; a second scout follow-up raises pressure</td><td><code>Explore</code></td></tr>
-  <tr><td><strong>Base defense</strong></td><td>Keep a standing garrison (roughly 6–12 units early game); use terrain/trees as a natural chokepoint wall; a strong defense is what lets the economy run safely</td><td><code>Defend</code>, <code>Patrol</code> (early warning so Defend isn't caught flat-footed)</td></tr>
-  <tr><td><strong>Raiding / offense</strong></td><td>Small squads harass the enemy's peasants/lumber line before the main army engages; focus high-value targets (casters, siege) over trash first; attack in groups, not piecemeal</td><td><code>Attack</code> (target economy vs. army is a future refinement — see note below)</td></tr>
-  <tr><td><strong>Composition &amp; tech</strong></td><td>Counter enemy unit mix (ranged vs. melee, ground vs. air/naval); research upgrades rather than only massing more bodies; upgrade the town hall to unlock stronger units and buildings</td><td>See <strong>Upgrades</strong> section below — incremental upgrades and hall tier upgrades</td></tr>
-</table></div>
-
-<div class="note"><strong>Never stockpile.</strong> WC2 veterans treat banked, unspent gold as a mistake — it should always be converted into peons, farms, or units. This game should apply light pressure (raid threat scaling with the day counter) so sitting on resources has a real opportunity cost.</div>
-
-<div class="note"><strong>Raid vs. Attack — open question.</strong> WC2 play distinguishes "harass the worker line" from "commit the army to the enemy base." Right now both collapse into a single <code>Attack</code> order. A future <code>Raid</code> posture — a small peeled-off squad that targets enemy economy rather than the main force — may be worth splitting out once the army-split model (see Open question above) is prototyped.</div>
+<p class="subtitle">game design document — last updated 2026-07-19 · see <code>ARCHITECTURE.md</code> for the code map</p>
 
 <h2>Concept</h2>
-<p>An abstract real-time strategy game inspired by Warcraft II. The key departure from classic RTS: <strong>you command at scale, not at the unit level.</strong> Instead of clicking individual units around the map, you issue high-level standing orders — workers go harvest, soldiers go scout — and the simulation resolves the details.</p>
-<p>It should feel like being a general, not a babysitter.</p>
+<p>An abstract real-time strategy game inspired by Warcraft II. <strong>You command at scale, not at the unit level</strong> — standing orders and high-level taps instead of clicking units around a map. It should feel like being a general, not a babysitter.</p>
 
-<div class="note"><strong>What gets abstracted, and what doesn't.</strong> Abstraction applies to <em>execution mechanics</em> — placement, pathing, individual unit clicks — not to the <em>roster</em>. Units and structures keep WC2-familiar names, roles, and rough power levels (Peasant, Footman, Archer, Grunt, Town Hall → Keep → Castle, Barracks, Blacksmith). A WC2 player should recognize what they're commanding at a glance. What changes is <em>how you get the benefit</em>: WC2's "build a Lumber Mill near the trees to cut worker travel time" is a spatial decision; here it becomes a straight <code>Upgrade harvesting</code> purchase with the same in-fiction justification (you still "built the Lumber Mill," you just didn't have to decide where).</div>
+<div class="note"><strong>What gets abstracted, and what doesn't.</strong> Abstraction removes <em>execution decisions</em> — placement, pathing, unit clicks — never <em>identity</em>. Units and structures keep WC2-familiar names, roles, costs, and build times (Peasant, Footman, Town Hall, Barracks, Guard Tower). A WC2 player should recognize everything at a glance; they just never decide <em>where</em> it goes.</div>
 
-<h2>Order Philosophy</h2>
-
-<h3>High-level orders (most gameplay)</h3>
-<p>These are standing, ambient directives. You assign them once and they execute continuously without further input. Workers don't need to be told where the gold mine is — they know. Soldiers don't need waypoints — they explore.</p>
+<h2>Principles</h2>
 <ul>
-  <li><img class="icon" src="assets/icons/r_gold.png" alt=""><strong>Harvest gold</strong> — workers auto-pathfind to the nearest gold source and cycle continuously</li>
-  <li><img class="icon" src="assets/icons/r_lumber.png" alt=""><strong>Harvest lumber</strong> — same, for lumber</li>
-  <li><img class="icon" src="assets/icons/c_hmove.png" alt=""><strong>Explore / scout</strong> — soldiers fan out to uncover the map, locate enemy bases, find resource patches</li>
-  <li><img class="icon" src="assets/icons/c_sword1.png" alt=""><strong>Attack</strong> — army engages any discovered enemy, advances toward known threats</li>
-  <li><img class="icon" src="assets/icons/c_hshield1.png" alt=""><strong>Defend</strong> — army holds position around your base</li>
+  <li><strong>Orders are postures, not clicks.</strong> Assign once; the simulation loops it forever. The player never repeats an order.</li>
+  <li><strong>The economy runs itself.</strong> Idle and new workers auto-assign (gold first, wood when gold is gone). Player taps <em>rebalance</em> labour; they never allocate from scratch.</li>
+  <li><strong>Every tap responds.</strong> A command that can't run stays visible, stays tappable, and explains itself in an error toast. Fading is reserved for real unavailability (missing tech, no worker) — never for "can't afford it right now".</li>
+  <li><strong>Pressure beats stockpiling.</strong> Raids scale with the day counter, so banked resources have an opportunity cost, WC2-veteran style.</li>
+  <li><strong>Real WC2 numbers.</strong> Costs and build/train times are the actual Tides of Darkness values.</li>
 </ul>
-<div class="note">The player should never need to issue the same order twice. If a worker finishes a harvest cycle, it loops automatically. Orders are <em>postures</em>, not one-shot commands.</div>
 
-<h3>Low-level orders (explicit, resource-gated)</h3>
-<p>These require a deliberate player action because they cost resources and have meaningful consequences. They are the "economy decisions".</p>
+<h2><img class="icon" src="assets/icons/r_gold.png" alt="">Economy &amp; Workers</h2>
+<p><span class="status done">done</span> — Resource nodes are finite and have a <strong>distance</strong> from the town hall that lengthens each harvest cycle (gather time + round-trip travel). Workers pin to a node until it depletes, then go idle and auto-reassign. Depleted nodes disappear from the UI.</p>
+
+<div class="table-wrap"><table>
+  <tr><th>Node</th><th>Capacity</th><th>Distance</th></tr>
+  <tr><td><img class="icon" src="assets/icons/n_bld_goldmine.png" alt="">Gold mine</td><td>20&thinsp;000</td><td>1 (near)</td></tr>
+  <tr><td><img class="icon" src="assets/icons/n_bld_forest.png" alt="">Forest</td><td>25&thinsp;000</td><td>1 (near)</td></tr>
+  <tr><td><img class="icon" src="assets/icons/n_bld_forest.png" alt="">Far forest</td><td>25&thinsp;000</td><td>5 (slow cycles)</td></tr>
+</table></div>
+
+<p>Worker sourcing is priority-ordered, so a tap always does the most sensible thing:</p>
 <ul>
-  <li><strong>Train worker</strong> — costs gold + supply, queued at the Town Hall</li>
-  <li><strong>Train soldier / archer</strong> — costs gold (+ lumber) + supply, queued at a Barracks</li>
-  <li><strong>Build farm</strong> — costs gold + lumber, raises supply cap; assigned to a worker (see Construction, below)</li>
-  <li><strong>Build barracks</strong> — unlocks military training; assigned to a worker</li>
+  <li><strong>Harvest tap on a node</strong> pulls: idle worker → same-resource worker from another node → other-resource worker.</li>
+  <li><strong>Construction</strong> (from the Town Hall) pulls: idle worker → a worker from the <em>most plentiful</em> node — and returns it to that node when the build finishes or is cancelled.</li>
 </ul>
 
 <h2><img class="icon" src="assets/icons/h_bld_townhall.png" alt="">Structures</h2>
-
-<h3>Construction — worker-assigned, not hall-queued</h3>
-<p><span class="status done">done</span> — Buildings are constructed by <strong>tasking a worker</strong> (any worker group — idle, on gold, or on lumber), not by queuing at the Town Hall. Select a worker group → <code>construct</code> → pick a building from the list (<code>stop</code> backs out to the worker's normal order list without spending anything). Picking a building spends the resources immediately, pulls one worker out of that group into a <code>building</code> state (it stops harvesting and drops out of its group's count for the duration), and shows the in-progress build as its own tile in the structures row with a progress ring. Tapping that tile lets you cancel it — refunds the resources and returns the worker to whatever it was doing before. On completion the worker automatically resumes its previous order.</p>
-
-<h3>Farms / Food</h3>
-<p>Farms are purely a supply-cap mechanic. They just <strong>stack</strong> — you see a count, you know your cap. No placement, no per-farm UI. The game starts with zero farms; the Town Hall alone provides a base supply cap so the player isn't stuck at zero before building the first farm.</p>
+<p><span class="status done">done</span> — Buildings are built by a worker (auto-chosen, see above) via the Town Hall's construct menu. They stack as one tile with a count badge; in-progress builds show as tappable cancel-and-refund chips. Real WC2 build times make construction a genuine commitment.</p>
 
 <div class="table-wrap"><table>
-  <tr><th>Structure</th><th>Effect</th><th>Status</th></tr>
-  <tr><td><img class="icon" src="assets/icons/h_bld_townhall.png" alt="">Town Hall</td><td>Trains workers; provides base supply cap</td><td><span class="status done">done</span></td></tr>
-  <tr><td><img class="icon" src="assets/icons/h_bld_farm.png" alt="">Farm</td><td>+4 supply cap per farm, stackable, worker-built</td><td><span class="status done">done</span></td></tr>
-  <tr><td><img class="icon" src="assets/icons/h_bld_barracks.png" alt="">Barracks</td><td>Unlocks soldier + archer training, worker-built; each barracks adds +1 concurrent training slot</td><td><span class="status done">done</span></td></tr>
-  <tr><td><img class="icon" src="assets/icons/h_bld_lumbermill.png" alt="">Lumber Mill</td><td>Grants lumber harvesting efficiency (see Upgrades) — no placement decision, the bonus is baked into the button</td><td><span class="status idea">idea</span></td></tr>
-  <tr><td><img class="icon" src="assets/icons/h_bld_blacksmith.png" alt="">Blacksmith</td><td>Unlocks the weapon/armor upgrade tiers (see Upgrades)</td><td><span class="status idea">idea</span></td></tr>
+  <tr><th>Structure</th><th>Cost</th><th>Time</th><th>Effect</th><th>Status</th></tr>
+  <tr><td><img class="icon" src="assets/icons/h_bld_townhall.png" alt="">Town Hall</td><td>—</td><td>—</td><td>Trains workers, opens build menu, +4 supply</td><td><span class="status done">done</span></td></tr>
+  <tr><td><img class="icon" src="assets/icons/h_bld_farm.png" alt="">Farm</td><td>500g 250w</td><td>100s</td><td>+4 supply, stackable</td><td><span class="status done">done</span></td></tr>
+  <tr><td><img class="icon" src="assets/icons/h_bld_barracks.png" alt="">Barracks</td><td>700g 450w</td><td>200s</td><td>Trains footmen/archers; each adds +1 training slot and +5 queue depth</td><td><span class="status done">done</span></td></tr>
+  <tr><td><img class="icon" src="assets/icons/h_bld_lumbermill.png" alt="">Lumber Mill</td><td>600g 450w</td><td>150s</td><td>Unlocks archers (and future lumber upgrades)</td><td><span class="status done">done</span></td></tr>
+  <tr><td><img class="icon" src="assets/icons/h_bld_blacksmith.png" alt="">Blacksmith</td><td>800g 450w</td><td>200s</td><td>Buildable now; weapon/armor upgrades to come</td><td><span class="status todo">todo</span></td></tr>
+  <tr><td><img class="icon" src="assets/icons/h_bld_tower.png" alt="">Tower</td><td>550g 200w</td><td>60s</td><td>+2 raid defense; upgradable</td><td><span class="status done">done</span></td></tr>
+  <tr><td><img class="icon" src="assets/icons/h_bld_watchtower.png" alt="">Guard Tower</td><td>500g 150w</td><td>140s</td><td>Tower upgrade (needs Lumber Mill), +4 raid defense</td><td><span class="status done">done</span></td></tr>
 </table></div>
 
-<h2><img class="icon" src="assets/icons/h_bld_blacksmith.png" alt="">Upgrades</h2>
-<p>Where WC2 splits tech into "buy a research item at a building" and "construct a new tier of town hall," this game keeps both, but each stays a single button — no placement, no tech tree UI beyond a flat list. The building names (Lumber Mill, Blacksmith) stay WC2-familiar in the UI; what's gone is the decision of <em>where</em> to put them.</p>
-
-<h3>Incremental upgrades</h3>
-<p>Small, repeatable-feeling improvements to existing behavior. Each is a flat percentage or radius bump, bought once (or a few times) with gold/lumber, and applies globally rather than per-unit.</p>
-<div class="table-wrap"><table>
-  <tr><th>Upgrade</th><th>Source building</th><th>Effect</th><th>Status</th></tr>
-  <tr><td><img class="icon" src="assets/icons/r_gold.png" alt="">Gold mining efficiency</td><td>Town Hall</td><td>Workers on Harvest gold return more gold per cycle</td><td><span class="status idea">idea</span></td></tr>
-  <tr><td><img class="icon" src="assets/icons/r_lumber.png" alt="">Lumber harvesting efficiency</td><td>Lumber Mill</td><td>Workers on Harvest lumber return more lumber per cycle</td><td><span class="status idea">idea</span></td></tr>
-  <tr><td><img class="icon" src="assets/icons/c_hpatrol.png" alt="">Patrol range</td><td>Barracks</td><td>Patrol posture covers a wider perimeter — earlier warning of incoming raids</td><td><span class="status idea">idea</span></td></tr>
-  <tr><td><img class="icon" src="assets/icons/c_sword1.png" alt="">Weapon upgrade</td><td>Blacksmith</td><td>+damage for soldiers/archers, tiered (1/2/3 like WC2)</td><td><span class="status idea">idea</span></td></tr>
-  <tr><td><img class="icon" src="assets/icons/c_hshield1.png" alt="">Armor upgrade</td><td>Blacksmith</td><td>+defense for soldiers/archers, tiered (1/2/3)</td><td><span class="status idea">idea</span></td></tr>
-</table></div>
-
-<h3>Hall tier upgrades</h3>
-<p>Step-change upgrades to the Town Hall itself: Town Hall → Keep → Castle. Each tier is a single costly build action (gold + lumber, longer cooldown) that replaces the prior tier in place — no relocation, no rebuilding from scratch. Each tier unlocks new unit types, new structures, and/or new incremental upgrades that were previously locked.</p>
-<div class="table-wrap"><table>
-  <tr><th>Tier</th><th>Unlocks</th><th>Status</th></tr>
-  <tr><td><img class="icon" src="assets/icons/h_bld_townhall.png" alt="">Town Hall</td><td>Baseline: workers, farms, barracks</td><td><span class="status done">done</span></td></tr>
-  <tr><td><img class="icon" src="assets/icons/h_bld_keep.png" alt="">Keep</td><td>Stronger units (e.g. Knights/Ogres), Blacksmith weapon/armor tiers 2, higher supply cap ceiling</td><td><span class="status idea">idea</span></td></tr>
-  <tr><td><img class="icon" src="assets/icons/h_bld_castle.png" alt="">Castle</td><td>Top-tier units, siege (Catapults), weapon/armor tier 3, naval/air unlocks</td><td><span class="status idea">idea</span></td></tr>
-</table></div>
-
-<div class="note">Hall tier is the pacing lever that pairs with the day counter — raids escalate over time, and hall upgrades are how the player's power escalates to match. Reaching Keep/Castle late is a real loss condition risk, not just a slower game.</div>
-
-<h2><img class="icon" src="assets/icons/h_unit_footman.png" alt="">Units</h2>
+<h2><img class="icon" src="assets/icons/h_unit_footman.png" alt="">Units &amp; Orders</h2>
+<p><span class="status done">done</span> — Units train with real WC2 times and costs; supply is reserved while queued. Army groups (not individuals) hold one of four standing orders.</p>
 
 <div class="table-wrap"><table>
-  <tr><th>Unit</th><th>Role</th><th>Orders</th><th>Status</th></tr>
-  <tr><td><img class="icon" src="assets/icons/h_unit_peasant.png" alt="">Worker (Peasant)</td><td>Economy</td><td>Harvest gold / harvest lumber / idle</td><td><span class="status done">done</span></td></tr>
-  <tr><td><img class="icon" src="assets/icons/h_unit_footman.png" alt="">Soldier (Footman)</td><td>Army — melee</td><td>Defend / patrol / explore / attack</td><td><span class="status todo">partial</span></td></tr>
-  <tr><td><img class="icon" src="assets/icons/h_unit_archer.png" alt="">Archer / Berserker</td><td>Army — ranged</td><td>Defend / patrol / explore / attack</td><td><span class="status todo">partial</span></td></tr>
+  <tr><th>Unit</th><th>Cost</th><th>Time</th><th>Role</th></tr>
+  <tr><td><img class="icon" src="assets/icons/h_unit_peasant.png" alt="">Worker (Peasant)</td><td>400g</td><td>45s</td><td>Harvest &amp; build — auto-managed</td></tr>
+  <tr><td><img class="icon" src="assets/icons/h_unit_footman.png" alt="">Footman</td><td>600g</td><td>60s</td><td>Melee — power 3</td></tr>
+  <tr><td><img class="icon" src="assets/icons/h_unit_archer.png" alt="">Archer</td><td>500g 50w</td><td>70s</td><td>Ranged — power 2, needs Lumber Mill</td></tr>
 </table></div>
-
-<h2><img class="icon" src="assets/icons/c_sword1.png" alt="">Army Orders</h2>
-<p>The player splits their army across up to three concurrent postures. There is no individual unit control — you assign a headcount (or a ratio) to each role and the simulation handles the rest.</p>
 
 <div class="table-wrap"><table>
-  <tr><th>Order</th><th>Behaviour</th><th>Strategic purpose</th></tr>
-  <tr><td><img class="icon" src="assets/icons/c_hshield1.png" alt=""><strong>Defend</strong></td><td>Holds position at base; engages any enemy that reaches it</td><td>Last line — soaks raids that slip through</td></tr>
-  <tr><td><img class="icon" src="assets/icons/c_hpatrol.png" alt=""><strong>Patrol</strong></td><td>Roams the perimeter of the base; intercepts incoming enemies early</td><td>Early-warning + forward shield; without it, raids arrive with no notice</td></tr>
-  <tr><td><img class="icon" src="assets/icons/c_hmove.png" alt=""><strong>Explore</strong></td><td>Fans out across the map; uncovers terrain, locates enemy base and resources</td><td>Unlocks attack orders; finds additional gold/lumber</td></tr>
-  <tr><td><img class="icon" src="assets/icons/c_sword1.png" alt=""><strong>Attack</strong></td><td>Advances on the known enemy base; available once base is located</td><td>Win condition pressure</td></tr>
+  <tr><th>Order</th><th>Behaviour</th></tr>
+  <tr><td><img class="icon" src="assets/icons/c_hshield1.png" alt=""><strong>Defend</strong></td><td>Holds the base; soaks raids that get through (with towers)</td></tr>
+  <tr><td><img class="icon" src="assets/icons/c_hpatrol.png" alt=""><strong>Patrol</strong></td><td>Perimeter shield; intercepts raids before they hit the base</td></tr>
+  <tr><td><img class="icon" src="assets/icons/c_hmove.png" alt=""><strong>Explore</strong></td><td>Uncovers the map; locating the enemy base unlocks Attack</td></tr>
+  <tr><td><img class="icon" src="assets/icons/c_sword1.png" alt=""><strong>Attack</strong></td><td>Continuously grinds down the (slowly rebuilding) enemy base</td></tr>
 </table></div>
 
-<div class="note"><strong>Open question — granularity of army assignment.</strong> Pure aggregate ("assign N soldiers to defend") is simple but loses the ability to favor specific units. Pure individual is micro. One candidate middle ground: <em>unit type</em> is the split level — you assign "footmen" to defend and "archers" to patrol, but a paladin or hero gets its own slot because they are a distinct type. Individual override only exists for named/hero units, which are rare enough to not become babysitting. Needs a prototype to validate the feel.</div>
+<h2><img class="icon" src="assets/icons/o_unit_grunt.png" alt="">Threat &amp; Victory</h2>
+<p><span class="status done">done</span> — Raids arrive on a shrinking interval and scale with the day counter; patrol intercepts first, then defenders + towers, and whatever remains steals gold. Reducing enemy strength to zero logs victory.</p>
+<div class="note"><strong>Open — real win/loss.</strong> Victory is only a log line and there is no loss condition yet. Candidates: destroy-the-base (classic), survive-to-day-N, economic victory. Related: what a win/loss does to a future save file.</div>
 
-<div class="note"><strong>Patrol is how you avoid being surprised.</strong> A player who skips patrol and stacks everything on Defend will see raids land on their base with no warning. Keeping soldiers on Patrol costs army strength at the front but buys reaction time — a meaningful trade-off.</div>
-
-<h2>WC2 → Abstract: Conversion Examples</h2>
-<p>Where WC2 asks you to make a spatial decision, this game collapses it to a scalar or categorical one.</p>
-
-<div class="table-wrap"><table>
-  <tr><th>WC2 action</th><th>Abstract equivalent</th></tr>
-  <tr><td>Build a lumber mill closer to the trees to cut return trips</td><td>"Upgrade harvesting" — increases worker gather rate globally</td></tr>
-  <tr><td>Place a second barracks somewhere on the map</td><td>"Add barracks slot" — stacks, increases concurrent training throughput</td></tr>
-  <tr><td>Manually march units to intercept a raid you spotted on the minimap</td><td>Patrol order — soldiers automatically intercept; the trade-off is you chose to station them there</td></tr>
-  <tr><td>Click footmen to attack enemy base after scouting it</td><td>Assign soldiers to Attack order — executes continuously until enemy is destroyed or order changed</td></tr>
-  <tr><td>Split melee and ranged to cover different lanes</td><td>Assign different unit types to different orders — footmen Defend, archers Patrol</td></tr>
-</table></div>
-
-<h2><img class="icon" src="assets/icons/o_unit_grunt.png" alt="">Enemy Raids</h2>
-<p>Raids are the primary threat and the pressure that makes economy decisions matter. The game is real-time but structured around a <strong>day counter</strong> — a visible clock that marks progression and scales raid intensity.</p>
+<h2><img class="icon" src="assets/icons/h_bld_blacksmith.png" alt="">Upgrades (planned)</h2>
+<p>The Guard Tower upgrade <span class="status done">done</span> established the pattern: a single button on the source structure, timed, cancellable with refund. Planned on the same pattern, all <span class="status idea">idea</span>:</p>
 <ul>
-  <li>Early raids: small groups of Grunts and Axe Throwers (ground only)</li>
-  <li>Raid size and frequency scale with the day counter</li>
-  <li>There is no on-screen threat indicator — raids are hidden until detected by patrolling soldiers or they reach the base</li>
-  <li>Later: Ogres, siege units (Catapults), then eventually naval and air units</li>
-  <li>Water maps are viable because Transports carry ground units across water — the army split model still applies</li>
+  <li><strong>Blacksmith</strong>: weapon/armor tiers 1–3 for footmen/archers</li>
+  <li><strong>Lumber Mill / Town Hall</strong>: harvest-efficiency bumps</li>
+  <li><strong>Hall tiers</strong>: Town Hall → Keep → Castle as the pacing lever against raid scaling — each tier unlocks units/structures/upgrades</li>
 </ul>
 
-<h2>Time / Day Counter</h2>
-<p>The game runs in real-time but exposes a day counter as the primary sense of pacing. <span class="status todo">todo</span></p>
-<ul>
-  <li>Gives the player a mental model of "how much time do I have before things get harder"</li>
-  <li>Raid waves are tied to day boundaries (or thresholds), not wall-clock minutes — keeps pacing readable</li>
-  <li>Economy milestones (upgrade unlocks, unit caps) could also be day-gated</li>
-</ul>
+<div class="note"><strong>Open — army assignment granularity.</strong> Currently orders apply per unit <em>type</em> (all footmen share one order). Candidate refinements: headcount splits per order, and a separate <code>Raid</code> posture (harass economy) distinct from <code>Attack</code> (kill the base). Needs prototyping to validate feel.</div>
 
-<h2><img class="icon" src="assets/icons/r_gold.png" alt="">Resources</h2>
-<ul>
-  <li><img class="icon" src="assets/icons/r_gold.png" alt=""><strong>Gold</strong> — primary currency, mined from gold mines by workers</li>
-  <li><img class="icon" src="assets/icons/r_lumber.png" alt=""><strong>Lumber</strong> — secondary currency, chopped by workers, used for buildings and some units</li>
-  <li><img class="icon" src="assets/icons/r_oil.png" alt=""><strong>Oil</strong> — tertiary, for naval units (later)</li>
-  <li><img class="icon" src="assets/icons/r_food.png" alt=""><strong>Supply</strong> — population cap, raised by farms (2 base + 4 per farm, up to some max)</li>
-</ul>
-
-<h2>Map &amp; Exploration</h2>
-<p>The map is unknown at game start. Soldiers on Explore orders progressively uncover it.</p>
-<ul>
-  <li>Discovering the enemy base unlocks the Attack order</li>
-  <li>Discovering a resource patch makes it available for worker assignment</li>
-  <li>Patrol range is limited to the base perimeter — it does not explore new territory</li>
-</ul>
-
-<h2>Win / Loss Conditions</h2>
-<p><span class="status idea">idea</span> — to be defined. Candidates:</p>
-<ul>
-  <li>Destroy all enemy structures (classic WC2)</li>
-  <li>Survive to a target day count</li>
-  <li>Economic victory (reach resource or upgrade threshold)</li>
-</ul>
-
-<h2>Persistence / Save Progress</h2>
-<p><span class="status idea">idea</span> — not implemented yet. The game currently resets to a fresh state on every reload; players shouldn't have to restart from scratch each session.</p>
-<ul>
-  <li>Autosave game state (resources, structures, worker/army counts, upgrades, day counter, explored map) to local storage on an interval or on key events</li>
-  <li>Resume in-progress on reload — no explicit "load" step, it just picks up where it left off</li>
-  <li>Local-only (browser storage) is sufficient for the prototype; no account system or server sync required yet</li>
-  <li>Open question: what happens on win/loss — clear the save and restart, or keep a run history?</li>
-</ul>
-
-<h2>What This Is Not</h2>
-<ul>
-  <li>Not a micro-management game — no unit pathing, no formation control, no spatial placement</li>
-  <li>Not a map editor — no player-placed buildings; structures just stack</li>
-  <li>Not a full WC2 clone — WC2 aesthetics and units as reference, not as ruleset</li>
-</ul>
+<h2>Persistence</h2>
+<p><span class="status idea">idea</span> — autosave to local storage, resume on reload, no explicit load step. Not implemented; every reload is a fresh start.</p>
 
 <h2>UI Conventions Established So Far</h2>
-<p>Patterns already built and expected to extend to new features, rather than being reinvented per-feature:</p>
+<p>Patterns already built — extend these rather than inventing new ones:</p>
 <ul>
-  <li><strong>Grouped tiles</strong> — anything that can have more than one instance (workers by job, farms, barracks) renders as <em>one</em> compact tile with a <code>count-badge</code>, not one tile per instance. See <code>renderWorld()</code> in <code>app.js</code>. New stackable structures/units should follow this, not add per-instance tiles.</li>
-  <li><strong>Stacked radial progress</strong> — a tile can show several in-progress timers at once (e.g. multiple workers harvesting, multiple barracks training) as concentric-position (literally overlapping, <code>position: absolute</code>) semi-transparent white rings drawn directly on the job-badge icon. Each ring's alpha is <code>RADIAL_HIGH_ALPHA / siblingCount</code> so N overlapping bars don't blow out to solid white. Implemented in <code>radialProgressSvg()</code>. Production concurrency (how many bars can run at once for a producer) is capped by <code>producerCapacity()</code>, which currently equals the building count (e.g. 2 barracks = 2 concurrent trainees).</li>
-  <li><strong>Production queue chips</strong> — commands to train/build never disappear once you can't afford them or the queue is full; they just grey out (<code>button.disabled</code>). What's actually queued shows as a separate row of tappable chips above the command grid (<code>renderQueueList()</code>), one chip per job type with a count badge. Tapping a chip cancels one instance of that job and refunds its cost (<code>cancelJob()</code>). This replaced an earlier single generic "cancel last" button.</li>
-  <li><strong>Command buttons are icon-only</strong> — no visible text labels (a real WC2-style command card constraint). Accessibility name goes through <code>title</code>/<code>aria-label</code> instead. Resource cost, when a command has one, renders as a small overlay strip of icon+number pairs anchored to the bottom of the icon itself, not as separate text below it.</li>
-  <li><strong>Minimum font size is 14px everywhere</strong> — no smaller sizes, including in the short-screen media query. If a new label needs to be smaller to fit, the fix is a shorter label or truncation (<code>text-overflow: ellipsis</code>), not a smaller font.</li>
-  <li><strong>Cheat toggles</strong> (menu panel) — <code>fast train</code> / <code>fast harvest</code> are persistent on/off toggles (not one-shot buttons) that multiply relevant tick decrements by <code>CHEAT_SPEED</code>. Useful for exercising production/harvest logic quickly during dev; keep them working as the sim grows.</li>
+  <li><strong>Grouped tiles</strong> — anything stackable renders as one compact tile with a <code>count-badge</code>, never one tile per instance.</li>
+  <li><strong>Radial progress rings</strong> — canvas conic-gradient rings (<code>radialProgressCanvas</code>), stacked semi-transparent when several timers share a tile, animated smoothly between ticks.</li>
+  <li><strong>Job chips</strong> — every in-flight timed job (training, construction, upgrade) is one tappable chip: its own ring, tap to cancel and refund.</li>
+  <li><strong>Icon-only commands</strong> — WC2-style command card; cost renders as an overlay strip of icon+number pairs, left-aligned; number-key hotkeys on desktop, hidden on touch.</li>
+  <li><strong>Errors in the toast, events in the log</strong> — a refused tap explains itself in the floating error label; the menu log narrates gameplay. Fading marks non-resource unavailability only.</li>
+  <li><strong>Instant touch</strong> — selection on <code>pointerup</code> with a move threshold (so scrolling the node row doesn't select); zoom guards exempt interactive controls; 14px minimum font.</li>
+  <li><strong>Cheat toggles</strong> — <code>fast train</code> / <code>fast harvest</code> multiply timers by <code>CHEAT_SPEED</code>; keep them working, they're the dev loop.</li>
 </ul>
 
 <h2>Working With This Codebase</h2>
 <ul>
-  <li>The whole app is <code>index.html</code> + <code>app.js</code> + <code>styles.css</code>, no build step, no framework. <code>game</code> (in <code>app.js</code>) is the single mutable state object; <code>render()</code> does a full re-render from it on every change — there's no diffing, so it's fine to rebuild DOM subtrees wholesale (see <code>renderWorld()</code>, <code>renderOrders()</code>).</li>
-  <li>Requests in this project tend to arrive as short, iterative, sometimes voice-dictated messages (filler words, occasional transcription errors — e.g. "the face" meant "the phase" indicator). Read them against the current screen/code state rather than literally when something doesn't quite parse; ask only if genuinely ambiguous.</li>
-  <li>The user drives the app and checks changes visually themselves — don't spin up headless-browser verification passes proactively after a change. Explain what changed and why it should work; only reach for a browser check if explicitly asked.</li>
-  <li>Icons live in <code>assets/icons/</code>, extracted from WC2-style sprite sheets via <code>tools/label-icons.py</code> (a one-off labeling UI, not part of the running game).</li>
+  <li><code>ARCHITECTURE.md</code> is the code map: data tables (<code>BUILDINGS</code>/<code>UNITS</code>/<code>ARMY</code>), the unified job system, recipes for adding content. <code>CLAUDE.md</code> has the working conventions.</li>
+  <li>No build step, no framework. <code>game</code> is the single state object; <code>render()</code> fully rebuilds — don't add diffing.</li>
 </ul>
 
 </main>
