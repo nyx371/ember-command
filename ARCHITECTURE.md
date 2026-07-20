@@ -73,9 +73,11 @@ splits across parties in the same stage. Waves spawn silently and
 undiscovered; a standing patrol spots them instantly at spawn (and any patrol
 raised mid-approach picks them up next tick) — otherwise the raid appears
 only on arrival. Army tiles show the dominant unit type as the primary
-icon with the order as a corner badge; while a column is inbound the badge
-blinks (with a march ring) and tapping the tile recalls the column to its
-previous order. Production chips stay above the town hall. Wound
+icon with the order as a corner badge; a column mid-march renders as its own
+tile beside the destination group (kind `march`, badge ring = march
+progress, no blinking) and tapping that tile recalls the column. The scouts'
+wilderness tile carries an `exploreRing` — progress from the last discovery
+milestone to the next. Production chips stay above the town hall. Wound
 regen: defenders only (`HEAL_DEFEND_PER_TICK`), paused while a raid is at
 the base; no other order heals. Raider targeting: patrol
 pool → defend pool → towers (`RAID_TOWER_TARGETS`) → workers → remaining

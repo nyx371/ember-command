@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.27';
-const VERSION_TAG = 'scouts explore from a wilderness tile and storm sites they discover';
+const VERSION = '0.28';
+const VERSION_TAG = 'explore progress ring; marches are separate tiles with rings, no blink';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -753,6 +753,22 @@ function strikeHp(site) {
     partial: 1 - col.wounds / ARMY[type].hp,
     total: (maxHp - col.wounds) / maxHp
   };
+}
+
+// Ring on the scouts' wilderness tile: how far the accumulated explore points
+// have come from the last discovery milestone toward the next one (enemy
+// base, hidden node, or garrisoned site). Null once everything is found.
+function exploreRing(state) {
+  const all = [
+    EXPLORE_THRESHOLD,
+    ...state.nodes.filter(n => Number.isFinite(n.discoverAt)).map(n => n.discoverAt),
+    ...state.sites.map(s => s.discoverAt)
+  ];
+  const ahead = all.filter(t => t > state.exploreProgress);
+  if (!ahead.length) return null;
+  const next = Math.min(...ahead);
+  const prev = Math.max(0, ...all.filter(t => t <= state.exploreProgress));
+  return (state.exploreProgress - prev) / (next - prev);
 }
 
 function attackDamage(state) {
@@ -1850,21 +1866,31 @@ function renderWorld() {
   function armyTile(order) {
     const pool = game.army[order];
     const n = poolCount(pool);
-    const incoming = game.jobs.filter(j => j.kind === 'transfer' && j.to === order);
-    const inCount = incoming.reduce((sum, j) => sum + j.count, 0);
-    if (n === 0 && inCount === 0) return null;   // empty order groups stay hidden
+    if (n === 0) return null;   // empty order groups stay hidden
     // Primary icon is the dominant unit type; the order shows as the corner
-    // badge, which blinks (with a march ring) while a column is inbound —
-    // tapping the tile then recalls the marchers to their previous order.
+    // badge.
     const domType = Object.keys(ARMY).reduce((best, k) =>
-      (pool[k] > (best ? pool[best] : 0)) ? k : best, null) || (incoming[0] && incoming[0].type) || 'footmen';
+      (pool[k] > (best ? pool[best] : 0)) ? k : best, null) || 'footmen';
     return entityButton({
       kind: 'army', type: order, id: 1, compact: true,
       icon: ARMY[domType].icon, label: order,
-      jobIcon: orderIcon(order), badgeBlink: inCount > 0,
-      progressBars: incoming.length > 0 ? incoming.map(j => jobProgress(game, j)) : undefined,
-      countLabel: n + inCount,
+      jobIcon: orderIcon(order),
+      countLabel: n,
       hp: poolHp(pool)
+    });
+  }
+
+  // A column mid-march renders as its own tile right beside the group it's
+  // joining: unit icon, destination-order badge with a progress ring for the
+  // switching time, no blinking. Tapping it recalls the column to where it
+  // came from.
+  function marchTile(job) {
+    return entityButton({
+      kind: 'march', type: job.to, id: job.uid, compact: true,
+      icon: ARMY[job.type].icon, label: `${job.count} marching to ${job.to} — tap to recall`,
+      jobIcon: orderIcon(job.to),
+      progressBars: [jobProgress(game, job)],
+      countLabel: job.count
     });
   }
 
@@ -1877,6 +1903,8 @@ function renderWorld() {
     orders.forEach(order => {
       const tile = armyTile(order);
       if (tile) row.appendChild(tile);
+      game.jobs.filter(j => j.kind === 'transfer' && j.to === order)
+        .forEach(j => row.appendChild(marchTile(j)));
     });
     section.appendChild(row);
     return section;
@@ -1933,31 +1961,33 @@ function renderWorld() {
     return chip;
   }
   // Scouts on Explore live here too: an empty stretch of wilderness they're
-  // combing (vision badge instead of a reward). They storm garrisoned sites
-  // themselves on discovery, so this tile empties into a site tile when
-  // something turns up. Tapping it selects the explore pool as usual.
+  // combing. The vision badge carries a progress ring — how close the
+  // accumulated explore points are to the next discovery. They storm
+  // garrisoned sites themselves on discovery, so this tile empties into a
+  // site tile when something turns up. Tapping it selects the explore pool
+  // as usual; columns marching to explore stand beside it as march tiles.
   const scoutPool = game.army.explore;
-  const scoutsInbound = game.jobs.filter(j => j.kind === 'transfer' && j.to === 'explore');
-  const scoutsIn = scoutsInbound.reduce((sum, j) => sum + j.count, 0);
-  if (poolCount(scoutPool) + scoutsIn > 0) {
+  const scoutMarches = game.jobs.filter(j => j.kind === 'transfer' && j.to === 'explore');
+  const scoutsOut = poolCount(scoutPool);
+  if (scoutsOut + scoutMarches.length > 0) {
+    const ring = scoutsOut > 0 ? exploreRing(game) : null;
     const btn = entityButton({
       kind: 'army', type: 'explore', id: 1, compact: true,
       icon: 'siteTerrain', label: 'exploring',
+      jobIcon: 'explore',
+      progressBars: ring != null ? [ring] : undefined,
       hp: poolHp(scoutPool)
     });
     btn.classList.add('site-big');
-    const badge = document.createElement('span');
-    badge.className = 'site-chip reward';
-    badge.appendChild(makeIcon(ICONS.explore, 'exploring'));
-    btn.appendChild(badge);
-    const domType = Object.keys(ARMY).reduce((best, k) =>
-      (scoutPool[k] > (scoutPool[best] || 0) ? k : best),
-      (scoutsInbound[0] && scoutsInbound[0].type) || 'footmen');
-    const chip = siteChip(ARMY[domType].icon, poolCount(scoutPool) + scoutsIn);
-    chip.classList.add('mine');
-    if (scoutsIn > 0) chip.classList.add('badge-blink');
-    btn.appendChild(chip);
+    if (scoutsOut > 0) {
+      const domType = Object.keys(ARMY).reduce((best, k) =>
+        (scoutPool[k] > (scoutPool[best] || 0) ? k : best), 'footmen');
+      const chip = siteChip(ARMY[domType].icon, scoutsOut);
+      chip.classList.add('mine');
+      btn.appendChild(chip);
+    }
     siteTiles.appendChild(btn);
+    scoutMarches.forEach(j => siteTiles.appendChild(marchTile(j)));
   }
   game.sites.forEach(site => {
     if (!site.discovered) return;
@@ -2224,11 +2254,11 @@ dom.world.addEventListener('pointerup', event => {
   if (!tap || event.pointerId !== tap.id) return;
   if (Math.hypot(event.clientX - tap.x, event.clientY - tap.y) > 10) return;
   if (tap.button.dataset.kind === 'enemy') return;
-  // Tapping an order tile with an inbound march recalls the column to its
-  // previous order (the blinking badge is the affordance).
-  if (tap.button.dataset.kind === 'army') {
-    const marching = game.jobs.filter(j => j.kind === 'transfer' && j.to === tap.button.dataset.type);
-    marching.forEach(j => cancelJob(game, j.uid));
+  // A marching column's tile recalls it to where it came from.
+  if (tap.button.dataset.kind === 'march') {
+    cancelJob(game, Number(tap.button.dataset.id));
+    render();
+    return;
   }
   selectEntity(tap.button.dataset.kind, tap.button.dataset.type, tap.button.dataset.id);
 }, { passive: true });
