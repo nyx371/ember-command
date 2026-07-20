@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.16';
-const VERSION_TAG = 'ring backdrop disc, badge square gone';
+const VERSION = '0.18';
+const VERSION_TAG = 'three world zones: far field, near base, base';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -1422,16 +1422,19 @@ function render() {
   dom.raidclock.textContent = visibleRaids ? 'RAID!' : '';
   dom.raidclock.classList.toggle('alert', visibleRaids);
   renderResources();
-  // Full rebuild resets scrollLeft on the horizontal strips — capture and
-  // restore so the view keeps its place across repaints.
+  // Full rebuild resets scroll on the horizontal strips and on the world canvas
+  // itself (now vertically scrollable) — capture and restore so the view keeps
+  // its place across repaints.
   const scrollPos = {};
   dom.world.querySelectorAll('[data-scroll]').forEach(el => {
     scrollPos[el.dataset.scroll] = el.scrollLeft;
   });
+  const worldScrollTop = dom.world.scrollTop;
   renderWorld();
   dom.world.querySelectorAll('[data-scroll]').forEach(el => {
     if (scrollPos[el.dataset.scroll]) el.scrollLeft = scrollPos[el.dataset.scroll];
   });
+  if (worldScrollTop) dom.world.scrollTop = worldScrollTop;
   renderOrders();
   renderLog();
 }
@@ -1551,52 +1554,104 @@ function renderWorld() {
   });
 
   // My army: one tile per standing order, workers-row style — tap to select,
-  // then move units between orders one per tap.
-  const army = document.createElement('section');
-  army.className = 'world-group army';
-  ORDERS.forEach(order => {
+  // then move units between orders one per tap. Each order gets its own
+  // always-present row (see armySection) so the layout never reflows as
+  // pools empty and refill.
+  function armyTile(order) {
     const pool = game.army[order];
     const n = poolCount(pool);
     const incoming = game.jobs.filter(j => j.kind === 'transfer' && j.to === order);
     const inCount = incoming.reduce((sum, j) => sum + j.count, 0);
-    if (n === 0 && inCount === 0) return;   // empty order groups stay hidden
+    if (n === 0 && inCount === 0) return null;   // empty order groups stay hidden
     // Primary icon is the dominant unit type; the order shows as the corner
     // badge, which blinks (with a march ring) while a column is inbound —
     // tapping the tile then recalls the marchers to their previous order.
     const domType = Object.keys(ARMY).reduce((best, k) =>
       (pool[k] > (best ? pool[best] : 0)) ? k : best, null) || (incoming[0] && incoming[0].type) || 'footmen';
-    army.appendChild(entityButton({
+    return entityButton({
       kind: 'army', type: order, id: 1, compact: true,
       icon: ARMY[domType].icon, label: order,
       jobIcon: orderIcon(order), badgeBlink: inCount > 0,
       progressBars: incoming.length > 0 ? incoming.map(j => jobProgress(game, j)) : undefined,
       countLabel: n + inCount,
       hp: poolHp(pool)
-    }));
-  });
+    });
+  }
 
-  // Enemies row: a slim horizontal bar filling toward the next attack, plus one
-  // compact danger tile per raiding party (dimmed while still approaching).
-  const enemies = document.createElement('section');
-  enemies.className = 'world-group enemies';
+  function armySection(cls, orders, scrollKey) {
+    const section = document.createElement('section');
+    section.className = `world-group ${cls}`;
+    const row = document.createElement('div');
+    row.className = 'tile-row';
+    row.dataset.scroll = scrollKey;
+    orders.forEach(order => {
+      const tile = armyTile(order);
+      if (tile) row.appendChild(tile);
+    });
+    section.appendChild(row);
+    return section;
+  }
 
-  const raidTiles = document.createElement('div');
-  raidTiles.className = 'tile-row';
-  raidTiles.dataset.scroll = 'enemies';
-  game.raids.filter(raid => raid.discovered).forEach(raid => {
-    raidTiles.appendChild(entityButton({
-      kind: 'enemy', type: 'raid', id: raid.id, compact: true,
-      icon: raid.icon, label: raid.label, danger: true,
-      countLabel: raid.size,
-      fade: raid.arriveIn > 0 ? (RAID_ARRIVE_TICKS - raid.arriveIn) / RAID_ARRIVE_TICKS : 1,
-      hp: raidHp(raid)
-    }));
-  });
-  enemies.appendChild(raidTiles);
+  // Away-from-base pools, pinned to the top: scouts uncovering the map and
+  // columns marching on the enemy base. Both are off-map as far as raids are
+  // concerned — they neither defend nor get targeted.
+  const away = armySection('away', ['explore', 'attack'], 'away');
+  const patrol = armySection('patrol', ['patrol'], 'patrol');
+  const defend = armySection('defend', ['defend'], 'defend');
 
-  // Page order: enemies at the top of the world, then my army, then economy,
-  // then structures next to the command bar.
-  dom.world.append(enemies, army, workers, structures);
+  // Enemy raiders, bucketed by how close they are: a party spawns in the far
+  // field, crosses into the near field mid-approach, and lands in the base zone
+  // once it arrives. Each bucket is its own row so a column visibly moves down
+  // the map as it closes in.
+  function enemyRow(zoneKey, raids) {
+    const enemies = document.createElement('section');
+    enemies.className = 'world-group enemies';
+    const raidTiles = document.createElement('div');
+    raidTiles.className = 'tile-row';
+    raidTiles.dataset.scroll = `enemies-${zoneKey}`;
+    raids.forEach(raid => {
+      raidTiles.appendChild(entityButton({
+        kind: 'enemy', type: 'raid', id: raid.id, compact: true,
+        icon: raid.icon, label: raid.label, danger: true,
+        countLabel: raid.size,
+        fade: raid.arriveIn > 0 ? (RAID_ARRIVE_TICKS - raid.arriveIn) / RAID_ARRIVE_TICKS : 1,
+        hp: raidHp(raid)
+      }));
+    });
+    enemies.appendChild(raidTiles);
+    return enemies;
+  }
+
+  const seen = game.raids.filter(raid => raid.discovered);
+  const raidZone = raid => raid.arriveIn <= 0 ? 'base'
+    : raid.arriveIn > RAID_ARRIVE_TICKS / 2 ? 'far' : 'near';
+
+  // Three zones, read top to bottom as distance from home:
+  //   far   — beyond the map's edge: where scouts and attack columns go, and
+  //           where a raid first appears (only if something spotted it).
+  //   near  — the approach: patrols stand here, and reveal raiders crossing it.
+  //   base  — home: defenders, workers on their nodes, the buildings, and any
+  //           raid that has actually arrived.
+  // Every zone (and every row inside it) stays mounted when empty so tiles never
+  // shift position as pools fill and drain; the whole stack scrolls as one.
+  dom.world.append(
+    zone('far', 'far field', [away, enemyRow('far', seen.filter(r => raidZone(r) === 'far'))]),
+    zone('near', 'near base', [patrol, enemyRow('near', seen.filter(r => raidZone(r) === 'near'))]),
+    zone('base', 'base', [enemyRow('base', seen.filter(r => raidZone(r) === 'base')), defend, workers, structures])
+  );
+}
+
+// A labelled band of the world. The caption sits in the top-left gutter; rows
+// stack inside it.
+function zone(key, label, rows) {
+  const el = document.createElement('section');
+  el.className = `world-zone zone-${key}`;
+  const caption = document.createElement('div');
+  caption.className = 'zone-label';
+  caption.textContent = label;
+  el.appendChild(caption);
+  rows.forEach(row => el.appendChild(row));
+  return el;
 }
 
 function productionMeta(state, producer) {

@@ -194,32 +194,71 @@ button { touch-action: manipulation; }
 #raidclock { color: var(--muted); letter-spacing: 0.06em; }
 #raidclock.alert { color: var(--danger); }
 
+/* Vertically scrollable battlefield, split into three zones that read as
+   distance from home — far field (scouts, attack columns, freshly spawned
+   raids), near base (patrols and the raids they intercept), base (defenders,
+   workers, buildings, raiders that got through). The whole stack scrolls. */
 .world-canvas {
   min-height: 0;
   padding: 5px;
-  display: grid;
-  grid-template-rows: auto auto auto 1fr;
+  display: flex;
+  flex-direction: column;
   gap: 5px;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  scrollbar-width: none;
 }
+.world-canvas::-webkit-scrollbar { display: none; }
 
 .world-group {
-  min-height: 0;
   display: grid;
   gap: 3px;
-}
-/* World order (top to bottom): enemies, army, workers/nodes, structures. The
-   structures row takes the leftover space and hugs the command bar. Building
-   and raid tiles live in a .tile-row that scrolls sideways instead of
-   wrapping. */
-.world-group.structures { align-content: end; }
-.world-group.army { grid-template-columns: repeat(4, 1fr); align-content: start; }
-.world-group.enemies {
-  align-content: start;
-  /* Reserve the tile row even when no raids are visible, so appearing enemies
-     never shift the rest of the layout. */
+  /* Every section stays mounted even when it has no tiles, so rows never jump
+     as pools fill and empty. This reserves one tile's worth of height. */
+  flex: 0 0 auto;
   min-height: 44px;
 }
+
+/* The three bands of the map: far field, near base, base. Each is tinted a
+   step lighter as you come home, holds a min-height so it stays legible when
+   empty, and scrolls with everything else — nothing is pinned. */
+.world-zone {
+  flex: 0 0 auto;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 14px 5px 5px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+.zone-far  { background: rgba(255, 255, 255, 0.015); min-height: 108px; }
+.zone-near { background: rgba(255, 255, 255, 0.04);  min-height: 108px; }
+.zone-base { background: rgba(255, 255, 255, 0.07);  min-height: 160px; }
+
+.zone-label {
+  position: absolute;
+  top: 3px;
+  left: 7px;
+  font-size: 14px;
+  line-height: 1;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.world-group.away { align-content: start; }
+/* Grows with its content (tiles + in-flight job chips); the base min-height
+   holds it open when empty. */
+.world-group.structures { align-content: end; }
+
+.world-group.enemies,
+.world-group.patrol,
+.world-group.defend { align-content: start; }
 
 /* Horizontally scrolling tile strip: four tiles visible, overflow scrolls,
    no wrapping. Same sizing as the workers/nodes row. */
@@ -568,7 +607,11 @@ button { touch-action: manipulation; }
 .error-flash.show { opacity: 1; transform: translate(-50%, 0); }
 
 @media (max-height: 760px) {
-  .world-group.enemies { min-height: 38px; }
+  /* Compact tiles are 36px, so the reserved row height comes down to match. */
+  .world-group,
+  .world-group.structures { min-height: 38px; }
+  .zone-far, .zone-near { min-height: 92px; }
+  .zone-base { min-height: 136px; }
   .shell { grid-template-rows: 52px 1fr; gap: 6px; padding-left: 6px; padding-right: 6px; }
   .topbar { padding: 6px; }
   .world { grid-template-rows: 24px 1fr 108px; }
