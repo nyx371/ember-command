@@ -208,7 +208,13 @@ button { touch-action: manipulation; }
    structures row takes the leftover space and hugs the command bar. */
 .world-group.structures { grid-template-columns: repeat(4, 1fr); align-content: end; }
 .world-group.army { grid-template-columns: repeat(4, 1fr); align-content: start; }
-.world-group.enemies { grid-template-columns: repeat(4, 1fr); align-content: start; }
+.world-group.enemies {
+  grid-template-columns: repeat(4, 1fr);
+  align-content: start;
+  /* Reserve the tile row even when no raids are active, so spawning enemies
+     never shifts the rest of the layout. */
+  min-height: 53px;
+}
 
 .raid-timer {
   grid-column: 1 / -1;
@@ -514,6 +520,7 @@ button { touch-action: manipulation; }
 .error-flash.show { opacity: 1; transform: translate(-50%, 0); }
 
 @media (max-height: 760px) {
+  .world-group.enemies { min-height: 47px; }
   .shell { grid-template-rows: 52px 1fr; gap: 6px; padding-left: 6px; padding-right: 6px; }
   .topbar { padding: 6px; }
   .world { grid-template-rows: 24px 1fr 108px; }

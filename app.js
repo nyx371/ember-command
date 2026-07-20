@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.03';
-const VERSION_TAG = 'flashes now visible over icons';
+const VERSION = '0.04';
+const VERSION_TAG = 'hp bars everywhere + steadier layout';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -554,6 +554,34 @@ function poolHp(pool) {
   };
 }
 
+// Node crews: one segment per worker, shown only while the crew is damaged.
+// Worker wounds are a global pool but the next victim is deterministic (the
+// last non-builder), so the bar belongs on that worker's node.
+function nodeHp(state, node) {
+  const count = workersAtNode(state, node).length;
+  if (count === 0 || state.workerWounds === 0) return null;
+  const victim = state.workers.filter(w => w.job !== 'building').pop();
+  if (!victim || victim.nodeId !== node.id) return null;
+  return {
+    segments: count,
+    partial: 1 - state.workerWounds / WORKER_HP,
+    total: (count * WORKER_HP - state.workerWounds) / (count * WORKER_HP)
+  };
+}
+
+// Structure tiles: bar only while a raid is actively chewing that type.
+function buildingHp(state, key) {
+  const full = BUILDINGS[key].hp;
+  const raid = state.raids.find(r => r.targetType === key && r.targetHp > 0 && r.targetHp < full);
+  if (!raid) return null;
+  const segments = state.structures[key];
+  return {
+    segments,
+    partial: raid.targetHp / full,
+    total: ((segments - 1) * full + raid.targetHp) / (segments * full)
+  };
+}
+
 function raidHp(raid) {
   if (raid.size === 0 || raid.hpPool >= raid.size * raid.grunt.hp) return null;   // bar only while damaged
   return {
@@ -969,7 +997,7 @@ function selectEntity(kind, type, id) {
 const SELECTION_VALID = {
   structure: (s, sel) => sel.type === 'hall' || s.structures[sel.type] > 0,
   node: (s, sel) => { const n = nodeById(s, sel.id); return !!n && n.remaining > 0; },
-  army: (s, sel) => ORDERS.includes(sel.type),
+  army: (s, sel) => ORDERS.includes(sel.type) && unitsOnOrder(s, sel.type) > 0,
   workerGroup: () => true,
   enemy: () => true
 };
@@ -1210,9 +1238,15 @@ function renderWorld() {
 
   const structures = document.createElement('section');
   structures.className = 'world-group structures';
+
+  // In-flight job chips render above the town hall, at the top of the row.
+  const jobQueue = renderJobQueue();
+  if (jobQueue) structures.appendChild(jobQueue);
+
   structures.appendChild(entityButton({
     kind: 'structure', type: 'hall', id: 1, compact: true,
-    icon: 'hall', label: 'town hall'
+    icon: 'hall', label: 'town hall',
+    hp: buildingHp(game, 'hall')
   }));
 
   // One tile per built structure type (with a count badge), from the table.
@@ -1221,12 +1255,10 @@ function renderWorld() {
     structures.appendChild(entityButton({
       kind: 'structure', type: key, id: 1, compact: true,
       icon: BUILDINGS[key].icon, label: BUILDINGS[key].label,
-      countLabel: game.structures[key]
+      countLabel: game.structures[key],
+      hp: buildingHp(game, key)
     }));
   });
-
-  const jobQueue = renderJobQueue();
-  if (jobQueue) structures.appendChild(jobQueue);
 
   // A horizontally scrollable row (see .world-group.workers) of the live
   // resource nodes — each shows its worker count and a harvest ring per worker;
@@ -1242,16 +1274,18 @@ function renderWorld() {
     workers.appendChild(entityButton({
       kind: 'workerGroup', type: 'idle', id: 1,
       icon: 'worker', label: 'idle workers', compact: true,
-      countLabel: idleCount, dimmed: idleCount === 0
+      countLabel: idleCount > 0 ? idleCount : null, dimmed: idleCount === 0
     }));
   }
 
   liveNodes.forEach(node => {
+    const crew = workersAtNode(game, node).length;
     workers.appendChild(entityButton({
       kind: 'node', type: node.type, id: node.id,
       icon: node.icon, label: `${node.label} (dist ${node.distance})`, compact: true,
       progressBars: nodeProgressBars(game, node), nodeId: node.id,
-      countLabel: workersAtNode(game, node).length, countIcon: 'worker'
+      countLabel: crew > 0 ? crew : null, countIcon: crew > 0 ? 'worker' : null,
+      hp: nodeHp(game, node)
     }));
   });
 
@@ -1261,10 +1295,11 @@ function renderWorld() {
   army.className = 'world-group army';
   ORDERS.forEach(order => {
     const n = unitsOnOrder(game, order);
+    if (n === 0) return;   // empty order groups stay hidden
     army.appendChild(entityButton({
       kind: 'army', type: order, id: 1, compact: true,
       icon: orderIcon(order), label: order,
-      countLabel: n, countIcon: 'footman', dimmed: n === 0,
+      countLabel: n, countIcon: 'footman',
       hp: poolHp(game.army[order])
     }));
   });
