@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.24';
-const VERSION_TAG = 'reveal-map cheat button';
+const VERSION = '0.25';
+const VERSION_TAG = 'big site tiles, attack shakes, defend-only regen, vision explore icon';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -42,9 +42,10 @@ const SITE_MARCH_TICKS = 6;
 const SITE_TOWER = { hp: 100, dmg: 6 };
 
 const WORKER_HP = 30;
-// Regen per tick by order — resting at base heals fastest, the field not at
-// all, so keeping units on defend has a real benefit.
-const HEAL_BY_ORDER = { defend: 3, patrol: 1, explore: 0, attack: 0 };
+// Regen per tick — only defenders resting between fights heal (never while a
+// raid is at the base, never on patrol or in the field), so pulling wounded
+// units back to defend has a real benefit.
+const HEAL_DEFEND_PER_TICK = 3;
 const WORKER_HEAL_PER_TICK = 2;
 // Changing orders takes marching time (ticks): 2 + remoteness of both ends.
 // Pulling scouts home mid-raid costs real time — they can't teleport back.
@@ -213,7 +214,7 @@ const ICONS = {
   stop: 'assets/icons/c_stop.png',
   defend: 'assets/icons/c_hshield1.png',
   patrol: 'assets/icons/c_hpatrol.png',
-  explore: 'assets/icons/c_hmove.png',
+  explore: 'assets/icons/c_cast_vision.png',
   build: 'assets/icons/c_build.png',
   harvest: 'assets/icons/c_harvest.png',
   axethrower: 'assets/icons/o_unit_axethrower.png',
@@ -940,6 +941,7 @@ function raidTick(state) {
       const dealt = defenseDamage(state, raid) / peers;
       if (dealt > 0) {
         flashTile(`enemy:raid:${raid.id}`, 'damage');
+        flashTile(raid.atBase ? 'army:defend:1' : 'army:patrol:1', 'attack');
         raid.lastHitAt = performance.now();
       }
       const sizeBefore = raid.size;
@@ -970,6 +972,7 @@ function raidTick(state) {
     if (raid.foeStrikeIn > 0) return;
     raid.foeStrikeIn = RAID_VOLLEY_EVERY;
     const dmg = raid.size * raid.grunt.dmg;
+    flashTile(`enemy:raid:${raid.id}`, 'attack');
     if (!raid.atBase) {
       damagePool(state, 'patrol', dmg);
       return;
@@ -1038,7 +1041,7 @@ function damageStrike(state, site, dmg) {
   const strike = site.strike;
   strike.wounds = (strike.wounds || 0) + dmg;
   site.strikeHitAt = performance.now();
-  flashTile(`site:${site.key}:2`, 'damage');
+  flashTile(`site:${site.key}:1`, 'damage');
   let type = Object.keys(ARMY).find(k => strike[k] > 0);
   while (type && strike.wounds >= unitHp(state, type)) {
     strike.wounds -= unitHp(state, type);
@@ -1158,11 +1161,11 @@ function gameTick() {
   autoAssignWorkers(game);
   harvestTick(game);
 
-  // Survivors patch up between fights — fastest while resting on defend, not
-  // at all in the field (see HEAL_BY_ORDER).
-  ORDERS.forEach(o => {
-    game.army[o].wounds = Math.max(0, game.army[o].wounds - HEAL_BY_ORDER[o]);
-  });
+  // Survivors patch up between fights — defenders only, and never while a
+  // raid is inside the base fighting them.
+  if (!game.raids.some(r => r.atBase)) {
+    game.army.defend.wounds = Math.max(0, game.army.defend.wounds - HEAL_DEFEND_PER_TICK);
+  }
   game.workerWounds = Math.max(0, game.workerWounds - WORKER_HEAL_PER_TICK);
 
   // Exploration — accumulates per exploring unit. Finds the enemy base first,
@@ -1454,13 +1457,19 @@ function commandFaded(state, command) {
   return command.available ? !command.available(state) : !command.enabled(state);
 }
 
-// Transient tile flashes (red = taking damage, white = spawn/assignment).
-// Keyed by tile identity so they survive the full-rebuild render; entityButton
-// applies the class while the entry is fresh, then it expires.
+// Transient tile flashes (red = taking damage, white = spawn/assignment,
+// attack = a subtle shake on the attacker). Keyed by tile identity so they
+// survive the full-rebuild render; entityButton applies the class while the
+// entry is fresh, then it expires. One entry per tile — a damage flash
+// registered after a shake simply wins, which is the right priority.
 const FLASH_MS = 600;
 const tileFlashes = new Map();
 
 function flashTile(key, kind) {
+  // A fresh damage flash outranks an attack shake on the same tile — getting
+  // hit must always read, shaking is garnish.
+  const current = tileFlashes.get(key);
+  if (kind === 'attack' && current && current.kind === 'damage' && current.until > performance.now()) return;
   tileFlashes.set(key, { kind, until: performance.now() + FLASH_MS });
 }
 
@@ -1471,7 +1480,7 @@ function tileFlashClass(key) {
     tileFlashes.delete(key);
     return null;
   }
-  return f.kind === 'damage' ? 'flash-damage' : 'flash-spawn';
+  return { damage: 'flash-damage', spawn: 'flash-spawn', attack: 'flash-attack' }[f.kind];
 }
 
 let errorTimer = null;
@@ -1610,6 +1619,23 @@ function nodeProgressBars(state, node) {
     .map(w => Math.min(1, ((cd - w.cooldown) + tickFraction(step)) / cd));
 }
 
+function hpBarEl(hp, extraClass) {
+  const bar = document.createElement('span');
+  bar.className = extraClass ? `hp-bar ${extraClass}` : 'hp-bar';
+  const segs = hp.segments <= 20 ? hp.segments : 1;
+  for (let i = 0; i < segs; i += 1) {
+    const seg = document.createElement('span');
+    seg.className = 'hp-seg';
+    const fill = document.createElement('i');
+    const isLast = i === segs - 1;
+    const pct = segs === 1 ? hp.total : (isLast ? hp.partial : 1);
+    fill.style.width = `${Math.round(Math.max(0, Math.min(1, pct)) * 100)}%`;
+    seg.appendChild(fill);
+    bar.appendChild(seg);
+  }
+  return bar;
+}
+
 function entityButton({ kind, type, id, icon, label, count, meta, danger, compact, jobIcon, badgeBlink, progressBars, nodeId, countLabel, countIcon, hp, fade, dimmed }) {
   const button = document.createElement('button');
   const classes = ['entity'];
@@ -1661,22 +1687,7 @@ function entityButton({ kind, type, id, icon, label, count, meta, danger, compac
   // Segmented hp bar: one segment per unit, the last partially drained by the
   // pool's accumulated wounds; collapses to one bar for hordes. Appended last
   // so it paints above the badges.
-  if (hp && hp.segments > 0) {
-    const bar = document.createElement('span');
-    bar.className = 'hp-bar';
-    const segs = hp.segments <= 20 ? hp.segments : 1;
-    for (let i = 0; i < segs; i += 1) {
-      const seg = document.createElement('span');
-      seg.className = 'hp-seg';
-      const fill = document.createElement('i');
-      const isLast = i === segs - 1;
-      const pct = segs === 1 ? hp.total : (isLast ? hp.partial : 1);
-      fill.style.width = `${Math.round(Math.max(0, Math.min(1, pct)) * 100)}%`;
-      seg.appendChild(fill);
-      bar.appendChild(seg);
-    }
-    button.appendChild(bar);
-  }
+  if (hp && hp.segments > 0) button.appendChild(hpBarEl(hp));
 
   if (!compact) {
     const body = document.createElement('span');
@@ -1908,46 +1919,52 @@ function renderWorld() {
     return enemies;
   }
 
-  // Conquerable sites out in the far field: each renders its garrison as a
-  // danger tile (site icon, grunt-count badge, tower corner badge, hp bar);
-  // when one of our columns is out there it renders as a friendly tile beside
-  // it (marching/returning columns blink their badge). Both tiles select the
-  // site, whose command card sends assaults and recalls.
+  // Conquerable sites out in the far field: one double-size tile per site
+  // carrying the whole fight — the garrison as chips down the right edge
+  // (grunts, then watch towers), our assault column as a chip bottom-left
+  // (blinking while marching or returning), the garrison's red hp bar along
+  // the bottom and the strike force's green one just above it.
   const sitesRow = document.createElement('section');
   sitesRow.className = 'world-group sites';
   const siteTiles = document.createElement('div');
   siteTiles.className = 'tile-row';
   siteTiles.dataset.scroll = 'sites';
+  function siteChip(icon, n) {
+    const chip = document.createElement('span');
+    chip.className = 'site-chip';
+    chip.appendChild(makeIcon(ICONS[icon], icon));
+    const count = document.createElement('span');
+    count.textContent = n;
+    chip.appendChild(count);
+    return chip;
+  }
   game.sites.forEach(site => {
     if (!site.discovered) return;
-    if (!site.cleared) {
-      siteTiles.appendChild(entityButton({
-        kind: 'site', type: site.key, id: 1, compact: true,
-        icon: site.icon, label: site.label, danger: true,
-        jobIcon: site.towersLeft > 0 ? 'orctower' : undefined,
-        countLabel: site.guardsLeft > 0 ? site.guardsLeft : null,
-        countIcon: site.guardsLeft > 0 ? 'enemy' : null,
-        hp: siteHp(site)
-      }));
-    }
     const mine = siteUnits(site);
+    if (site.cleared && mine === 0) return;
+    const btn = entityButton({
+      kind: 'site', type: site.key, id: 1, compact: true,
+      icon: site.icon, label: site.label, danger: !site.cleared,
+      hp: siteHp(site)
+    });
+    btn.classList.add('site-big');
+    const foes = document.createElement('span');
+    foes.className = 'site-chips';
+    if (!site.cleared && site.guardsLeft > 0) foes.appendChild(siteChip('enemy', site.guardsLeft));
+    if (!site.cleared && site.towersLeft > 0) foes.appendChild(siteChip('orctower', site.towersLeft));
+    if (foes.children.length) btn.appendChild(foes);
     if (mine > 0) {
       const col = site.strike || site.march || site.returning;
       const domType = Object.keys(ARMY).reduce((best, k) =>
         ((col[k] || 0) > (col[best] || 0) ? k : best), 'footmen');
-      const marchCol = site.march || site.returning;
-      const progress = marchCol
-        ? [1 - (marchCol.arriveIn != null ? marchCol.arriveIn : marchCol.returnIn) / SITE_MARCH_TICKS]
-        : undefined;
-      siteTiles.appendChild(entityButton({
-        kind: 'site', type: site.key, id: 2, compact: true,
-        icon: ARMY[domType].icon, label: `assault on ${site.label}`,
-        jobIcon: 'attack', badgeBlink: !!marchCol,
-        progressBars: progress,
-        countLabel: mine,
-        hp: strikeHp(site)
-      }));
+      const chip = siteChip(ARMY[domType].icon, mine);
+      chip.classList.add('mine');
+      if (site.march || site.returning) chip.classList.add('badge-blink');
+      btn.appendChild(chip);
+      const shp = strikeHp(site);
+      if (shp) btn.appendChild(hpBarEl(shp, 'mine'));
     }
+    siteTiles.appendChild(btn);
   });
   sitesRow.appendChild(siteTiles);
 

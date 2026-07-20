@@ -125,6 +125,7 @@ button { touch-action: manipulation; }
   background: var(--panel-2);
   border: 1px solid var(--line);
   border-radius: 10px;
+  overflow: hidden;   /* clips the full-bleed cheat grid to the rounded corners */
   box-shadow: 0 14px 38px rgba(0, 0, 0, 0.42);
 }
 .menu-version {
@@ -154,16 +155,18 @@ button { touch-action: manipulation; }
 }
 .menu-link:active { background: #1a1a2a; }
 
-.cheat-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 10px; }
+/* Full bleed: the grid runs to the panel's edges (negative margins swallow
+   the panel padding) and the buttons keep only hairline gaps. */
+.cheat-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; margin: 10px -12px -12px; }
 .cheat-btn {
   width: 100%;
   min-height: 34px;
   display: grid;
   place-items: center;
   background: #1a1a2a;
-  border: 1px solid #333;
-  padding: 4px;
-  border-radius: 3px;
+  border: 0;
+  padding: 10px 4px;
+  border-radius: 0;
   cursor: pointer;
 }
 .cheat-btn .icon { width: 22px; height: 22px; }
@@ -398,6 +401,16 @@ button { touch-action: manipulation; }
 .entity.flash-damage::after { background: rgba(214, 58, 40, 0.45); }
 .entity.flash-spawn::after  { background: rgba(255, 255, 255, 0.30); }
 
+/* Attackers shake subtly as their volley lands (a damage flash on the same
+   tile outranks this — see flashTile). */
+@keyframes tile-shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-1px); }
+  50% { transform: translateX(1px); }
+  75% { transform: translateX(-1px); }
+}
+.entity.flash-attack { animation: tile-shake 0.35s ease-in-out; }
+
 /* Segmented hp bar along a tile's bottom edge: one segment per unit, drained
    left-to-right; collapses to one continuous bar for hordes (>20). */
 .hp-bar {
@@ -423,6 +436,46 @@ button { touch-action: manipulation; }
   background: #7cbf6a;
 }
 .entity.danger .hp-seg i { background: var(--danger); }
+/* The strike force's own bar on a site tile — green, sitting just above the
+   garrison's red one. */
+.entity.danger .hp-bar.mine { bottom: 6px; }
+.entity.danger .hp-bar.mine .hp-seg i { background: #7cbf6a; }
+
+/* Conquerable sites: double-size tiles (2 tile widths + the gap between,
+   2 tile heights) with the whole fight on the button — garrison chips down
+   the right edge, our assault chip bottom-left. */
+.tile-row > .entity.site-big {
+  width: calc((100% - 9px) / 2 + 3px);
+  min-height: 84px;
+}
+.site-chips {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  align-items: flex-end;
+  pointer-events: none;
+}
+.site-chip {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 4px;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--text);
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 3px;
+  pointer-events: none;
+}
+.site-chip .icon { width: 16px; height: 16px; object-fit: cover; image-rendering: pixelated; }
+.entity > .site-chip.mine {
+  position: absolute;
+  left: 3px;
+  bottom: 10px;
+}
 .entity.danger strong { color: var(--danger); }
 .entity-body { min-width: 0; display: grid; gap: 4px; }
 .entity-body strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; line-height: 1; }
@@ -616,5 +669,6 @@ button { touch-action: manipulation; }
   .entity .icon { width: 36px; height: 36px; }
   .entity.compact { min-height: 36px; padding: 0; grid-template-columns: 1fr; }
   .entity.compact > .icon { width: 100%; height: 100%; }
+  .tile-row > .entity.site-big { min-height: 72px; }
   .command-bar { padding: 3px; gap: 3px; }
 }

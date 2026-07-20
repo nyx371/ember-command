@@ -76,7 +76,8 @@ only on arrival. Army tiles show the dominant unit type as the primary
 icon with the order as a corner badge; while a column is inbound the badge
 blinks (with a march ring) and tapping the tile recalls the column to its
 previous order. Production chips stay above the town hall. Wound
-regen is per order (`HEAL_BY_ORDER`: defend fastest, field none). Raider targeting: patrol
+regen: defenders only (`HEAL_DEFEND_PER_TICK`), paused while a raid is at
+the base; no other order heals. Raider targeting: patrol
 pool → defend pool → towers (`RAID_TOWER_TARGETS`) → workers → remaining
 buildings per `RAID_TARGET_ORDER` (hall last). Explore/attack pools are away
 from the base: they neither fight raids nor get targeted. Wounds pools:
@@ -99,8 +100,9 @@ pool (`damageStrike`) — and `conquerSite` applies the reward ({cache} pays
 out, {nodeId} reveals a `discoverAt: Infinity` node, {units} join the
 survivors) and sends everyone home to defend. Expedition units count toward
 supply (`siteUnits` in `supplyUsed`); a wiped strike leaves garrison damage
-standing. Renders in the far zone: a danger tile for the garrison (id 1) and
-a friendly tile for our column (id 2) — both select the site.
+standing. Renders in the far zone as one double-size tile (`.site-big`):
+garrison chips down the right edge, our column's chip bottom-left (blinking
+while marching/returning), red garrison hp bar plus a green strike bar.
 
 ### Timed jobs (one system)
 `game.jobs` — every in-flight timed thing. Shared shape
