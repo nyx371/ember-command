@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.01';
-const VERSION_TAG = 'version + latest-change tag in menu';
+const VERSION = '0.02';
+const VERSION_TAG = 'enemy row rework + page reorder';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -149,7 +149,6 @@ const ICONS = {
   tower: 'assets/icons/h_bld_tower.png',
   guardtower: 'assets/icons/h_bld_watchtower.png',
   enemy: 'assets/icons/o_unit_grunt.png',
-  enemyBase: 'assets/icons/o_bld_greathall.png',
   attack: 'assets/icons/c_sword1.png',
   stop: 'assets/icons/c_stop.png',
   defend: 'assets/icons/c_hshield1.png',
@@ -1270,32 +1269,32 @@ function renderWorld() {
     }));
   });
 
-  // Enemies get their own row below: the enemy base plus active raiding parties.
+  // Enemies row: a slim horizontal bar filling toward the next attack, plus one
+  // compact danger tile per raiding party (dimmed while still approaching).
   const enemies = document.createElement('section');
   enemies.className = 'world-group enemies';
 
-  const enemyCount = game.enemy.known ? Math.ceil(game.enemy.strength) : '??';
-  const enemyMeta  = game.enemy.known ? 'enemy base' : 'uncharted';
-  enemies.appendChild(entityButton({
-    kind: 'enemy', type: 'enemy', id: 1,
-    icon: 'enemyBase', label: 'enemy', count: enemyCount, meta: enemyMeta, danger: true,
-    // Debug: ring fills as the next raid approaches (updates once per tick).
-    progressBars: [Math.max(0, Math.min(1, (game.raid.interval - game.raid.nextIn) / game.raid.interval))]
-  }));
+  const timer = document.createElement('div');
+  timer.className = 'raid-timer';
+  timer.title = 'next attack';
+  const fill = document.createElement('i');
+  const pct = Math.max(0, Math.min(1, (game.raid.interval - game.raid.nextIn) / game.raid.interval));
+  fill.style.width = `${Math.round(pct * 100)}%`;
+  timer.appendChild(fill);
+  enemies.appendChild(timer);
 
-  // Active raiding parties, one danger tile each: grunt count + what they're up to.
   game.raids.forEach(raid => {
-    const meta = raid.arriveIn > 0 ? 'approaching'
-               : raid.targetType ? `razing ${BUILDINGS[raid.targetType].label}`
-               : 'attacking';
     enemies.appendChild(entityButton({
-      kind: 'enemy', type: 'raid', id: raid.id,
-      icon: 'enemy', label: 'raiders', count: raid.size, meta, danger: true,
+      kind: 'enemy', type: 'raid', id: raid.id, compact: true,
+      icon: 'enemy', label: 'raiders', danger: true,
+      countLabel: raid.size, dimmed: raid.arriveIn > 0,
       hp: raidHp(raid)
     }));
   });
 
-  dom.world.append(structures, workers, army, enemies);
+  // Page order: enemies at the top of the world, then my army, then economy,
+  // then structures next to the command bar.
+  dom.world.append(enemies, army, workers, structures);
 }
 
 function productionMeta(state, producer) {
@@ -1327,7 +1326,9 @@ function entityInfo(state) {
     const pool = state.army[type];
     if (!pool) return type;
     const parts = Object.keys(ARMY).filter(k => pool[k] > 0).map(k => `${pool[k]} ${ARMY[k].label}`);
-    return `${type} · ${parts.length ? parts.join(', ') : 'no units'}`;
+    const base = `${type} · ${parts.length ? parts.join(', ') : 'no units'}`;
+    if (type !== 'attack') return base;
+    return `${base} · enemy base ${state.enemy.known ? Math.ceil(state.enemy.strength) : 'unfound'}`;
   }
   return '';
 }
