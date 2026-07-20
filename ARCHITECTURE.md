@@ -86,6 +86,22 @@ raiders!' on arrival with a patrol standing, 'Our town is under attack!' on
 breakthrough, 'Our town is being razed!' once warriors are gone). Cheat buttons
 can force a raid and spawn footmen.
 
+### Conquerable sites
+`SITES` defines garrisoned mini-bases in the far field (guards + watch towers
+per `SITE_TOWER`); instances live on `game.sites` with garrison state and up
+to three of our columns each: `march` (heading out, `SITE_MARCH_TICKS`),
+`strike` (fighting there), `returning` (heading home). Exploration reveals
+them like distant nodes. Selecting a site (`kind: 'site'`, keyed by
+`site.key`) offers per-type assault commands pulling from the **defend** pool
+(tap one / hold all) plus recall. `siteTick` runs the fight on the raid
+cadences — our volley chews guards then towers; the garrison hits the strike
+pool (`damageStrike`) — and `conquerSite` applies the reward ({cache} pays
+out, {nodeId} reveals a `discoverAt: Infinity` node, {units} join the
+survivors) and sends everyone home to defend. Expedition units count toward
+supply (`siteUnits` in `supplyUsed`); a wiped strike leaves garrison damage
+standing. Renders in the far zone: a danger tile for the garrison (id 1) and
+a friendly tile for our column (id 2) — both select the site.
+
 ### Timed jobs (one system)
 `game.jobs` — every in-flight timed thing. Shared shape
 `{ uid, kind, icon, label, duration, remaining, cost, complete }` plus:
@@ -165,6 +181,8 @@ overlay (hall destroyed = defeat, enemy base at 0 = victory; tap reloads).
   `guardTowerCommand`.
 - **New resource node**: entry in `NODE_DEFS`. Tiles, harvest, depletion,
   auto-assign all follow.
+- **New conquerable site**: entry in `SITES` (+`ICONS` if a new sprite);
+  a `nodeId` reward needs its `NODE_DEFS` entry with `discoverAt: Infinity`.
 - **New standing order**: add to `makeOrderCommands` and `orderIcon`; hook
   behavior in `gameTick`/`raidTick` via `unitsOnOrder`/`homeGroups`.
 

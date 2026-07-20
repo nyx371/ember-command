@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.22';
-const VERSION_TAG = 'zone heights snap to tile multiples; design review added';
+const VERSION = '0.23';
+const VERSION_TAG = 'conquerable sites: assault garrisons for caches, mines, captives';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -36,6 +36,11 @@ const RAIDER_TYPES = {
   grunt:      { icon: 'enemy',      label: 'grunts',      hp: 60, dmg: 7, hpPerWave: 6, dmgPerWave: 1, baseSize: 1, sizePerWave: 2, fromWave: 0, bounty: 30 },
   axethrower: { icon: 'axethrower', label: 'axethrowers', hp: 40, dmg: 9, hpPerWave: 4, dmgPerWave: 1, baseSize: 2, sizePerWave: 1, fromWave: 3, bounty: 40 }
 };
+// Conquerable sites: how long the assault column marches each way (same as
+// marching to the far field) and the watch-tower stats their garrisons use.
+const SITE_MARCH_TICKS = 6;
+const SITE_TOWER = { hp: 100, dmg: 6 };
+
 const WORKER_HP = 30;
 // Regen per tick by order — resting at base heals fastest, the field not at
 // all, so keeping units on defend has a real benefit.
@@ -59,7 +64,27 @@ const NODE_DEFS = [
   { id: 'forest-2', type: 'lumber', label: 'far forest',  icon: 'lumberSite', distance: 5, capacity: 25000, discoverAt: 0 },
   { id: 'gold-2',   type: 'gold',   label: 'hill mine',   icon: 'goldSite',   distance: 4, capacity: 25000, discoverAt: 160 },
   { id: 'forest-3', type: 'lumber', label: 'deep woods',  icon: 'lumberSite', distance: 6, capacity: 30000, discoverAt: 280 },
-  { id: 'gold-3',   type: 'gold',   label: 'mountain mine', icon: 'goldSite', distance: 9, capacity: 40000, discoverAt: 450 }
+  { id: 'gold-3',   type: 'gold',   label: 'mountain mine', icon: 'goldSite', distance: 9, capacity: 40000, discoverAt: 450 },
+  // Unlocked by clearing the overrun-mine site, never by scouting alone.
+  { id: 'gold-4',   type: 'gold',   label: 'rich gold mine', icon: 'goldSite', distance: 3, capacity: 30000, discoverAt: Infinity }
+];
+
+// Conquerable sites — mini-bases in the far field, revealed by exploration
+// like distant nodes. Each shows its garrison (guard units + watch towers);
+// warriors sent from the defend pool must clear it, then the reward unlocks
+// and survivors march home. `reward`: { cache } pays out instantly,
+// { nodeId } reveals that NODE_DEFS entry (give it discoverAt: Infinity so
+// scouts can't find it first), { units } march home with the survivors.
+const SITES = [
+  { key: 'camp',  icon: 'orccamp',  label: 'raider camp',   discoverAt: 130,
+    guards: { count: 3, hp: 60, dmg: 7 }, towers: 1,
+    reward: { cache: { gold: 700, lumber: 500 } }, rewardText: 'war chest 700g 500w' },
+  { key: 'mine',  icon: 'goldSite', label: 'overrun mine',  discoverAt: 240,
+    guards: { count: 5, hp: 66, dmg: 8 }, towers: 1,
+    reward: { nodeId: 'gold-4' }, rewardText: 'rich gold mine' },
+  { key: 'stockade', icon: 'stockade', label: 'prison camp', discoverAt: 380,
+    guards: { count: 6, hp: 72, dmg: 9 }, towers: 2,
+    reward: { units: { footmen: 3 } }, rewardText: '3 captive footmen' }
 ];
 
 // Tech upgrades bought at their source building; level effects are read by
@@ -192,6 +217,9 @@ const ICONS = {
   build: 'assets/icons/c_build.png',
   harvest: 'assets/icons/c_harvest.png',
   axethrower: 'assets/icons/o_unit_axethrower.png',
+  orccamp: 'assets/icons/o_bld_barracks.png',
+  stockade: 'assets/icons/o_bld_wall.png',
+  orctower: 'assets/icons/o_bld_watchtower.png',
   axe2: 'assets/icons/c_axe2.png',
   axe3: 'assets/icons/c_axe3.png',
   sword2: 'assets/icons/c_sword2.png',
@@ -231,6 +259,17 @@ function createGame() {
       [o, { ...Object.fromEntries(Object.keys(ARMY).map(k => [k, o === 'defend' && k === 'footmen' ? 1 : 0])), wounds: 0 }])),
     structures: Object.fromEntries(Object.keys(BUILDINGS).map(k => [k, (k === 'hall' || k === 'farm') ? 1 : 0])),
     enemy: { strength: 20, known: false },
+    // Conquerable sites (see SITES): garrison state plus up to three of our
+    // columns per site — `march` heading out, `strike` fighting there,
+    // `returning` heading home. All count toward supply.
+    sites: SITES.map(d => ({
+      ...d, discovered: false, cleared: false,
+      guardsLeft: d.guards.count, guardPool: d.guards.count * d.guards.hp,
+      towersLeft: d.towers, towerHp: SITE_TOWER.hp,
+      strike: null, march: null, returning: null,
+      myStrikeIn: DEFENSE_VOLLEY_EVERY, foeStrikeIn: RAID_VOLLEY_EVERY,
+      lastHitAt: 0, strikeHitAt: 0
+    })),
     exploreProgress: 0,
     raid: { nextIn: RAID_INTERVAL_BASE, interval: RAID_INTERVAL_BASE, wave: 0 },
     raids: [],            // active raiding parties (see spawnRaid)
@@ -569,7 +608,8 @@ function advanceJobs(state) {
 function supplyUsed(state) {
   return state.workers.length
        + ORDERS.reduce((sum, o) => sum + poolCount(state.army[o]), 0)
-       + state.jobs.filter(j => j.kind === 'transfer').reduce((sum, j) => sum + j.count, 0);
+       + state.jobs.filter(j => j.kind === 'transfer').reduce((sum, j) => sum + j.count, 0)
+       + state.sites.reduce((sum, s) => sum + siteUnits(s), 0);
 }
 
 function supplyCap(state) {
@@ -677,6 +717,38 @@ function raidHp(raid) {
     segments: raid.size,
     partial: (raid.hpPool - (raid.size - 1) * raid.grunt.hp) / raid.grunt.hp,
     total: raid.hpPool / (raid.size * raid.grunt.hp)
+  };
+}
+
+// Site garrison bar: one segment per remaining guard or tower, only while
+// damaged (or just hit). Guards soak before towers, so the draining segment
+// is whichever of the two is currently being chewed.
+function siteHp(site) {
+  const full = site.guards.count * site.guards.hp + site.towers * SITE_TOWER.hp;
+  const left = site.guardPool
+    + (site.towersLeft > 0 ? (site.towersLeft - 1) * SITE_TOWER.hp + site.towerHp : 0);
+  if (left >= full && !recentlyHit(site.lastHitAt)) return null;
+  const segments = site.guardsLeft + site.towersLeft;
+  if (segments === 0) return null;
+  const partial = site.guardsLeft > 0
+    ? (site.guardPool - (site.guardsLeft - 1) * site.guards.hp) / site.guards.hp
+    : site.towerHp / SITE_TOWER.hp;
+  return { segments, partial, total: left / full };
+}
+
+// The strike force's own bar — only the fighting column takes damage.
+function strikeHp(site) {
+  const col = site.strike;
+  if (!col) return null;
+  const count = strikeCount(col);
+  if (count === 0) return null;
+  if (!col.wounds && !recentlyHit(site.strikeHitAt)) return null;
+  const type = Object.keys(ARMY).find(k => col[k] > 0);
+  const maxHp = Object.keys(ARMY).reduce((sum, k) => sum + (col[k] || 0) * ARMY[k].hp, 0);
+  return {
+    segments: count,
+    partial: 1 - col.wounds / ARMY[type].hp,
+    total: (maxHp - col.wounds) / maxHp
   };
 }
 
@@ -916,6 +988,161 @@ function raidTick(state) {
   state.raids = state.raids.filter(r => r.size > 0);
 }
 
+// ── Conquerable sites ──────────────────────────────────────────────────────
+// Mini-bases in the far field. Warriors sent from the defend pool march out
+// (SITE_MARCH_TICKS each way), exchange volleys with the garrison on the raid
+// cadences — guards soak first, then the watch towers are razed — and the
+// survivors march home automatically once the site is cleared, bringing the
+// reward with them. A wiped strike leaves the garrison's damage standing, so
+// a second expedition finishes the job.
+
+function siteByKey(state, key) {
+  return state.sites.find(s => s.key === key);
+}
+
+function strikeCount(col) {
+  return col ? Object.keys(ARMY).reduce((n, k) => n + (col[k] || 0), 0) : 0;
+}
+
+function siteUnits(site) {
+  return strikeCount(site.strike) + strikeCount(site.march) + strikeCount(site.returning);
+}
+
+function sendToSite(state, site, type, count) {
+  const moved = Math.min(count, state.army.defend[type]);
+  if (moved <= 0) return;
+  state.army.defend[type] -= moved;
+  if (poolCount(state.army.defend) === 0) state.army.defend.wounds = 0;
+  if (site.march) site.march[type] = (site.march[type] || 0) + moved;   // join the column under way
+  else site.march = { [type]: moved, arriveIn: SITE_MARCH_TICKS };
+  writeLog(state, `${moved} ${moved === 1 ? ARMY[type].singular : ARMY[type].label} marching on the ${site.label}.`);
+}
+
+// Recall pulls everything — fighters, marchers, even an already-returning
+// column — into one column heading home.
+function recallSite(state, site) {
+  const back = { returnIn: SITE_MARCH_TICKS, wounds: 0 };
+  [site.strike, site.march, site.returning].forEach(col => {
+    if (!col) return;
+    Object.keys(ARMY).forEach(k => { back[k] = (back[k] || 0) + (col[k] || 0); });
+    back.wounds += col.wounds || 0;
+  });
+  site.strike = null;
+  site.march = null;
+  site.returning = strikeCount(back) > 0 ? back : null;
+  if (site.returning) writeLog(state, `Warriors recalled from the ${site.label}.`);
+}
+
+function damageStrike(state, site, dmg) {
+  const strike = site.strike;
+  strike.wounds = (strike.wounds || 0) + dmg;
+  site.strikeHitAt = performance.now();
+  flashTile(`site:${site.key}:2`, 'damage');
+  let type = Object.keys(ARMY).find(k => strike[k] > 0);
+  while (type && strike.wounds >= unitHp(state, type)) {
+    strike.wounds -= unitHp(state, type);
+    strike[type] -= 1;
+    writeLog(state, `A ${ARMY[type].singular} has fallen at the ${site.label}.`);
+    type = Object.keys(ARMY).find(k => strike[k] > 0);
+  }
+  if (!type) {
+    site.strike = null;
+    writeLog(state, `Our assault on the ${site.label} was wiped out!`);
+    flashError(`Our warriors fell at the ${site.label}!`);
+  }
+}
+
+function conquerSite(state, site) {
+  site.cleared = true;
+  writeLog(state, `${cap(site.label)} cleared!`);
+  flashError(`${cap(site.label)} cleared!`);
+  const survivors = site.strike;
+  site.strike = null;
+  const back = site.returning || { wounds: 0 };
+  back.returnIn = SITE_MARCH_TICKS;
+  Object.keys(ARMY).forEach(k => { back[k] = (back[k] || 0) + (survivors[k] || 0); });
+  back.wounds = (back.wounds || 0) + (survivors.wounds || 0);
+  const r = site.reward;
+  if (r.cache) {
+    refund(state, r.cache);
+    writeLog(state, `Plundered: ${Object.keys(r.cache).map(k => `${r.cache[k]} ${k}`).join(', ')}.`);
+  }
+  if (r.nodeId) {
+    const node = nodeById(state, r.nodeId);
+    if (node) {
+      node.discovered = true;
+      flashTile(`node:${node.type}:${node.id}`, 'spawn');
+      writeLog(state, `The ${node.label} is ours — send workers.`);
+    }
+  }
+  if (r.units) {
+    Object.keys(r.units).forEach(k => { back[k] = (back[k] || 0) + r.units[k]; });
+    writeLog(state, `${Object.values(r.units).reduce((a, b) => a + b, 0)} freed footmen join the march home.`);
+  }
+  site.returning = back;
+}
+
+function siteTick(state) {
+  state.sites.forEach(site => {
+    if (site.march) {
+      site.march.arriveIn -= 1;
+      if (site.march.arriveIn <= 0) {
+        const strike = site.strike || { wounds: 0 };
+        Object.keys(ARMY).forEach(k => { strike[k] = (strike[k] || 0) + (site.march[k] || 0); });
+        site.strike = strike;
+        site.march = null;
+        writeLog(state, `Our warriors storm the ${site.label}!`);
+      }
+    }
+    if (site.returning) {
+      site.returning.returnIn -= 1;
+      if (site.returning.returnIn <= 0) {
+        Object.keys(ARMY).forEach(k => { state.army.defend[k] += site.returning[k] || 0; });
+        state.army.defend.wounds += site.returning.wounds || 0;
+        flashTile('army:defend:1', 'spawn');
+        writeLog(state, `The expedition from the ${site.label} has returned.`);
+        site.returning = null;
+      }
+    }
+    if (!site.strike || site.cleared) return;
+    // Our volley: guards soak everything first, then towers fall one by one.
+    site.myStrikeIn -= 1;
+    if (site.myStrikeIn <= 0) {
+      site.myStrikeIn = DEFENSE_VOLLEY_EVERY;
+      let dealt = Object.keys(ARMY).reduce((sum, k) => sum + (site.strike[k] || 0) * unitDmg(state, k), 0);
+      if (dealt > 0) {
+        flashTile(`site:${site.key}:1`, 'damage');
+        site.lastHitAt = performance.now();
+      }
+      if (site.guardsLeft > 0) {
+        site.guardPool = Math.max(0, site.guardPool - dealt);
+        site.guardsLeft = Math.ceil(site.guardPool / site.guards.hp);
+      } else {
+        while (dealt > 0 && site.towersLeft > 0) {
+          const hit = Math.min(dealt, site.towerHp);
+          site.towerHp -= hit;
+          dealt -= hit;
+          if (site.towerHp <= 0) {
+            site.towersLeft -= 1;
+            site.towerHp = SITE_TOWER.hp;
+            writeLog(state, `Watch tower at the ${site.label} destroyed.`);
+          }
+        }
+      }
+      if (site.guardsLeft <= 0 && site.towersLeft <= 0) {
+        conquerSite(state, site);
+        return;
+      }
+    }
+    // The garrison strikes back on the raiders' cadence.
+    site.foeStrikeIn -= 1;
+    if (site.foeStrikeIn > 0) return;
+    site.foeStrikeIn = RAID_VOLLEY_EVERY;
+    const dmg = site.guardsLeft * site.guards.dmg + site.towersLeft * SITE_TOWER.dmg;
+    if (dmg > 0) damageStrike(state, site, dmg);
+  });
+}
+
 // ── Tick ───────────────────────────────────────────────────────────────────
 
 function currentDay(state) {
@@ -953,6 +1180,13 @@ function gameTick() {
         writeLog(game, `Scouts discovered a ${n.label}!`);
       }
     });
+    game.sites.forEach(site => {
+      if (!site.discovered && game.exploreProgress >= site.discoverAt) {
+        site.discovered = true;
+        flashTile(`site:${site.key}:1`, 'spawn');
+        writeLog(game, `Scouts found a ${site.label} — ${site.guards.count} grunts and ${site.towers} watch tower${site.towers === 1 ? '' : 's'} guard it.`);
+      }
+    });
   }
 
   // Auto-attack — chips away at enemy strength
@@ -975,6 +1209,7 @@ function gameTick() {
     game.raid.nextIn = game.raid.interval;
   }
   raidTick(game);
+  siteTick(game);
 
   advanceJobs(game);
   clampGame(game);
@@ -1081,6 +1316,32 @@ function armyGroupCommands(state, order) {
   return commands;
 }
 
+// Commands for a selected site: one assault button per army type (pulled from
+// the defend pool — tap sends one, hold sends all of that type) plus a recall
+// once anyone is out there. Mirrors armyGroupCommands' shape.
+function siteCommands(state, site) {
+  const commands = Object.keys(ARMY).map(type => ({
+    id: `assault-${site.key}-${type}`,
+    icon: ARMY[type].icon, overlay: 'attack',
+    label: `send ${ARMY[type].singular} to assault`, cost: '',
+    hidden: () => site.cleared,
+    enabled: s => !site.cleared && s.army.defend[type] > 0,
+    reason: s => site.cleared ? 'Already cleared'
+               : `No ${ARMY[type].label} resting on defend`,
+    run: s => sendToSite(s, site, type, 1),
+    runAll: s => sendToSite(s, site, type, s.army.defend[type])
+  }));
+  commands.push({
+    id: `recall-${site.key}`, icon: 'defend', overlay: 'stop',
+    label: 'recall warriors', cost: '',
+    hidden: () => !site.strike && !site.march,
+    enabled: () => !!(site.strike || site.march),
+    reason: () => 'No warriors to recall',
+    run: s => recallSite(s, site)
+  });
+  return commands;
+}
+
 // Static command sets, derived from the data tables. Train commands attach to
 // their producer automatically; extra per-structure commands (the hall's build
 // menu, tower upgrades) are appended after.
@@ -1149,6 +1410,10 @@ function selectedCommands(state) {
     return node ? nodeCommands(state, node) : [];
   }
   if (state.selected.kind === 'army') return armyGroupCommands(state, state.selected.type);
+  if (state.selected.kind === 'site') {
+    const site = siteByKey(state, state.selected.type);
+    return site ? siteCommands(state, site) : [];
+  }
   return [];
 }
 
@@ -1234,7 +1499,12 @@ const SELECTION_VALID = {
   army: (s, sel) => ORDERS.includes(sel.type)
     && (unitsOnOrder(s, sel.type) > 0 || s.jobs.some(j => j.kind === 'transfer' && j.to === sel.type)),
   workerGroup: () => true,
-  enemy: () => true
+  enemy: () => true,
+  // A cleared site stays selectable while our columns are still out there.
+  site: (s, sel) => {
+    const site = siteByKey(s, sel.type);
+    return !!site && site.discovered && (!site.cleared || siteUnits(site) > 0);
+  }
 };
 
 function validateSelection(state) {
@@ -1637,6 +1907,49 @@ function renderWorld() {
     return enemies;
   }
 
+  // Conquerable sites out in the far field: each renders its garrison as a
+  // danger tile (site icon, grunt-count badge, tower corner badge, hp bar);
+  // when one of our columns is out there it renders as a friendly tile beside
+  // it (marching/returning columns blink their badge). Both tiles select the
+  // site, whose command card sends assaults and recalls.
+  const sitesRow = document.createElement('section');
+  sitesRow.className = 'world-group sites';
+  const siteTiles = document.createElement('div');
+  siteTiles.className = 'tile-row';
+  siteTiles.dataset.scroll = 'sites';
+  game.sites.forEach(site => {
+    if (!site.discovered) return;
+    if (!site.cleared) {
+      siteTiles.appendChild(entityButton({
+        kind: 'site', type: site.key, id: 1, compact: true,
+        icon: site.icon, label: site.label, danger: true,
+        jobIcon: site.towersLeft > 0 ? 'orctower' : undefined,
+        countLabel: site.guardsLeft > 0 ? site.guardsLeft : null,
+        countIcon: site.guardsLeft > 0 ? 'enemy' : null,
+        hp: siteHp(site)
+      }));
+    }
+    const mine = siteUnits(site);
+    if (mine > 0) {
+      const col = site.strike || site.march || site.returning;
+      const domType = Object.keys(ARMY).reduce((best, k) =>
+        ((col[k] || 0) > (col[best] || 0) ? k : best), 'footmen');
+      const marchCol = site.march || site.returning;
+      const progress = marchCol
+        ? [1 - (marchCol.arriveIn != null ? marchCol.arriveIn : marchCol.returnIn) / SITE_MARCH_TICKS]
+        : undefined;
+      siteTiles.appendChild(entityButton({
+        kind: 'site', type: site.key, id: 2, compact: true,
+        icon: ARMY[domType].icon, label: `assault on ${site.label}`,
+        jobIcon: 'attack', badgeBlink: !!marchCol,
+        progressBars: progress,
+        countLabel: mine,
+        hp: strikeHp(site)
+      }));
+    }
+  });
+  sitesRow.appendChild(siteTiles);
+
   const seen = game.raids.filter(raid => raid.discovered);
   const raidZone = raid => raid.atBase ? 'base' : 'near';
 
@@ -1649,7 +1962,7 @@ function renderWorld() {
   // Every zone (and every row inside it) stays mounted when empty so tiles never
   // shift position as pools fill and drain; the whole stack scrolls as one.
   dom.world.append(
-    zone('far', [away, enemyRow('far', seen.filter(r => raidZone(r) === 'far'))]),
+    zone('far', [away, sitesRow, enemyRow('far', seen.filter(r => raidZone(r) === 'far'))]),
     zone('near', [patrol, enemyRow('near', seen.filter(r => raidZone(r) === 'near'))]),
     zone('base', [enemyRow('base', seen.filter(r => raidZone(r) === 'base')), defend, workers, structures])
   );
@@ -1688,6 +2001,19 @@ function entityInfo(state) {
     const n = workersAtNode(state, node).length;
     const status = node.remaining <= 0 ? 'depleted' : `${fmtQty(node.remaining)} left`;
     return `${node.label} · ${status} · dist ${node.distance} · ${n} working`;
+  }
+  if (kind === 'site') {
+    const site = siteByKey(state, type);
+    if (!site) return '';
+    const garrison = site.cleared ? 'cleared'
+      : [`${site.guardsLeft} grunts`,
+         site.towersLeft > 0 ? `${site.towersLeft} watch tower${site.towersLeft === 1 ? '' : 's'}` : null]
+        .filter(Boolean).join(', ');
+    const parts = [`${site.label} · ${garrison} · ${site.rewardText}`];
+    if (site.march) parts.push(`${strikeCount(site.march)} marching`);
+    if (site.strike) parts.push(`${strikeCount(site.strike)} attacking`);
+    if (site.returning) parts.push(`${strikeCount(site.returning)} returning`);
+    return parts.join(' · ');
   }
   if (kind === 'army') {
     const pool = state.army[type];

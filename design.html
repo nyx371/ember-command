@@ -121,6 +121,19 @@
 <div class="note"><strong>Global pace lever.</strong> All build/train/upgrade durations are the real WC2 seconds × <code>TIME_SCALE</code> (currently 0.3) — one constant to retune the whole game's tempo.</div>
 <div class="note"><strong>Open — end-game refinements.</strong> Survive-to-day-N and economic-victory variants; what a win/loss does to a future save file.</div>
 
+<h2><img class="icon" src="assets/icons/o_bld_watchtower.png" alt="">Conquerable Sites</h2>
+<p>Replaces WC2's optional map objectives (gold mines to claim, corners worth clearing) with discrete, garrisoned sites — exploration finds them, force takes them.</p>
+<p><span class="status done">done</span> — Scouts on Explore reveal <strong>garrisoned sites</strong> in the far field, each showing its strength up front: a grunt-count badge, a watch-tower badge, and an hp bar once damaged. Tap a site to <strong>send warriors from the defend pool</strong> (tap = one, hold = all; recall any time); the column marches out, exchanges volleys with the garrison — guards soak first, then the towers fall — and <strong>survivors march home automatically</strong> when the site is cleared, bringing the reward: a <strong>war chest</strong> (raider camp), a <strong>rich gold mine</strong> that appears as a harvestable node (overrun mine), or <strong>captive footmen</strong> who join the returning column (prison camp). A wiped assault leaves the garrison's damage standing, so a second expedition can finish the job. Units on an expedition count toward supply and are away from the base — they can't help against raids.</p>
+
+<div class="table-wrap"><table>
+  <tr><th>Site</th><th>Garrison</th><th>Reward</th></tr>
+  <tr><td><img class="icon" src="assets/icons/o_bld_barracks.png" alt="">Raider camp</td><td>3 grunts, 1 watch tower</td><td>War chest: 700g 500w</td></tr>
+  <tr><td><img class="icon" src="assets/icons/n_bld_goldmine.png" alt="">Overrun mine</td><td>5 grunts, 1 watch tower</td><td>Rich gold mine node (30k, dist 3)</td></tr>
+  <tr><td><img class="icon" src="assets/icons/o_bld_wall.png" alt="">Prison camp</td><td>6 grunts, 2 watch towers</td><td>3 captive footmen join you</td></tr>
+</table></div>
+
+<div class="note"><strong>Open — sites and raids.</strong> Should uncleared sites feed the raid pressure (outposts as raid sources, per the design review below), and should garrisons repair over time?</div>
+
 <h2><img class="icon" src="assets/icons/h_bld_blacksmith.png" alt="">Upgrades</h2>
 <p><span class="status done">done</span> — Tech upgrades follow the guard-tower pattern: one button on the source structure, timed, cancellable with refund. Implemented: <strong>lumber harvesting</strong> (Lumber Mill, 2 tiers, +25% yield each), <strong>weapons</strong> (Blacksmith, 2 tiers, +2 dmg per unit), <strong>armor</strong> (Blacksmith, 2 tiers, +10 hp per unit) — the player's counter-curve to daily raid scaling.</p>
 <ul>
@@ -139,7 +152,7 @@
 <p><strong>Diagnosis.</strong> The opening is decision-dense (build order, labour split, first patrol) and the ending is real, but the <em>middle game idles</em>: once the economy self-runs and postures are set, the player is waiting for raids and watching timers. <strong>Attack</strong> — the win condition — is the least interesting order: assign and wait, with no visible fight. The biggest wins are whatever puts mid-game decisions back and makes the enemy side legible.</p>
 
 <ul>
-  <li><span class="status idea">idea</span> <strong>The world as sites, not just bands.</strong> Give the far zone discrete discoverable sites: enemy <em>outposts</em> (where raids muster — razing one slows or removes a raid source), neutral camps (one-shot loot ventures), and the stronghold itself. Explore reveals them one by one; Attack/Raid target one site at a time. Turns the three zones into an abstract map and gives Attack intermediate objectives. Largest single design lever.</li>
+  <li><span class="status done">done</span> <strong>The world as sites, not just bands</strong> — first step shipped as <em>Conquerable Sites</em> (see its section above). Still open from the original idea: outposts that act as raid sources (razing one slows raids) and targeting the stronghold itself site-by-site.</li>
   <li><span class="status idea">idea</span> <strong>Mirror the enemy base.</strong> Make it a real entity — hp segments, a garrison that thins as you grind, visible rebuilding, counter-pressure that spikes while you besiege. The attack force should trade volleys and wounds like raid combat at home, not silently drain a number.</li>
   <li><span class="status idea">idea</span> <strong>Raid variety as posture puzzles.</strong> Wolf riders that outrun the patrol buffer (defenders matter), siege parties that ignore units and hit buildings (patrol matters double), a telegraphed horde every N waves ("war drums — three days to prepare"). Each variant asks for a different posture split — the game's core verb.</li>
   <li><span class="status idea">idea</span> <strong>Resolve Raid vs Attack</strong> (open note under Upgrades) as: <code>Raid</code> = fast strike on an outpost or the enemy economy — quick march, steals gold, low risk; <code>Attack</code> = commitment against the stronghold — slow march, casualties, wins the game.</li>
