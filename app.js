@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.10';
-const VERSION_TAG = 'survivable opening, plunder, raid clock, income';
+const VERSION = '0.11';
+const VERSION_TAG = 'start with 400g and a farm';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -205,7 +205,7 @@ function createGame() {
   return {
     tick: 0,
     selected: { kind: 'structure', type: 'hall', id: 1 },
-    resources: { gold: 100, lumber: 100, oil: 0 },
+    resources: { gold: 400, lumber: 100, oil: 0 },
     // One unified list of timed jobs: kind ∈ train|construct|upgrade. All share
     // { uid, icon, label, duration, remaining, cost, complete }; train jobs add
     // { producer, supply }, construct jobs add { workerId, returnTo }, upgrade
@@ -220,7 +220,7 @@ function createGame() {
     // shared wounds pool for raid damage.
     army: Object.fromEntries(ORDERS.map(o =>
       [o, { ...Object.fromEntries(Object.keys(ARMY).map(k => [k, 0])), wounds: 0 }])),
-    structures: Object.fromEntries(Object.keys(BUILDINGS).map(k => [k, k === 'hall' ? 1 : 0])),
+    structures: Object.fromEntries(Object.keys(BUILDINGS).map(k => [k, (k === 'hall' || k === 'farm') ? 1 : 0])),
     enemy: { strength: 20, known: false },
     exploreProgress: 0,
     raid: { nextIn: RAID_INTERVAL_BASE, interval: RAID_INTERVAL_BASE, wave: 0 },
