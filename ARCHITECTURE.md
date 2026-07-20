@@ -56,8 +56,9 @@ sprite).** Times/costs are real WC2 values; every duration is multiplied by
 `game.raids` holds live raiding parties (`{ kind, icon, label, size,
 grunt: {hp, dmg}, hpPool, arriveIn, strikeIn, targetType, targetHp }`).
 `RAIDER_TYPES` is the enemy roster — one party per active type per wave
-(grunts day 0+, axethrowers day 2+), stats scale with day, and defense
-damage splits across simultaneous parties. `spawnRaid` on the raid
+(grunts wave 1+, axethrowers wave 4+); stats and headcount scale per WAVE
+(`game.raid.wave`), defense damage splits across simultaneous parties, and
+each raider killed pays its `bounty` in plunder gold. `spawnRaid` on the raid
 interval (`game.raid.interval` feeds the countdown ring on the enemy tile);
 `raidTick` runs volleys every `VOLLEY_EVERY` ticks — patrol strikes during
 the approach, defend+patrol+towers after arrival. Raider targeting: patrol

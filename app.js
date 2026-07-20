@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.09';
-const VERSION_TAG = 'per-type army order assignment';
+const VERSION = '0.10';
+const VERSION_TAG = 'survivable opening, plunder, raid clock, income';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -27,11 +27,13 @@ const RAID_INTERVAL_SCALE = 8;  // reduce interval by this per day
 const RAID_INTERVAL_MIN = 25;
 const RAID_ARRIVE_TICKS = 6;    // approach window — only patrol strikes during it
 const VOLLEY_EVERY = 2;         // ticks between combat volleys (attack cooldown, both sides)
-// Enemy roster: each raid wave spawns one party per type whose fromDay has
-// arrived. Stats and headcount scale with the day.
+// Enemy roster: each wave spawns one party per type whose fromWave has
+// arrived. Stats and headcount scale per WAVE (not per day) so the ramp is
+// deterministic — wave 1 is always a lone grunt — while the shrinking raid
+// interval still accelerates pressure in real time.
 const RAIDER_TYPES = {
-  grunt:      { icon: 'enemy',      label: 'grunts',      hp: 60, dmg: 7, hpPerDay: 6, dmgPerDay: 1, baseSize: 3, sizePerDay: 2, fromDay: 0 },
-  axethrower: { icon: 'axethrower', label: 'axethrowers', hp: 40, dmg: 9, hpPerDay: 4, dmgPerDay: 1, baseSize: 2, sizePerDay: 1, fromDay: 2 }
+  grunt:      { icon: 'enemy',      label: 'grunts',      hp: 60, dmg: 7, hpPerWave: 6, dmgPerWave: 1, baseSize: 1, sizePerWave: 2, fromWave: 0, bounty: 30 },
+  axethrower: { icon: 'axethrower', label: 'axethrowers', hp: 40, dmg: 9, hpPerWave: 4, dmgPerWave: 1, baseSize: 2, sizePerWave: 1, fromWave: 3, bounty: 40 }
 };
 const WORKER_HP = 30;
 const WOUND_HEAL_PER_TICK = 2;  // survivors regenerate between fights
@@ -82,7 +84,7 @@ const BUILDINGS = {
   hall: {
     icon: 'hall', label: 'town hall',
     supply: 4, hp: 1200,
-    blurb: s => `Town Hall · ${productionMeta(s, 'hall') || 'ready'}`
+    blurb: s => `Town Hall · ${productionMeta(s, 'hall') || 'ready'} · +${Math.round(incomePerTick(s, 'gold'))}g +${Math.round(incomePerTick(s, 'lumber'))}w /s`
   },
   farm: {
     icon: 'farm', label: 'farm',
@@ -221,10 +223,10 @@ function createGame() {
     structures: Object.fromEntries(Object.keys(BUILDINGS).map(k => [k, k === 'hall' ? 1 : 0])),
     enemy: { strength: 20, known: false },
     exploreProgress: 0,
-    raid: { nextIn: RAID_INTERVAL_BASE, interval: RAID_INTERVAL_BASE },
+    raid: { nextIn: RAID_INTERVAL_BASE, interval: RAID_INTERVAL_BASE, wave: 0 },
     raids: [],            // active raiding parties (see spawnRaid)
     workerWounds: 0,      // damage accumulated toward the next worker death
-    log: ['Town hall ready.', 'Workers await orders.'],
+    log: ['Raiders are coming — raise an army before they do.', 'Tap the town hall to build and train.', 'Welcome to Ember Command.'],
     cheats: { fastTrain: false, fastHarvest: false }
   };
 }
@@ -247,6 +249,7 @@ const dom = {
   orders: document.querySelector('#orders'),
   log: document.querySelector('#log'),
   day: document.querySelector('#day'),
+  raidclock: document.querySelector('#raidclock'),
   error: document.querySelector('#error')
 };
 
@@ -579,6 +582,15 @@ function unitHp(state, type) {
   return ARMY[type].hp + state.tech.armor * ARMOR_HP_PER_LEVEL;
 }
 
+// Rough income estimate per tick for the hall's info line.
+function incomePerTick(state, resource) {
+  return state.workers.reduce((sum, w) => {
+    if (w.job !== resource) return sum;
+    const node = nodeById(state, w.nodeId);
+    return node ? sum + harvestYield(state, resource) / nodeCooldown(node) : sum;
+  }, 0);
+}
+
 function harvestYield(state, resource) {
   return resource === 'lumber'
     ? Math.round(HARVEST_YIELD * (1 + state.tech.lumber * LUMBER_YIELD_PER_LEVEL))
@@ -753,14 +765,15 @@ function damageBuildings(state, raid, dmg, order) {
 }
 
 function spawnRaid(state) {
-  const day = currentDay(state);
+  const wave = state.raid.wave;
+  state.raid.wave += 1;
   let total = 0;
   Object.keys(RAIDER_TYPES).forEach(key => {
     const t = RAIDER_TYPES[key];
-    if (day < t.fromDay) return;
-    const size = t.baseSize + (day - t.fromDay) * t.sizePerDay;
+    if (wave < t.fromWave) return;
+    const size = t.baseSize + (wave - t.fromWave) * t.sizePerWave;
     if (size <= 0) return;
-    const grunt = { hp: t.hp + day * t.hpPerDay, dmg: t.dmg + day * t.dmgPerDay };
+    const grunt = { hp: t.hp + wave * t.hpPerWave, dmg: t.dmg + wave * t.dmgPerWave };
     state.raids.push({
       id: nextId(), kind: key, icon: t.icon, label: t.label,
       size, grunt, hpPool: size * grunt.hp,
@@ -769,7 +782,7 @@ function spawnRaid(state) {
     });
     total += size;
   });
-  writeLog(state, `Day ${day + 1}: ${total} raiders approaching!`);
+  writeLog(state, `Wave ${wave + 1}: ${total} raiders approaching!`);
   flashError('Enemies approach our base!');
 }
 
@@ -790,10 +803,18 @@ function raidTick(state) {
       flashTile(`enemy:raid:${raid.id}`, 'damage');
       raid.lastHitAt = performance.now();
     }
+    const sizeBefore = raid.size;
     raid.hpPool -= dealt;
     raid.size = Math.max(0, Math.ceil(raid.hpPool / raid.grunt.hp));
+    // Every raider killed drops plunder — defending pays.
+    const kills = sizeBefore - raid.size;
+    if (kills > 0) {
+      const loot = kills * RAIDER_TYPES[raid.kind].bounty;
+      raid.plunder = (raid.plunder || 0) + loot;
+      state.resources.gold += loot;
+    }
     if (raid.size <= 0) {
-      writeLog(state, 'Raid repelled!');
+      writeLog(state, `Raid repelled! Plundered ${raid.plunder || 0} gold.`);
       return;
     }
 
@@ -1323,6 +1344,8 @@ function render() {
   renderGameOver();
   validateSelection(game);
   dom.day.textContent = `DAY ${currentDay(game) + 1}`;
+  dom.raidclock.textContent = game.raids.length > 0 ? 'RAID!' : `raid in ${game.raid.nextIn}s`;
+  dom.raidclock.classList.toggle('alert', game.raids.length > 0);
   renderResources();
   // Full rebuild resets scrollLeft on the horizontal strips — capture and
   // restore so the view keeps its place across repaints.

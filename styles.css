@@ -191,6 +191,8 @@ button { touch-action: manipulation; }
   letter-spacing: 0.12em;
 }
 .world-head strong { color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#raidclock { color: var(--muted); letter-spacing: 0.06em; }
+#raidclock.alert { color: var(--danger); }
 
 .world-canvas {
   min-height: 0;
