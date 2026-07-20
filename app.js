@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.08';
-const VERSION_TAG = 'maxed upgrades hidden, scroll keeps its place';
+const VERSION = '0.09';
+const VERSION_TAG = 'per-type army order assignment';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -651,28 +651,26 @@ function attackDamage(state) {
   return Object.keys(ARMY).reduce((dmg, k) => dmg + state.army.attack[k] * ARMY[k].attack, 0);
 }
 
-// Move one unit between order pools (footmen before archers, mirroring the
-// one-worker-per-tap convention). Long-press moves the whole pool.
-function moveUnit(state, from, to) {
+// Move one unit of a specific type between order pools; long-press moves all
+// of that type. Any per-type headcount split across orders is reachable this
+// way, one tap per unit.
+function moveUnit(state, from, to, type) {
   const pool = state.army[from];
-  const type = Object.keys(ARMY).find(k => pool[k] > 0);
-  if (!type) return;
+  if (pool[type] <= 0) return;
   pool[type] -= 1;
   state.army[to][type] += 1;
   if (poolCount(pool) === 0) pool.wounds = 0;
   writeLog(state, `${cap(ARMY[type].singular)} → ${to}.`);
 }
 
-function moveAllUnits(state, from, to) {
+function moveAllUnits(state, from, to, type) {
   const pool = state.army[from];
-  let moved = 0;
-  Object.keys(ARMY).forEach(k => {
-    moved += pool[k];
-    state.army[to][k] += pool[k];
-    pool[k] = 0;
-  });
-  pool.wounds = 0;
-  if (moved > 0) writeLog(state, `${moved} units → ${to}.`);
+  const moved = pool[type];
+  if (moved <= 0) return;
+  state.army[to][type] += moved;
+  pool[type] = 0;
+  if (poolCount(pool) === 0) pool.wounds = 0;
+  writeLog(state, `${moved} ${moved === 1 ? ARMY[type].singular : ARMY[type].label} → ${to}.`);
 }
 
 // ── Raid combat ────────────────────────────────────────────────────────────
@@ -959,17 +957,29 @@ function guardTowerCommand() {
   };
 }
 
-// Commands for a selected order group: one button per other order, each tap
-// moves one unit there (mirrors the worker rebalance taps).
-function armyGroupCommands(order) {
-  return ORDERS.filter(o => o !== order).map(o => ({
-    id: `move-${order}-${o}`, icon: orderIcon(o), label: `send to ${o}`, cost: '',
-    enabled: s => unitsOnOrder(s, order) > 0 && (o !== 'attack' || s.enemy.known),
-    reason: s => unitsOnOrder(s, order) === 0 ? 'No units in this group'
-               : (o === 'attack' && !s.enemy.known) ? 'Enemy not found — explore first' : '',
-    run: s => moveUnit(s, order, o),
-    runAll: s => moveAllUnits(s, order, o)
-  }));
+// Commands for a selected order group: one button per (unit type present ×
+// other order) — the unit's icon with the target order overlaid in the
+// corner. Tap moves one of that type, hold moves all of them. Only types
+// actually in the group produce buttons, so the card stays small.
+function armyGroupCommands(state, order) {
+  const pool = state.army[order];
+  const commands = [];
+  Object.keys(ARMY).forEach(type => {
+    if (pool[type] <= 0) return;
+    ORDERS.filter(o => o !== order).forEach(o => {
+      commands.push({
+        id: `move-${order}-${type}-${o}`,
+        icon: ARMY[type].icon, overlay: orderIcon(o),
+        label: `send ${ARMY[type].singular} to ${o}`, cost: '',
+        enabled: s => s.army[order][type] > 0 && (o !== 'attack' || s.enemy.known),
+        reason: s => (o === 'attack' && !s.enemy.known) ? 'Enemy not found — explore first'
+                   : 'None left in this group',
+        run: s => moveUnit(s, order, o, type),
+        runAll: s => moveAllUnits(s, order, o, type)
+      });
+    });
+  });
+  return commands;
 }
 
 // Static command sets, derived from the data tables. Train commands attach to
@@ -995,8 +1005,7 @@ const COMMANDS = {
     });
     return byStructure;
   })(),
-  workerGroup: [],
-  army: Object.fromEntries(ORDERS.map(o => [o, armyGroupCommands(o)]))
+  workerGroup: []
 };
 
 function buildMenuCommands() {
@@ -1040,7 +1049,7 @@ function selectedCommands(state) {
     const node = nodeById(state, state.selected.id);
     return node ? nodeCommands(state, node) : [];
   }
-  if (state.selected.kind === 'army') return COMMANDS.army[state.selected.type] || [];
+  if (state.selected.kind === 'army') return armyGroupCommands(state, state.selected.type);
   return [];
 }
 

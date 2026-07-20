@@ -44,7 +44,9 @@ timers: `gameTick` (1s, simulation + render) and `updateProgressRings`
   (siege dps vs the enemy base). Units live in per-order pools:
   `game.army[order] = { footmen, archers, wounds }` for each of `ORDERS`
   (defend/patrol/explore/attack). Army tiles are one per ORDER; selecting one
-  offers move-one-unit commands to the other orders (`armyGroupCommands`).
+  offers per-type move commands — (type present × other order) buttons, unit
+  icon with order overlay; tap moves one, hold moves all of that type
+  (`armyGroupCommands`, built dynamically per render).
 
 **Adding a building or unit = one table entry (+ `ICONS` line if a new
 sprite).** Times/costs are real WC2 values; every duration is multiplied by

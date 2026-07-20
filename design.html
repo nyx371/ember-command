@@ -98,7 +98,7 @@
 </table></div>
 
 <h2><img class="icon" src="assets/icons/h_unit_footman.png" alt="">Units &amp; Orders</h2>
-<p><span class="status done">done</span> — Units train with real WC2 times and costs; supply is reserved while queued. The army renders as <strong>one tile per standing order</strong> on its own row (enemies get a separate row below); selecting an order group moves units to other orders one tap at a time, worker-style.</p>
+<p><span class="status done">done</span> — Units train with real WC2 times and costs; supply is reserved while queued. The army renders as <strong>one tile per standing order</strong>; selecting an order group shows one button per <em>unit type in the group × target order</em> (unit icon + order overlay) — tap moves one of that type, hold moves all of them. Any per-type headcount split across orders is a few taps (e.g. 2 footmen defend, 1 patrol, 1 scout; archers split separately).</p>
 
 <div class="table-wrap"><table>
   <tr><th>Unit</th><th>Cost</th><th>Time</th><th>Role</th></tr>
@@ -128,7 +128,7 @@
   <li><span class="status idea">idea</span> <strong>Hall tiers</strong>: Town Hall → Keep → Castle as the bigger pacing lever — each tier unlocks units/structures/upgrade tiers</li>
 </ul>
 
-<div class="note"><strong>Open — army assignment granularity.</strong> Currently orders apply per unit <em>type</em> (all footmen share one order). Candidate refinements: headcount splits per order, and a separate <code>Raid</code> posture (harass economy) distinct from <code>Attack</code> (kill the base). Needs prototyping to validate feel.</div>
+<div class="note"><strong>Open — Raid posture.</strong> Army granularity is resolved (arbitrary per-type headcount splits across orders). Still open: a separate <code>Raid</code> posture (harass enemy economy) distinct from <code>Attack</code> (kill the base).</div>
 
 <h2>Persistence</h2>
 <p><span class="status idea">idea</span> — autosave to local storage, resume on reload, no explicit load step. Not implemented; every reload is a fresh start.</p>
