@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.05';
-const VERSION_TAG = 'hp bars heal + persist through fights';
+const VERSION = '0.06';
+const VERSION_TAG = 'buildings + attackers scroll sideways';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -1264,22 +1264,24 @@ function renderWorld() {
   const jobQueue = renderJobQueue();
   if (jobQueue) structures.appendChild(jobQueue);
 
-  structures.appendChild(entityButton({
+  // Building tiles scroll horizontally instead of wrapping (like the nodes row).
+  const structTiles = document.createElement('div');
+  structTiles.className = 'tile-row';
+  structTiles.appendChild(entityButton({
     kind: 'structure', type: 'hall', id: 1, compact: true,
     icon: 'hall', label: 'town hall',
     hp: buildingHp(game, 'hall')
   }));
-
-  // One tile per built structure type (with a count badge), from the table.
   Object.keys(BUILDINGS).forEach(key => {
     if (key === 'hall' || game.structures[key] <= 0) return;
-    structures.appendChild(entityButton({
+    structTiles.appendChild(entityButton({
       kind: 'structure', type: key, id: 1, compact: true,
       icon: BUILDINGS[key].icon, label: BUILDINGS[key].label,
       countLabel: game.structures[key],
       hp: buildingHp(game, key)
     }));
   });
+  structures.appendChild(structTiles);
 
   // A horizontally scrollable row (see .world-group.workers) of the live
   // resource nodes — each shows its worker count and a harvest ring per worker;
@@ -1339,14 +1341,17 @@ function renderWorld() {
   timer.appendChild(fill);
   enemies.appendChild(timer);
 
+  const raidTiles = document.createElement('div');
+  raidTiles.className = 'tile-row';
   game.raids.forEach(raid => {
-    enemies.appendChild(entityButton({
+    raidTiles.appendChild(entityButton({
       kind: 'enemy', type: 'raid', id: raid.id, compact: true,
       icon: 'enemy', label: 'raiders', danger: true,
       countLabel: raid.size, dimmed: raid.arriveIn > 0,
       hp: raidHp(raid)
     }));
   });
+  enemies.appendChild(raidTiles);
 
   // Page order: enemies at the top of the world, then my army, then economy,
   // then structures next to the command bar.

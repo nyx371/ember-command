@@ -205,15 +205,36 @@ button { touch-action: manipulation; }
   gap: 3px;
 }
 /* World order (top to bottom): enemies, army, workers/nodes, structures. The
-   structures row takes the leftover space and hugs the command bar. */
-.world-group.structures { grid-template-columns: repeat(4, 1fr); align-content: end; }
+   structures row takes the leftover space and hugs the command bar. Building
+   and raid tiles live in a .tile-row that scrolls sideways instead of
+   wrapping. */
+.world-group.structures { align-content: end; }
 .world-group.army { grid-template-columns: repeat(4, 1fr); align-content: start; }
 .world-group.enemies {
-  grid-template-columns: repeat(4, 1fr);
   align-content: start;
   /* Reserve the tile row even when no raids are active, so spawning enemies
      never shifts the rest of the layout. */
   min-height: 53px;
+}
+
+/* Horizontally scrolling tile strip: four tiles visible, overflow scrolls,
+   no wrapping. Same sizing as the workers/nodes row. */
+.tile-row {
+  min-width: 0;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 3px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x;
+  scrollbar-width: none;
+}
+.tile-row::-webkit-scrollbar { display: none; }
+.tile-row > .entity {
+  flex: 0 0 auto;
+  width: calc((100% - 9px) / 4);
 }
 
 .raid-timer {
