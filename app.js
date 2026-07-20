@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.23';
-const VERSION_TAG = 'conquerable sites: assault garrisons for caches, mines, captives';
+const VERSION = '0.24';
+const VERSION_TAG = 'reveal-map cheat button';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -220,6 +220,7 @@ const ICONS = {
   orccamp: 'assets/icons/o_bld_barracks.png',
   stockade: 'assets/icons/o_bld_wall.png',
   orctower: 'assets/icons/o_bld_watchtower.png',
+  vision: 'assets/icons/c_cast_vision.png',
   axe2: 'assets/icons/c_axe2.png',
   axe3: 'assets/icons/c_axe3.png',
   sword2: 'assets/icons/c_sword2.png',
@@ -2275,13 +2276,38 @@ document.getElementById('cheat-farm').addEventListener('click', () => {
   flashTile('structure:farm:1', 'spawn');
   render();
 });
+document.getElementById('cheat-scout').addEventListener('click', () => {
+  // Everything scouting could ever find: enemy base, scoutable nodes, sites.
+  // Site-locked rewards (discoverAt: Infinity) still need conquest.
+  game.exploreProgress = Math.max(game.exploreProgress, EXPLORE_THRESHOLD,
+    ...game.nodes.map(n => n.discoverAt).filter(Number.isFinite),
+    ...game.sites.map(s => s.discoverAt));
+  if (!game.enemy.known) {
+    game.enemy.known = true;
+    writeLog(game, 'Enemy base located! Attack order unlocked.');
+  }
+  game.nodes.forEach(n => {
+    if (!n.discovered && Number.isFinite(n.discoverAt)) {
+      n.discovered = true;
+      flashTile(`node:${n.type}:${n.id}`, 'spawn');
+    }
+  });
+  game.sites.forEach(s => {
+    if (!s.discovered) {
+      s.discovered = true;
+      flashTile(`site:${s.key}:1`, 'spawn');
+    }
+  });
+  writeLog(game, 'The map lies revealed.');
+  render();
+});
 
 // Cheat buttons are icon-only; icons injected here so they share ICONS'
 // cache-busting.
 const CHEAT_ICONS = {
   'cheat-btn': 'gold', 'cheat-train': 'build', 'cheat-harvest': 'harvest',
   'cheat-raid': 'enemy', 'cheat-footman': 'footman',
-  'cheat-worker': 'worker', 'cheat-farm': 'farm'
+  'cheat-worker': 'worker', 'cheat-farm': 'farm', 'cheat-scout': 'vision'
 };
 Object.keys(CHEAT_ICONS).forEach(id => {
   const btn = document.getElementById(id);
