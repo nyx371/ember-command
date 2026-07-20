@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.18';
-const VERSION_TAG = 'three world zones: far field, near base, base';
+const VERSION = '0.19';
+const VERSION_TAG = 'scroll over icons, bigger zones, smaller order icons';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -1635,21 +1635,17 @@ function renderWorld() {
   // Every zone (and every row inside it) stays mounted when empty so tiles never
   // shift position as pools fill and drain; the whole stack scrolls as one.
   dom.world.append(
-    zone('far', 'far field', [away, enemyRow('far', seen.filter(r => raidZone(r) === 'far'))]),
-    zone('near', 'near base', [patrol, enemyRow('near', seen.filter(r => raidZone(r) === 'near'))]),
-    zone('base', 'base', [enemyRow('base', seen.filter(r => raidZone(r) === 'base')), defend, workers, structures])
+    zone('far', [away, enemyRow('far', seen.filter(r => raidZone(r) === 'far'))]),
+    zone('near', [patrol, enemyRow('near', seen.filter(r => raidZone(r) === 'near'))]),
+    zone('base', [enemyRow('base', seen.filter(r => raidZone(r) === 'base')), defend, workers, structures])
   );
 }
 
-// A labelled band of the world. The caption sits in the top-left gutter; rows
-// stack inside it.
-function zone(key, label, rows) {
+// A band of the world (far/near/base); rows stack inside it. The tint tells
+// the story — no caption.
+function zone(key, rows) {
   const el = document.createElement('section');
   el.className = `world-zone zone-${key}`;
-  const caption = document.createElement('div');
-  caption.className = 'zone-label';
-  caption.textContent = label;
-  el.appendChild(caption);
   rows.forEach(row => el.appendChild(row));
   return el;
 }

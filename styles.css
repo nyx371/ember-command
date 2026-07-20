@@ -230,26 +230,13 @@ button { touch-action: manipulation; }
   display: flex;
   flex-direction: column;
   gap: 3px;
-  padding: 14px 5px 5px;
+  padding: 5px;
   border-radius: 6px;
   border: 1px solid rgba(255, 255, 255, 0.05);
 }
-.zone-far  { background: rgba(255, 255, 255, 0.015); min-height: 108px; }
-.zone-near { background: rgba(255, 255, 255, 0.04);  min-height: 108px; }
-.zone-base { background: rgba(255, 255, 255, 0.07);  min-height: 160px; }
-
-.zone-label {
-  position: absolute;
-  top: 3px;
-  left: 7px;
-  font-size: 14px;
-  line-height: 1;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--muted);
-  opacity: 0.5;
-  pointer-events: none;
-}
+.zone-far  { background: rgba(255, 255, 255, 0.015); min-height: 140px; }
+.zone-near { background: rgba(255, 255, 255, 0.04);  min-height: 140px; }
+.zone-base { background: rgba(255, 255, 255, 0.07);  min-height: 220px; }
 
 .world-group.away { align-content: start; }
 /* Grows with its content (tiles + in-flight job chips); the base min-height
@@ -271,7 +258,8 @@ button { touch-action: manipulation; }
   overflow-x: auto;
   overflow-y: hidden;
   -webkit-overflow-scrolling: touch;
-  touch-action: pan-x;
+  /* pan-y too, so a vertical drag starting on a tile scrolls the world. */
+  touch-action: pan-x pan-y;
   scrollbar-width: none;
 }
 .tile-row::-webkit-scrollbar { display: none; }
@@ -290,7 +278,7 @@ button { touch-action: manipulation; }
   overflow-x: auto;
   overflow-y: hidden;
   -webkit-overflow-scrolling: touch;
-  touch-action: pan-x;
+  touch-action: pan-x pan-y;
   scrollbar-width: none;
 }
 .world-group.workers::-webkit-scrollbar { display: none; }
@@ -450,9 +438,12 @@ button { touch-action: manipulation; }
 .job-badge .icon { filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.9)); }
 .entity .job-badge .icon,
 .entity.compact .job-badge .icon {
-  width: 160%;
-  height: 160%;
-  margin: -30%;
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 18px;
+  height: 18px;
+  margin: 0;
   image-rendering: pixelated;
 }
 @keyframes badge-blink {
