@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.04';
-const VERSION_TAG = 'hp bars everywhere + steadier layout';
+const VERSION = '0.05';
+const VERSION_TAG = 'hp bars heal + persist through fights';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -33,6 +33,8 @@ const RAIDER = { hp: 60, dmg: 7 };   // per grunt at day 0 (WC2 grunt ≈ footma
 const RAIDER_HP_PER_DAY = 6;    // grunts toughen and hit harder as days pass
 const RAIDER_DMG_PER_DAY = 1;
 const WORKER_HP = 30;
+const WOUND_HEAL_PER_TICK = 2;  // survivors regenerate between fights
+const HP_BAR_LINGER_MS = 3000;  // keep a combat hp bar visible across volleys
 // Raider targeting: warriors first, then the towers shooting at them, then
 // workers, then the remaining buildings — the town hall falls last.
 const RAID_TOWER_TARGETS = ['guardtower', 'tower'];
@@ -542,9 +544,14 @@ function unitsOnOrder(state, order) {
 
 // Segmented-hp payloads for entityButton: one segment per unit, the last one
 // drained by accumulated wounds; `total` drives the collapsed horde bar.
+function recentlyHit(at) {
+  return !!at && performance.now() - at < HP_BAR_LINGER_MS;
+}
+
 function poolHp(pool) {
   const count = poolCount(pool);
-  if (count === 0 || pool.wounds === 0) return null;   // bar only while damaged
+  if (count === 0) return null;
+  if (pool.wounds === 0 && !recentlyHit(pool.lastHitAt)) return null;
   const type = Object.keys(ARMY).find(k => pool[k] > 0);
   const maxHp = Object.keys(ARMY).reduce((sum, k) => sum + pool[k] * ARMY[k].hp, 0);
   return {
@@ -559,7 +566,8 @@ function poolHp(pool) {
 // last non-builder), so the bar belongs on that worker's node.
 function nodeHp(state, node) {
   const count = workersAtNode(state, node).length;
-  if (count === 0 || state.workerWounds === 0) return null;
+  if (count === 0) return null;
+  if (state.workerWounds === 0 && !recentlyHit(state.workerLastHitAt)) return null;
   const victim = state.workers.filter(w => w.job !== 'building').pop();
   if (!victim || victim.nodeId !== node.id) return null;
   return {
@@ -583,7 +591,8 @@ function buildingHp(state, key) {
 }
 
 function raidHp(raid) {
-  if (raid.size === 0 || raid.hpPool >= raid.size * raid.grunt.hp) return null;   // bar only while damaged
+  if (raid.size === 0) return null;
+  if (raid.hpPool >= raid.size * raid.grunt.hp && !recentlyHit(raid.lastHitAt)) return null;
   return {
     segments: raid.size,
     partial: (raid.hpPool - (raid.size - 1) * raid.grunt.hp) / raid.grunt.hp,
@@ -645,6 +654,7 @@ function defenseDamage(state, arrived) {
 function damagePool(state, order, dmg) {
   const pool = state.army[order];
   flashTile(`army:${order}:1`, 'damage');
+  pool.lastHitAt = performance.now();
   pool.wounds += dmg;
   let type = Object.keys(ARMY).find(k => pool[k] > 0);
   while (type && pool.wounds >= ARMY[type].hp) {
@@ -657,6 +667,7 @@ function damagePool(state, order, dmg) {
 }
 
 function damageWorkers(state, dmg) {
+  state.workerLastHitAt = performance.now();
   state.workerWounds += dmg;
   while (state.workerWounds >= WORKER_HP && state.workers.length > 0) {
     state.workerWounds -= WORKER_HP;
@@ -719,7 +730,10 @@ function raidTick(state) {
 
     // My volley (patrol only while they approach).
     const dealt = defenseDamage(state, arrived);
-    if (dealt > 0) flashTile(`enemy:raid:${raid.id}`, 'damage');
+    if (dealt > 0) {
+      flashTile(`enemy:raid:${raid.id}`, 'damage');
+      raid.lastHitAt = performance.now();
+    }
     raid.hpPool -= dealt;
     raid.size = Math.max(0, Math.ceil(raid.hpPool / raid.grunt.hp));
     if (raid.size <= 0) {
@@ -759,6 +773,13 @@ function gameTick() {
 
   autoAssignWorkers(game);
   harvestTick(game);
+
+  // Survivors patch up between fights — combat damage dwarfs this, but after
+  // a raid the wound pools drain back to zero (and the hp bars fade away).
+  ORDERS.forEach(o => {
+    game.army[o].wounds = Math.max(0, game.army[o].wounds - WOUND_HEAL_PER_TICK);
+  });
+  game.workerWounds = Math.max(0, game.workerWounds - WOUND_HEAL_PER_TICK);
 
   // Exploration — accumulate per exploring unit; discover when threshold reached
   if (!game.enemy.known) {
