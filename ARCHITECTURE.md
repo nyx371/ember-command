@@ -60,10 +60,13 @@ grunt: {hp, dmg}, hpPool, arriveIn, strikeIn, targetType, targetHp }`).
 (`game.raid.wave`), defense damage splits across simultaneous parties, and
 each raider killed pays its `bounty` in plunder gold. `spawnRaid` on the raid
 interval (`game.raid.interval` feeds the countdown ring on the enemy tile);
-`raidTick` runs volleys every `VOLLEY_EVERY` ticks — patrol strikes during
-the approach, defend+patrol+towers after arrival. Waves spawn silently and
-undiscovered; a standing patrol sets `raid.discovered` during the approach
-(toast + visible tile), otherwise the raid appears only on arrival. Wound
+`raidTick` runs the two sides on offset cadences — my side volleys every
+`DEFENSE_VOLLEY_EVERY` (2) ticks (patrol only during the approach),
+raiders every `RAID_VOLLEY_EVERY` (3) once arrived. Waves spawn silently and
+undiscovered; a standing patrol spots them instantly at spawn (and any patrol
+raised mid-approach picks them up next tick) — otherwise the raid appears
+only on arrival. Marching columns render as a chip strip under the army
+tiles; production chips stay above the town hall. Wound
 regen is per order (`HEAL_BY_ORDER`: defend fastest, field none). Raider targeting: patrol
 pool → defend pool → towers (`RAID_TOWER_TARGETS`) → workers → remaining
 buildings per `RAID_TARGET_ORDER` (hall last). Explore/attack pools are away

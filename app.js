@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.13';
-const VERSION_TAG = 'marching orders, patrol scouting, defend regen';
+const VERSION = '0.14';
+const VERSION_TAG = 'desynced volleys, transfer strip, instant scouting';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -26,7 +26,8 @@ const RAID_INTERVAL_BASE = 90;  // ticks between raids on day 0
 const RAID_INTERVAL_SCALE = 8;  // reduce interval by this per day
 const RAID_INTERVAL_MIN = 25;
 const RAID_ARRIVE_TICKS = 10;   // approach window — patrol strikes and scouts it
-const VOLLEY_EVERY = 2;         // ticks between combat volleys (attack cooldown, both sides)
+const DEFENSE_VOLLEY_EVERY = 2; // my side strikes every 2 ticks...
+const RAID_VOLLEY_EVERY = 3;    // ...raiders every 3 — offset cadences, not lockstep
 // Enemy roster: each wave spawns one party per type whose fromWave has
 // arrived. Stats and headcount scale per WAVE (not per day) so the ramp is
 // deterministic — wave 1 is always a lone grunt — while the shrinking raid
@@ -813,12 +814,21 @@ function spawnRaid(state) {
     state.raids.push({
       id: nextId(), kind: key, icon: t.icon, label: t.label,
       size, grunt, hpPool: size * grunt.hp, discovered: false,
-      arriveIn: RAID_ARRIVE_TICKS, strikeIn: VOLLEY_EVERY,
+      arriveIn: RAID_ARRIVE_TICKS,
+      myStrikeIn: DEFENSE_VOLLEY_EVERY, foeStrikeIn: RAID_VOLLEY_EVERY,
       targetType: null, targetHp: 0
     });
     total += size;
   });
-  // No announcement — waves approach unseen unless a patrol spots them.
+  // A standing patrol spots the wave the moment it sets out; otherwise it
+  // approaches unseen until a patrol picks it up (or it arrives).
+  if (unitsOnOrder(state, 'patrol') > 0) {
+    state.raids.forEach(r => {
+      if (!r.discovered && r.arriveIn >= RAID_ARRIVE_TICKS) r.discovered = true;
+    });
+    writeLog(state, `Patrol spotted ${total} raiders approaching!`);
+    flashError('Patrol spotted enemies approaching!');
+  }
 }
 
 function raidTick(state) {
@@ -839,34 +849,41 @@ function raidTick(state) {
         flashError('Our town is under attack!');
       }
     }
-    raid.strikeIn -= 1;
-    if (raid.strikeIn > 0) return;
-    raid.strikeIn = VOLLEY_EVERY;
+    // My side volleys on its own cadence (patrol only while they approach).
+    raid.myStrikeIn -= 1;
+    if (raid.myStrikeIn <= 0) {
+      raid.myStrikeIn = DEFENSE_VOLLEY_EVERY;
+      const dealt = defenseDamage(state, arrived) / state.raids.length;
+      if (dealt > 0) {
+        flashTile(`enemy:raid:${raid.id}`, 'damage');
+        raid.lastHitAt = performance.now();
+      }
+      const sizeBefore = raid.size;
+      raid.hpPool -= dealt;
+      raid.size = Math.max(0, Math.ceil(raid.hpPool / raid.grunt.hp));
+      // Every raider killed drops plunder — defending pays.
+      const kills = sizeBefore - raid.size;
+      if (kills > 0) {
+        const loot = kills * RAIDER_TYPES[raid.kind].bounty;
+        raid.plunder = (raid.plunder || 0) + loot;
+        state.resources.gold += loot;
+      }
+      if (raid.size <= 0) {
+        writeLog(state, `Raid repelled! Plundered ${raid.plunder || 0} gold.`);
+        return;
+      }
+    }
 
-    // My volley (patrol only while they approach).
-    const dealt = defenseDamage(state, arrived) / state.raids.length;
-    if (dealt > 0) {
-      flashTile(`enemy:raid:${raid.id}`, 'damage');
-      raid.lastHitAt = performance.now();
-    }
-    const sizeBefore = raid.size;
-    raid.hpPool -= dealt;
-    raid.size = Math.max(0, Math.ceil(raid.hpPool / raid.grunt.hp));
-    // Every raider killed drops plunder — defending pays.
-    const kills = sizeBefore - raid.size;
-    if (kills > 0) {
-      const loot = kills * RAIDER_TYPES[raid.kind].bounty;
-      raid.plunder = (raid.plunder || 0) + loot;
-      state.resources.gold += loot;
-    }
-    if (raid.size <= 0) {
-      writeLog(state, `Raid repelled! Plundered ${raid.plunder || 0} gold.`);
+    // Raiders strike on a slower, offset cadence, and only once arrived:
+    // patrol first, then defenders; scouts and the attack force are away and
+    // untouchable. Out of warriors -> towers, workers, buildings.
+    if (!arrived) {
+      raid.foeStrikeIn = RAID_VOLLEY_EVERY;
       return;
     }
-
-    // Their volley: patrol first, then defenders; scouts and the attack force
-    // are away and untouchable. Out of warriors -> towers, workers, buildings.
-    if (!arrived) return;
+    raid.foeStrikeIn -= 1;
+    if (raid.foeStrikeIn > 0) return;
+    raid.foeStrikeIn = RAID_VOLLEY_EVERY;
     const dmg = raid.size * raid.grunt.dmg;
     const towersStanding = RAID_TOWER_TARGETS.some(k => state.structures[k] > 0);
     if (unitsOnOrder(state, 'patrol') > 0) damagePool(state, 'patrol', dmg);
@@ -1335,8 +1352,19 @@ function entityButton({ kind, type, id, icon, label, count, meta, danger, compac
     button.appendChild(badge);
   }
 
+  if (countLabel != null) {
+    const cnt = document.createElement('span');
+    cnt.className = 'count-badge';
+    if (countIcon) cnt.appendChild(makeIcon(ICONS[countIcon], countIcon));
+    const text = document.createElement('span');
+    text.textContent = countLabel;
+    cnt.appendChild(text);
+    button.appendChild(cnt);
+  }
+
   // Segmented hp bar: one segment per unit, the last partially drained by the
-  // pool's accumulated wounds. Collapses to a single continuous bar for hordes.
+  // pool's accumulated wounds; collapses to one bar for hordes. Appended last
+  // so it paints above the badges.
   if (hp && hp.segments > 0) {
     const bar = document.createElement('span');
     bar.className = 'hp-bar';
@@ -1352,16 +1380,6 @@ function entityButton({ kind, type, id, icon, label, count, meta, danger, compac
       bar.appendChild(seg);
     }
     button.appendChild(bar);
-  }
-
-  if (countLabel != null) {
-    const cnt = document.createElement('span');
-    cnt.className = 'count-badge';
-    if (countIcon) cnt.appendChild(makeIcon(ICONS[countIcon], countIcon));
-    const text = document.createElement('span');
-    text.textContent = countLabel;
-    cnt.appendChild(text);
-    button.appendChild(cnt);
   }
 
   if (!compact) {
@@ -1452,11 +1470,12 @@ function jobChip(job) {
   return chip;
 }
 
-function renderJobQueue() {
-  if (!game.jobs.length) return null;
+function renderJobQueue(kinds) {
+  const jobs = game.jobs.filter(j => kinds.includes(j.kind));
+  if (!jobs.length) return null;
   const list = document.createElement('div');
   list.className = 'construction-queue';
-  game.jobs.forEach(job => list.appendChild(jobChip(job)));
+  jobs.forEach(job => list.appendChild(jobChip(job)));
   return list;
 }
 
@@ -1466,8 +1485,9 @@ function renderWorld() {
   const structures = document.createElement('section');
   structures.className = 'world-group structures';
 
-  // In-flight job chips render above the town hall, at the top of the row.
-  const jobQueue = renderJobQueue();
+  // In-flight production chips render above the town hall, at the top of the
+  // row; marching columns live under the army tiles instead.
+  const jobQueue = renderJobQueue(['train', 'construct', 'upgrade']);
   if (jobQueue) structures.appendChild(jobQueue);
 
   // Building tiles scroll horizontally instead of wrapping (like the nodes row).
@@ -1534,6 +1554,10 @@ function renderWorld() {
       hp: poolHp(game.army[order])
     }));
   });
+
+  // Marching columns show under the unit tiles they belong to.
+  const transferQueue = renderJobQueue(['transfer']);
+  if (transferQueue) army.appendChild(transferQueue);
 
   // Enemies row: a slim horizontal bar filling toward the next attack, plus one
   // compact danger tile per raiding party (dimmed while still approaching).
