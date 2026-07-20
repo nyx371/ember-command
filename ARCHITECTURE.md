@@ -92,7 +92,11 @@ can force a raid and spawn footmen.
 per `SITE_TOWER`); instances live on `game.sites` with garrison state and up
 to three of our columns each: `march` (heading out, `SITE_MARCH_TICKS`),
 `strike` (fighting there), `returning` (heading home). Exploration reveals
-them like distant nodes. Selecting a site (`kind: 'site'`, keyed by
+them like distant nodes — and the scouts that find a garrisoned site storm
+it on the spot: the whole explore pool becomes `site.strike` and scouting
+pauses until fresh scouts are sent (node finds don't interrupt). Scouts
+render as their own `.site-big` wilderness tile (vision badge, kind
+`army:explore`) in the sites row, not in the away section. Selecting a site (`kind: 'site'`, keyed by
 `site.key`) offers per-type assault commands pulling from the **defend** pool
 (tap one / hold all); there is no recall — an assault commits until the
 fight resolves. `siteTick` runs the fight on the raid

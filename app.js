@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.26';
-const VERSION_TAG = 'terrain art on site tiles with reward badge; assaults commit (no recall)';
+const VERSION = '0.27';
+const VERSION_TAG = 'scouts explore from a wilderness tile and storm sites they discover';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -1174,7 +1174,22 @@ function gameTick() {
       if (!site.discovered && game.exploreProgress >= site.discoverAt) {
         site.discovered = true;
         flashTile(`site:${site.key}:1`, 'spawn');
-        writeLog(game, `Scouts found a ${site.label} — ${site.guards.count} grunts and ${site.towers} watch tower${site.towers === 1 ? '' : 's'} guard it.`);
+        // The scouts that found a garrisoned site storm it on the spot: the
+        // whole explore pool becomes the strike force (survivors march home
+        // to defend after the fight, like any assault). Exploration pauses
+        // until fresh scouts are sent.
+        const scouts = game.army.explore;
+        if (!site.cleared && poolCount(scouts) > 0) {
+          const strike = site.strike || { wounds: 0 };
+          Object.keys(ARMY).forEach(k => { strike[k] = (strike[k] || 0) + scouts[k]; scouts[k] = 0; });
+          strike.wounds = (strike.wounds || 0) + scouts.wounds;
+          scouts.wounds = 0;
+          site.strike = strike;
+          writeLog(game, `Scouts found a ${site.label} — and storm it!`);
+          flashError(`Scouts storm the ${site.label}!`);
+        } else {
+          writeLog(game, `Scouts found a ${site.label} — ${site.guards.count} grunts and ${site.towers} watch tower${site.towers === 1 ? '' : 's'} guard it.`);
+        }
       }
     });
   }
@@ -1867,10 +1882,11 @@ function renderWorld() {
     return section;
   }
 
-  // Away-from-base pools, pinned to the top: scouts uncovering the map and
-  // columns marching on the enemy base. Both are off-map as far as raids are
-  // concerned — they neither defend nor get targeted.
-  const away = armySection('away', ['explore', 'attack'], 'away');
+  // Away-from-base pools, pinned to the top: columns marching on the enemy
+  // base (scouts render as their own wilderness tile in the sites row). Both
+  // are off-map as far as raids are concerned — they neither defend nor get
+  // targeted.
+  const away = armySection('away', ['attack'], 'away');
   const patrol = armySection('patrol', ['patrol'], 'patrol');
   const defend = armySection('defend', ['defend'], 'defend');
 
@@ -1915,6 +1931,33 @@ function renderWorld() {
     count.textContent = n;
     chip.appendChild(count);
     return chip;
+  }
+  // Scouts on Explore live here too: an empty stretch of wilderness they're
+  // combing (vision badge instead of a reward). They storm garrisoned sites
+  // themselves on discovery, so this tile empties into a site tile when
+  // something turns up. Tapping it selects the explore pool as usual.
+  const scoutPool = game.army.explore;
+  const scoutsInbound = game.jobs.filter(j => j.kind === 'transfer' && j.to === 'explore');
+  const scoutsIn = scoutsInbound.reduce((sum, j) => sum + j.count, 0);
+  if (poolCount(scoutPool) + scoutsIn > 0) {
+    const btn = entityButton({
+      kind: 'army', type: 'explore', id: 1, compact: true,
+      icon: 'siteTerrain', label: 'exploring',
+      hp: poolHp(scoutPool)
+    });
+    btn.classList.add('site-big');
+    const badge = document.createElement('span');
+    badge.className = 'site-chip reward';
+    badge.appendChild(makeIcon(ICONS.explore, 'exploring'));
+    btn.appendChild(badge);
+    const domType = Object.keys(ARMY).reduce((best, k) =>
+      (scoutPool[k] > (scoutPool[best] || 0) ? k : best),
+      (scoutsInbound[0] && scoutsInbound[0].type) || 'footmen');
+    const chip = siteChip(ARMY[domType].icon, poolCount(scoutPool) + scoutsIn);
+    chip.classList.add('mine');
+    if (scoutsIn > 0) chip.classList.add('badge-blink');
+    btn.appendChild(chip);
+    siteTiles.appendChild(btn);
   }
   game.sites.forEach(site => {
     if (!site.discovered) return;
