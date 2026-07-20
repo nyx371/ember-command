@@ -303,17 +303,24 @@ button { touch-action: manipulation; }
 .entity.danger { outline: 1px solid #4a2620; outline-offset: -1px; }
 
 /* Transient feedback flashes — driven by the tileFlashes registry in app.js,
-   so a tile keeps (re)playing its flash only while the entry is fresh. */
-@keyframes flash-damage {
-  0%   { background: rgba(214, 58, 40, 0.32); }
-  100% { background: transparent; }
+   so a tile keeps (re)playing its flash only while the entry is fresh. The
+   flash is an ::after overlay ON TOP of the icon (the sprites are opaque, so
+   animating the tile background would be invisible behind them). */
+@keyframes flash-fade {
+  0%   { opacity: 1; }
+  100% { opacity: 0; }
 }
-@keyframes flash-spawn {
-  0%   { background: rgba(255, 255, 255, 0.28); }
-  100% { background: transparent; }
+.entity.flash-damage::after,
+.entity.flash-spawn::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: 4px;
+  animation: flash-fade 0.6s ease-out forwards;
 }
-.entity.flash-damage { animation: flash-damage 0.6s ease-out; }
-.entity.flash-spawn  { animation: flash-spawn 0.6s ease-out; }
+.entity.flash-damage::after { background: rgba(214, 58, 40, 0.45); }
+.entity.flash-spawn::after  { background: rgba(255, 255, 255, 0.30); }
 
 /* Segmented hp bar along a tile's bottom edge: one segment per unit, drained
    left-to-right; collapses to one continuous bar for hordes (>20). */
