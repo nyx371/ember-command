@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.25';
-const VERSION_TAG = 'big site tiles, attack shakes, defend-only regen, vision explore icon';
+const VERSION = '0.26';
+const VERSION_TAG = 'terrain art on site tiles with reward badge; assaults commit (no recall)';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -76,14 +76,16 @@ const NODE_DEFS = [
 // and survivors march home. `reward`: { cache } pays out instantly,
 // { nodeId } reveals that NODE_DEFS entry (give it discoverAt: Infinity so
 // scouts can't find it first), { units } march home with the survivors.
+// All sites share the terrain art (siteTerrain); `rewardIcon` is the
+// contextual badge that tells the player what clearing it pays.
 const SITES = [
-  { key: 'camp',  icon: 'orccamp',  label: 'raider camp',   discoverAt: 130,
+  { key: 'camp',  icon: 'siteTerrain', rewardIcon: 'gold', label: 'raider camp', discoverAt: 130,
     guards: { count: 3, hp: 60, dmg: 7 }, towers: 1,
     reward: { cache: { gold: 700, lumber: 500 } }, rewardText: 'war chest 700g 500w' },
-  { key: 'mine',  icon: 'goldSite', label: 'overrun mine',  discoverAt: 240,
+  { key: 'mine',  icon: 'siteTerrain', rewardIcon: 'goldSite', label: 'overrun mine', discoverAt: 240,
     guards: { count: 5, hp: 66, dmg: 8 }, towers: 1,
     reward: { nodeId: 'gold-4' }, rewardText: 'rich gold mine' },
-  { key: 'stockade', icon: 'stockade', label: 'prison camp', discoverAt: 380,
+  { key: 'stockade', icon: 'siteTerrain', rewardIcon: 'footman', label: 'prison camp', discoverAt: 380,
     guards: { count: 6, hp: 72, dmg: 9 }, towers: 2,
     reward: { units: { footmen: 3 } }, rewardText: '3 captive footmen' }
 ];
@@ -218,9 +220,8 @@ const ICONS = {
   build: 'assets/icons/c_build.png',
   harvest: 'assets/icons/c_harvest.png',
   axethrower: 'assets/icons/o_unit_axethrower.png',
-  orccamp: 'assets/icons/o_bld_barracks.png',
-  stockade: 'assets/icons/o_bld_wall.png',
   orctower: 'assets/icons/o_bld_watchtower.png',
+  siteTerrain: 'assets/icons/n_site_terrain.png',
   vision: 'assets/icons/c_cast_vision.png',
   axe2: 'assets/icons/c_axe2.png',
   axe3: 'assets/icons/c_axe3.png',
@@ -1022,21 +1023,6 @@ function sendToSite(state, site, type, count) {
   writeLog(state, `${moved} ${moved === 1 ? ARMY[type].singular : ARMY[type].label} marching on the ${site.label}.`);
 }
 
-// Recall pulls everything — fighters, marchers, even an already-returning
-// column — into one column heading home.
-function recallSite(state, site) {
-  const back = { returnIn: SITE_MARCH_TICKS, wounds: 0 };
-  [site.strike, site.march, site.returning].forEach(col => {
-    if (!col) return;
-    Object.keys(ARMY).forEach(k => { back[k] = (back[k] || 0) + (col[k] || 0); });
-    back.wounds += col.wounds || 0;
-  });
-  site.strike = null;
-  site.march = null;
-  site.returning = strikeCount(back) > 0 ? back : null;
-  if (site.returning) writeLog(state, `Warriors recalled from the ${site.label}.`);
-}
-
 function damageStrike(state, site, dmg) {
   const strike = site.strike;
   strike.wounds = (strike.wounds || 0) + dmg;
@@ -1321,10 +1307,11 @@ function armyGroupCommands(state, order) {
 }
 
 // Commands for a selected site: one assault button per army type (pulled from
-// the defend pool — tap sends one, hold sends all of that type) plus a recall
-// once anyone is out there. Mirrors armyGroupCommands' shape.
+// the defend pool — tap sends one, hold sends all of that type). No recall —
+// an assault is a commitment; the column comes home when the fight is done.
+// Mirrors armyGroupCommands' shape.
 function siteCommands(state, site) {
-  const commands = Object.keys(ARMY).map(type => ({
+  return Object.keys(ARMY).map(type => ({
     id: `assault-${site.key}-${type}`,
     icon: ARMY[type].icon, overlay: 'attack',
     label: `send ${ARMY[type].singular} to assault`, cost: '',
@@ -1335,15 +1322,6 @@ function siteCommands(state, site) {
     run: s => sendToSite(s, site, type, 1),
     runAll: s => sendToSite(s, site, type, s.army.defend[type])
   }));
-  commands.push({
-    id: `recall-${site.key}`, icon: 'defend', overlay: 'stop',
-    label: 'recall warriors', cost: '',
-    hidden: () => !site.strike && !site.march,
-    enabled: () => !!(site.strike || site.march),
-    reason: () => 'No warriors to recall',
-    run: s => recallSite(s, site)
-  });
-  return commands;
 }
 
 // Static command sets, derived from the data tables. Train commands attach to
@@ -1948,6 +1926,11 @@ function renderWorld() {
       hp: siteHp(site)
     });
     btn.classList.add('site-big');
+    // Contextual reward badge, top-left: what clearing this place pays.
+    const reward = document.createElement('span');
+    reward.className = 'site-chip reward';
+    reward.appendChild(makeIcon(ICONS[site.rewardIcon], site.rewardText));
+    btn.appendChild(reward);
     const foes = document.createElement('span');
     foes.className = 'site-chips';
     if (!site.cleared && site.guardsLeft > 0) foes.appendChild(siteChip('enemy', site.guardsLeft));

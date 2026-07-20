@@ -476,6 +476,14 @@ button { touch-action: manipulation; }
   left: 3px;
   bottom: 10px;
 }
+/* Reward badge top-left: what clearing the site pays. */
+.entity > .site-chip.reward {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  padding: 2px;
+}
+.site-chip.reward .icon { width: 20px; height: 20px; }
 .entity.danger strong { color: var(--danger); }
 .entity-body { min-width: 0; display: grid; gap: 4px; }
 .entity-body strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; line-height: 1; }

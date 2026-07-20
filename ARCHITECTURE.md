@@ -94,13 +94,15 @@ to three of our columns each: `march` (heading out, `SITE_MARCH_TICKS`),
 `strike` (fighting there), `returning` (heading home). Exploration reveals
 them like distant nodes. Selecting a site (`kind: 'site'`, keyed by
 `site.key`) offers per-type assault commands pulling from the **defend** pool
-(tap one / hold all) plus recall. `siteTick` runs the fight on the raid
+(tap one / hold all); there is no recall — an assault commits until the
+fight resolves. `siteTick` runs the fight on the raid
 cadences — our volley chews guards then towers; the garrison hits the strike
 pool (`damageStrike`) — and `conquerSite` applies the reward ({cache} pays
 out, {nodeId} reveals a `discoverAt: Infinity` node, {units} join the
 survivors) and sends everyone home to defend. Expedition units count toward
 supply (`siteUnits` in `supplyUsed`); a wiped strike leaves garrison damage
-standing. Renders in the far zone as one double-size tile (`.site-big`):
+standing. Renders in the far zone as one double-size tile (`.site-big`) of shared
+terrain art (`siteTerrain`) with a `rewardIcon` badge top-left,
 garrison chips down the right edge, our column's chip bottom-left (blinking
 while marching/returning), red garrison hp bar plus a green strike bar.
 
