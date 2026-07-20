@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.15';
-const VERSION_TAG = 'unit-first army tiles, blinking order badge';
+const VERSION = '0.16';
+const VERSION_TAG = 'ring backdrop disc, badge square gone';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -1252,7 +1252,7 @@ const RADIAL_START_ANGLE = -Math.PI / 2; // 12 o'clock
 // Canvas-drawn ring: a true conic gradient sweeping from transparent at the
 // trailing edge to a bright circular head at the current-progress point,
 // instead of many discrete SVG segments approximating a fade.
-function radialProgressCanvas(p, siblingCount = 1) {
+function radialProgressCanvas(p, siblingCount = 1, backdrop = true) {
   const clamped = Math.max(0, Math.min(1, p));
   const peakAlpha = Math.max(RADIAL_MIN_ALPHA, RADIAL_HIGH_ALPHA / siblingCount);
   const dpr = window.devicePixelRatio || 1;
@@ -1263,6 +1263,15 @@ function radialProgressCanvas(p, siblingCount = 1) {
   canvas.height = RADIAL_SIZE * dpr;
   const ctx = canvas.getContext('2d');
   ctx.scale(dpr, dpr);
+
+  // Semi-transparent disc behind the ring so it reads on any sprite — only
+  // the first canvas in a stack draws it, so siblings don't darken it.
+  if (backdrop) {
+    ctx.beginPath();
+    ctx.arc(RADIAL_SIZE / 2, RADIAL_SIZE / 2, RADIAL_R + 5, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+    ctx.fill();
+  }
 
   if (clamped > 0.001) {
     const cx = RADIAL_SIZE / 2;
@@ -1348,7 +1357,7 @@ function entityButton({ kind, type, id, icon, label, count, meta, danger, compac
     if (nodeId) badge.dataset.nodeId = nodeId;
     if (jobIcon) badge.appendChild(makeIcon(ICONS[jobIcon], meta || jobIcon));
     if (hasProgress) {
-      progressBars.forEach(p => badge.appendChild(radialProgressCanvas(p, progressBars.length)));
+      progressBars.forEach((p, i) => badge.appendChild(radialProgressCanvas(p, progressBars.length, i === 0)));
     }
     button.appendChild(badge);
   }
@@ -1738,7 +1747,7 @@ function updateProgressRings() {
     const node = nodeById(game, badge.dataset.nodeId);
     const values = node ? nodeProgressBars(game, node) : [];
     badge.querySelectorAll('.radial-progress').forEach(el => el.remove());
-    values.forEach(p => badge.appendChild(radialProgressCanvas(p, values.length)));
+    values.forEach((p, i) => badge.appendChild(radialProgressCanvas(p, values.length, i === 0)));
   });
 }
 

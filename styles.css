@@ -404,11 +404,11 @@ button { touch-action: manipulation; }
   top: 0;
   width: 44px;
   height: 44px;
-  background: rgba(0, 0, 0, 0.92);
+  background: transparent;
   border: 0;
-  border-radius: 2px;
   overflow: hidden;
 }
+.job-badge .icon { filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.9)); }
 .entity .job-badge .icon,
 .entity.compact .job-badge .icon {
   width: 160%;
