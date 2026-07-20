@@ -4,11 +4,12 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no, viewport-fit=cover" />
     <title>Ember Command</title>
-    <link rel="stylesheet" href="styles.css?v=0.06" />
+    <link rel="stylesheet" href="styles.css?v=0.07" />
   </head>
   <body>
     <main class="shell">
       <div id="error" class="error-flash" role="alert" aria-live="assertive"></div>
+      <div id="gameover" class="game-over"></div>
       <header class="topbar">
         <div class="resources" id="stores" aria-label="resources"></div>
         <details class="menu">
@@ -18,11 +19,13 @@
             <div id="log" class="menu-log"></div>
             <a class="menu-link" href="design.html">📜 Design notes</a>
             <div class="cheat-row">
-              <button id="cheat-btn" class="cheat-btn">+10k resources</button>
-              <button id="cheat-train" class="cheat-btn cheat-toggle">fast train</button>
-              <button id="cheat-harvest" class="cheat-btn cheat-toggle">fast harvest</button>
-              <button id="cheat-raid" class="cheat-btn">trigger attack</button>
-              <button id="cheat-footman" class="cheat-btn">spawn footman</button>
+              <button id="cheat-btn" class="cheat-btn" title="+10k resources"></button>
+              <button id="cheat-train" class="cheat-btn cheat-toggle" title="fast build/train/upgrade"></button>
+              <button id="cheat-harvest" class="cheat-btn cheat-toggle" title="fast harvest"></button>
+              <button id="cheat-raid" class="cheat-btn" title="trigger attack"></button>
+              <button id="cheat-footman" class="cheat-btn" title="spawn footman"></button>
+              <button id="cheat-worker" class="cheat-btn" title="spawn peasant"></button>
+              <button id="cheat-farm" class="cheat-btn" title="spawn farm"></button>
             </div>
           </div>
         </details>
@@ -37,6 +40,6 @@
       </section>
     </main>
 
-    <script src="app.js?v=0.06"></script>
+    <script src="app.js?v=0.07"></script>
   </body>
 </html>

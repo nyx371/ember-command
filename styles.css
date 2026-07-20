@@ -154,17 +154,19 @@ button { touch-action: manipulation; }
 }
 .menu-link:active { background: #1a1a2a; }
 
-.cheat-row { display: grid; gap: 6px; margin-top: 10px; }
+.cheat-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 10px; }
 .cheat-btn {
   width: 100%;
+  min-height: 34px;
+  display: grid;
+  place-items: center;
   background: #1a1a2a;
   border: 1px solid #333;
-  color: #668;
-  padding: 5px;
-  font: 14px monospace;
+  padding: 4px;
   border-radius: 3px;
   cursor: pointer;
 }
+.cheat-btn .icon { width: 22px; height: 22px; }
 .cheat-toggle.active {
   background: #1a2e1a;
   border-color: #3a6;
@@ -329,6 +331,25 @@ button { touch-action: manipulation; }
 .entity.selected { outline: 1px solid var(--accent); outline-offset: -1px; }
 .entity.danger { outline: 1px solid #4a2620; outline-offset: -1px; }
 
+.game-over {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  text-align: center;
+  padding: 24px;
+  background: rgba(4, 4, 4, 0.88);
+  cursor: pointer;
+}
+.game-over.show { display: flex; }
+.game-over strong { font-size: 26px; color: var(--accent); letter-spacing: 0.08em; }
+.game-over p { margin: 0; font-size: 15px; color: var(--text); }
+.game-over .gameover-hint { color: var(--muted); font-size: 14px; margin-top: 14px; }
+
 /* Transient feedback flashes — driven by the tileFlashes registry in app.js,
    so a tile keeps (re)playing its flash only while the entry is fresh. The
    flash is an ::after overlay ON TOP of the icon (the sprites are opaque, so
@@ -375,7 +396,6 @@ button { touch-action: manipulation; }
 }
 .entity.danger .hp-seg i { background: var(--danger); }
 .entity.danger strong { color: var(--danger); }
-.entity.danger .icon { filter: sepia(1) saturate(1.2) hue-rotate(315deg); }
 .entity-body { min-width: 0; display: grid; gap: 4px; }
 .entity-body strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; line-height: 1; }
 .entity-body small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 14px; line-height: 1.1; }

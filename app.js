@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.06';
-const VERSION_TAG = 'buildings + attackers scroll sideways';
+const VERSION = '0.07';
+const VERSION_TAG = 'tech upgrades, scouting finds, axethrowers, win/loss';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -25,13 +25,14 @@ const ENEMY_REBUILD = 0.05;     // enemy strength rebuilt per tick
 const RAID_INTERVAL_BASE = 90;  // ticks between raids on day 0
 const RAID_INTERVAL_SCALE = 8;  // reduce interval by this per day
 const RAID_INTERVAL_MIN = 25;
-const RAID_BASE_SIZE = 3;       // grunts in a day-0 raiding party
-const RAID_SIZE_PER_DAY = 2;
 const RAID_ARRIVE_TICKS = 6;    // approach window — only patrol strikes during it
 const VOLLEY_EVERY = 2;         // ticks between combat volleys (attack cooldown, both sides)
-const RAIDER = { hp: 60, dmg: 7 };   // per grunt at day 0 (WC2 grunt ≈ footman)
-const RAIDER_HP_PER_DAY = 6;    // grunts toughen and hit harder as days pass
-const RAIDER_DMG_PER_DAY = 1;
+// Enemy roster: each raid wave spawns one party per type whose fromDay has
+// arrived. Stats and headcount scale with the day.
+const RAIDER_TYPES = {
+  grunt:      { icon: 'enemy',      label: 'grunts',      hp: 60, dmg: 7, hpPerDay: 6, dmgPerDay: 1, baseSize: 3, sizePerDay: 2, fromDay: 0 },
+  axethrower: { icon: 'axethrower', label: 'axethrowers', hp: 40, dmg: 9, hpPerDay: 4, dmgPerDay: 1, baseSize: 2, sizePerDay: 1, fromDay: 2 }
+};
 const WORKER_HP = 30;
 const WOUND_HEAL_PER_TICK = 2;  // survivors regenerate between fights
 const HP_BAR_LINGER_MS = 3000;  // keep a combat hp bar visible across volleys
@@ -40,11 +41,33 @@ const HP_BAR_LINGER_MS = 3000;  // keep a combat hp bar visible across volleys
 const RAID_TOWER_TARGETS = ['guardtower', 'tower'];
 const RAID_TARGET_ORDER = ['farm', 'barracks', 'lumbermill', 'blacksmith', 'hall'];
 
+// discoverAt is explore-progress (explorer-ticks); 0 = known from the start.
+// Scouts keep exploring after finding the enemy base and reveal these in turn.
 const NODE_DEFS = [
-  { id: 'gold-1',   type: 'gold',   label: 'gold mine',  icon: 'goldSite',   distance: 1, capacity: 20000 },
-  { id: 'forest-1', type: 'lumber', label: 'forest',     icon: 'lumberSite', distance: 1, capacity: 25000 },
-  { id: 'forest-2', type: 'lumber', label: 'far forest', icon: 'lumberSite', distance: 5, capacity: 25000 }
+  { id: 'gold-1',   type: 'gold',   label: 'gold mine',   icon: 'goldSite',   distance: 1, capacity: 20000, discoverAt: 0 },
+  { id: 'forest-1', type: 'lumber', label: 'forest',      icon: 'lumberSite', distance: 1, capacity: 25000, discoverAt: 0 },
+  { id: 'forest-2', type: 'lumber', label: 'far forest',  icon: 'lumberSite', distance: 5, capacity: 25000, discoverAt: 0 },
+  { id: 'gold-2',   type: 'gold',   label: 'hill mine',   icon: 'goldSite',   distance: 4, capacity: 25000, discoverAt: 160 },
+  { id: 'forest-3', type: 'lumber', label: 'deep woods',  icon: 'lumberSite', distance: 6, capacity: 30000, discoverAt: 280 },
+  { id: 'gold-3',   type: 'gold',   label: 'mountain mine', icon: 'goldSite', distance: 9, capacity: 40000, discoverAt: 450 }
 ];
+
+// Tech upgrades bought at their source building; level effects are read by
+// harvestYield / unitDmg / unitHp.
+const TECH = {
+  lumber:  { source: 'lumbermill', label: 'lumber harvesting', max: 2,
+             icons: ['axe2', 'axe3'],
+             costs: [{ gold: 300, lumber: 150 }, { gold: 600, lumber: 300 }], times: [60, 90] },
+  weapons: { source: 'blacksmith', label: 'weapons', max: 2,
+             icons: ['sword2', 'sword3'],
+             costs: [{ gold: 800 }, { gold: 2400 }], times: [200, 220] },
+  armor:   { source: 'blacksmith', label: 'armor', max: 2,
+             icons: ['shield2', 'shield3'],
+             costs: [{ gold: 300, lumber: 300 }, { gold: 900, lumber: 500 }], times: [200, 250] }
+};
+const LUMBER_YIELD_PER_LEVEL = 0.25;  // +25% lumber per cycle per tier
+const WEAPON_DMG_PER_LEVEL = 2;       // per unit, footmen and archers alike
+const ARMOR_HP_PER_LEVEL = 10;
 
 // ── Data tables ────────────────────────────────────────────────────────────
 // Adding a building or unit should normally mean touching ONLY these tables
@@ -76,16 +99,16 @@ const BUILDINGS = {
   lumbermill: {
     icon: 'lumbermill', label: 'lumber mill', hp: 600,
     build: { cost: { gold: 600, lumber: 450 }, time: 150 },
-    blurb: 'Lumber Mill · unlocks archers'
+    blurb: s => `Lumber Mill · unlocks archers · yield +${s.tech.lumber * 25}%`
   },
   blacksmith: {
     icon: 'blacksmith', label: 'blacksmith', hp: 775,
     build: { cost: { gold: 800, lumber: 450 }, time: 200 },
-    blurb: 'Blacksmith'
+    blurb: s => `Blacksmith · weapons ${s.tech.weapons}/2 · armor ${s.tech.armor}/2`
   },
   tower: {
     icon: 'tower', label: 'tower', hp: 100, dmg: 3,
-    build: { cost: { gold: 550, lumber: 200 }, time: 60 },
+    build: { cost: { gold: 550, lumber: 200 }, time: 60, requires: ['lumbermill'] },
     blurb: 'Tower · upgradable to guard tower'
   },
   guardtower: {
@@ -157,7 +180,14 @@ const ICONS = {
   patrol: 'assets/icons/c_hpatrol.png',
   explore: 'assets/icons/c_hmove.png',
   build: 'assets/icons/c_build.png',
-  harvest: 'assets/icons/c_harvest.png'
+  harvest: 'assets/icons/c_harvest.png',
+  axethrower: 'assets/icons/o_unit_axethrower.png',
+  axe2: 'assets/icons/c_axe2.png',
+  axe3: 'assets/icons/c_axe3.png',
+  sword2: 'assets/icons/c_sword2.png',
+  sword3: 'assets/icons/c_sword3.png',
+  shield2: 'assets/icons/c_hshield2.png',
+  shield3: 'assets/icons/c_hshield3.png'
 };
 
 // ── State ──────────────────────────────────────────────────────────────────
@@ -181,7 +211,9 @@ function createGame() {
     jobs: [],
     buildMenu: false,
     workers: [],
-    nodes: NODE_DEFS.map(d => ({ ...d, remaining: d.capacity })),
+    nodes: NODE_DEFS.map(d => ({ ...d, remaining: d.capacity, discovered: d.discoverAt === 0 })),
+    tech: { lumber: 0, weapons: 0, armor: 0 },
+    over: null,   // { won, day } once the game ends
     // One pool per standing order; each holds counts per ARMY type plus a
     // shared wounds pool for raid damage.
     army: Object.fromEntries(ORDERS.map(o =>
@@ -290,7 +322,7 @@ function workersAtNode(state, node) {
 
 // First live node of a resource type (array order), used for auto-assignment.
 function firstNodeOfType(state, type) {
-  return state.nodes.find(n => n.type === type && n.remaining > 0) || null;
+  return state.nodes.find(n => n.type === type && n.discovered && n.remaining > 0) || null;
 }
 
 // A worker to spare when assigning to `node`: an idle one first, then one from
@@ -355,7 +387,7 @@ function builderWorker(state) {
   const idle = state.workers.find(w => w.job === 'idle');
   if (idle) return idle;
   const richest = state.nodes
-    .filter(n => n.remaining > 0 && workersAtNode(state, n).length > 0)
+    .filter(n => n.discovered && n.remaining > 0 && workersAtNode(state, n).length > 0)
     .sort((a, b) => b.remaining - a.remaining)[0];
   return richest ? workersAtNode(state, richest)[0] : null;
 }
@@ -381,7 +413,7 @@ function harvestTick(state) {
     }
     worker.cooldown -= step;
     if (worker.cooldown > 0) return;
-    const gained = Math.min(HARVEST_YIELD, node.remaining);
+    const gained = Math.min(harvestYield(state, worker.job), node.remaining);
     node.remaining -= gained;
     state.resources[worker.job] += gained;
     worker.cooldown = nodeCooldown(node);
@@ -538,6 +570,21 @@ function poolCount(pool) {
   return Object.keys(ARMY).reduce((n, k) => n + pool[k], 0);
 }
 
+// Tech-adjusted combat stats and harvest yield.
+function unitDmg(state, type) {
+  return ARMY[type].dmg + state.tech.weapons * WEAPON_DMG_PER_LEVEL;
+}
+
+function unitHp(state, type) {
+  return ARMY[type].hp + state.tech.armor * ARMOR_HP_PER_LEVEL;
+}
+
+function harvestYield(state, resource) {
+  return resource === 'lumber'
+    ? Math.round(HARVEST_YIELD * (1 + state.tech.lumber * LUMBER_YIELD_PER_LEVEL))
+    : HARVEST_YIELD;
+}
+
 function unitsOnOrder(state, order) {
   return poolCount(state.army[order]);
 }
@@ -637,16 +684,16 @@ function moveAllUnits(state, from, to) {
 // Damage my side deals per volley. Only defend and patrol pools fight raids —
 // scouts and the attack force are away from the base. During a raid's approach
 // only patrol intercepts; once it arrives, defend + patrol + towers all fight.
-function poolDamage(pool) {
-  return Object.keys(ARMY).reduce((sum, k) => sum + pool[k] * ARMY[k].dmg, 0);
+function poolDamage(state, pool) {
+  return Object.keys(ARMY).reduce((sum, k) => sum + pool[k] * unitDmg(state, k), 0);
 }
 
 function defenseDamage(state, arrived) {
-  const unitDmg = poolDamage(state.army.patrol) + (arrived ? poolDamage(state.army.defend) : 0);
+  const armyDmg = poolDamage(state, state.army.patrol) + (arrived ? poolDamage(state, state.army.defend) : 0);
   const towerDmg = arrived
     ? Object.keys(BUILDINGS).reduce((sum, k) => sum + (BUILDINGS[k].dmg || 0) * state.structures[k], 0)
     : 0;
-  return unitDmg + towerDmg;
+  return armyDmg + towerDmg;
 }
 
 // Damage flows into the pool's wounds; every full hp's worth kills one unit
@@ -657,8 +704,8 @@ function damagePool(state, order, dmg) {
   pool.lastHitAt = performance.now();
   pool.wounds += dmg;
   let type = Object.keys(ARMY).find(k => pool[k] > 0);
-  while (type && pool.wounds >= ARMY[type].hp) {
-    pool.wounds -= ARMY[type].hp;
+  while (type && pool.wounds >= unitHp(state, type)) {
+    pool.wounds -= unitHp(state, type);
     pool[type] -= 1;
     writeLog(state, `A ${ARMY[type].singular} has fallen.`);
     type = Object.keys(ARMY).find(k => pool[k] > 0);
@@ -699,21 +746,32 @@ function damageBuildings(state, raid, dmg, order) {
   if (raid.targetHp <= 0) {
     state.structures[raid.targetType] -= 1;
     writeLog(state, `${cap(BUILDINGS[raid.targetType].label)} destroyed by raiders!`);
-    if (raid.targetType === 'hall') flashError('The town hall has fallen!');
+    if (raid.targetType === 'hall') {
+      flashError('The town hall has fallen!');
+      state.over = { won: false, day: currentDay(state) + 1 };
+    }
     raid.targetType = null;
   }
 }
 
 function spawnRaid(state) {
   const day = currentDay(state);
-  const size = RAID_BASE_SIZE + day * RAID_SIZE_PER_DAY;
-  const grunt = { hp: RAIDER.hp + day * RAIDER_HP_PER_DAY, dmg: RAIDER.dmg + day * RAIDER_DMG_PER_DAY };
-  state.raids.push({
-    id: nextId(), size, grunt, hpPool: size * grunt.hp,
-    arriveIn: RAID_ARRIVE_TICKS, strikeIn: VOLLEY_EVERY,
-    targetType: null, targetHp: 0
+  let total = 0;
+  Object.keys(RAIDER_TYPES).forEach(key => {
+    const t = RAIDER_TYPES[key];
+    if (day < t.fromDay) return;
+    const size = t.baseSize + (day - t.fromDay) * t.sizePerDay;
+    if (size <= 0) return;
+    const grunt = { hp: t.hp + day * t.hpPerDay, dmg: t.dmg + day * t.dmgPerDay };
+    state.raids.push({
+      id: nextId(), kind: key, icon: t.icon, label: t.label,
+      size, grunt, hpPool: size * grunt.hp,
+      arriveIn: RAID_ARRIVE_TICKS, strikeIn: VOLLEY_EVERY,
+      targetType: null, targetHp: 0
+    });
+    total += size;
   });
-  writeLog(state, `Day ${day + 1}: ${size} raiders approaching!`);
+  writeLog(state, `Day ${day + 1}: ${total} raiders approaching!`);
   flashError('Enemies approach our base!');
 }
 
@@ -729,7 +787,7 @@ function raidTick(state) {
     raid.strikeIn = VOLLEY_EVERY;
 
     // My volley (patrol only while they approach).
-    const dealt = defenseDamage(state, arrived);
+    const dealt = defenseDamage(state, arrived) / state.raids.length;
     if (dealt > 0) {
       flashTile(`enemy:raid:${raid.id}`, 'damage');
       raid.lastHitAt = performance.now();
@@ -768,6 +826,7 @@ function currentDay(state) {
 }
 
 function gameTick() {
+  if (game.over) { render(); return; }
   game.tick += 1;
   lastTickAt = performance.now();
 
@@ -781,23 +840,30 @@ function gameTick() {
   });
   game.workerWounds = Math.max(0, game.workerWounds - WOUND_HEAL_PER_TICK);
 
-  // Exploration — accumulate per exploring unit; discover when threshold reached
-  if (!game.enemy.known) {
-    const explorers = unitsOnOrder(game, 'explore');
-    if (explorers > 0) {
-      game.exploreProgress += explorers;
-      if (game.exploreProgress >= EXPLORE_THRESHOLD) {
-        game.enemy.known = true;
-        writeLog(game, 'Enemy base located! Attack order unlocked.');
-      }
+  // Exploration — accumulates per exploring unit. Finds the enemy base first,
+  // then keeps revealing distant resource nodes at their discoverAt thresholds.
+  const explorers = unitsOnOrder(game, 'explore');
+  if (explorers > 0) {
+    game.exploreProgress += explorers;
+    if (!game.enemy.known && game.exploreProgress >= EXPLORE_THRESHOLD) {
+      game.enemy.known = true;
+      writeLog(game, 'Enemy base located! Attack order unlocked.');
     }
+    game.nodes.forEach(n => {
+      if (!n.discovered && game.exploreProgress >= n.discoverAt) {
+        n.discovered = true;
+        flashTile(`node:${n.type}:${n.id}`, 'spawn');
+        writeLog(game, `Scouts discovered a ${n.label}!`);
+      }
+    });
   }
 
   // Auto-attack — chips away at enemy strength
   if (game.enemy.known) {
     game.enemy.strength = Math.max(0, game.enemy.strength - attackDamage(game));
-    if (game.enemy.strength === 0) {
+    if (game.enemy.strength === 0 && !game.over) {
       writeLog(game, 'Enemy base destroyed! Victory!');
+      game.over = { won: true, day: currentDay(game) + 1 };
     }
   }
 
@@ -835,6 +901,38 @@ function trainCommand(key) {
     available, reason,
     enabled: s => available(s) && canAfford(s, u.cost),
     run: s => trainUnit(s, key)
+  };
+}
+
+// One command per tech track, attached to its source building. Shows the next
+// tier's icon/cost; fades out when maxed or already researching.
+function techCommand(key) {
+  const t = TECH[key];
+  const level = s => s.tech[key];
+  const busy = s => pendingUpgrades(s, key) > 0;
+  const { available, reason } = gated([
+    [s => level(s) < t.max, 'Fully upgraded'],
+    [s => !busy(s), 'Already researching']
+  ]);
+  return {
+    id: `tech-${key}`,
+    get icon() { return t.icons[Math.min(game.tech[key], t.max - 1)]; },
+    label: `upgrade ${t.label}`,
+    get cost() { return costIcons(t.costs[Math.min(game.tech[key], t.max - 1)]); },
+    available, reason,
+    enabled: s => available(s) && canAfford(s, t.costs[Math.min(level(s), t.max - 1)]),
+    run: s => {
+      const tier = level(s);
+      startUpgrade(s, {
+        tag: key, icon: t.icons[tier], label: `${t.label} ${tier + 1}`,
+        time: t.times[tier], cost: t.costs[tier],
+        complete: st => {
+          st.tech[key] += 1;
+          flashTile(`structure:${t.source}:1`, 'spawn');
+          writeLog(st, `${cap(t.label)} upgraded to tier ${st.tech[key]}.`);
+        }
+      });
+    }
   };
 }
 
@@ -891,6 +989,10 @@ const COMMANDS = {
       run: s => { s.buildMenu = true; }
     });
     (byStructure.tower = byStructure.tower || []).push(guardTowerCommand());
+    Object.keys(TECH).forEach(key => {
+      const source = TECH[key].source;
+      (byStructure[source] = byStructure[source] || []).push(techCommand(key));
+    });
     return byStructure;
   })(),
   workerGroup: [],
@@ -901,11 +1003,14 @@ function buildMenuCommands() {
   return [
     ...Object.keys(BUILDINGS).filter(key => BUILDINGS[key].build).map(key => {
       const b = BUILDINGS[key];
+      const { available, reason } = gated([
+        ...(b.build.requires || []).map(req => [s => s.structures[req] > 0, `Need a ${BUILDINGS[req].label}`]),
+        [s => builderWorker(s) != null, 'No worker available']
+      ]);
       return {
         id: `build-${key}`, icon: b.icon, label: `build ${b.label}`, cost: costIcons(b.build.cost),
-        available: s => builderWorker(s) != null,
-        reason: s => builderWorker(s) == null ? 'No worker available' : '',
-        enabled: s => builderWorker(s) != null && canAfford(s, b.build.cost),
+        available, reason,
+        enabled: s => available(s) && canAfford(s, b.build.cost),
         run: s => startConstruction(s, key)
       };
     }),
@@ -1116,7 +1221,7 @@ function nodeProgressBars(state, node) {
     .map(w => Math.min(1, ((cd - w.cooldown) + tickFraction(step)) / cd));
 }
 
-function entityButton({ kind, type, id, icon, label, count, meta, danger, compact, jobIcon, progressBars, nodeId, countLabel, countIcon, hp, dimmed }) {
+function entityButton({ kind, type, id, icon, label, count, meta, danger, compact, jobIcon, progressBars, nodeId, countLabel, countIcon, hp, fade, dimmed }) {
   const button = document.createElement('button');
   const classes = ['entity'];
   if (danger)  classes.push('danger');
@@ -1134,7 +1239,13 @@ function entityButton({ kind, type, id, icon, label, count, meta, danger, compac
   button.title = label;
   button.setAttribute('aria-label', label);
 
-  button.appendChild(makeIcon(ICONS[icon], label));
+  const iconEl = makeIcon(ICONS[icon], label);
+  // Approaching enemies emerge from black — brightness ramps 0 → 1, keeping
+  // the sprite's own colors (no greyscale/tint).
+  if (typeof fade === 'number' && fade < 1) {
+    iconEl.style.filter = `brightness(${Math.max(0, Math.min(1, fade)).toFixed(2)})`;
+  }
+  button.appendChild(iconEl);
 
   const hasProgress = progressBars && progressBars.length > 0;
   if (jobIcon || hasProgress) {
@@ -1200,6 +1311,7 @@ function orderIcon(order) {
 // ── Render ─────────────────────────────────────────────────────────────────
 
 function render() {
+  renderGameOver();
   validateSelection(game);
   dom.day.textContent = `DAY ${currentDay(game) + 1}`;
   renderResources();
@@ -1290,7 +1402,7 @@ function renderWorld() {
   const workers = document.createElement('section');
   workers.className = 'world-group workers';
 
-  const liveNodes = game.nodes.filter(n => n.remaining > 0);
+  const liveNodes = game.nodes.filter(n => n.discovered && n.remaining > 0);
 
   if (liveNodes.length === 0) {
     const idleCount = workerCount(game, 'idle');
@@ -1346,8 +1458,9 @@ function renderWorld() {
   game.raids.forEach(raid => {
     raidTiles.appendChild(entityButton({
       kind: 'enemy', type: 'raid', id: raid.id, compact: true,
-      icon: 'enemy', label: 'raiders', danger: true,
-      countLabel: raid.size, dimmed: raid.arriveIn > 0,
+      icon: raid.icon, label: raid.label, danger: true,
+      countLabel: raid.size,
+      fade: raid.arriveIn > 0 ? (RAID_ARRIVE_TICKS - raid.arriveIn) / RAID_ARRIVE_TICKS : 1,
       hp: raidHp(raid)
     }));
   });
@@ -1450,6 +1563,28 @@ function renderOrders() {
 
     dom.orders.appendChild(button);
   });
+}
+
+function renderGameOver() {
+  const el = document.getElementById('gameover');
+  if (!game.over) {
+    el.classList.remove('show');
+    return;
+  }
+  if (!el.classList.contains('show')) {
+    el.replaceChildren();
+    const title = document.createElement('strong');
+    title.textContent = game.over.won ? 'Victory!' : 'Defeat';
+    const line = document.createElement('p');
+    line.textContent = game.over.won
+      ? `The enemy base lies in ruins. Day ${game.over.day}.`
+      : `The town hall has fallen. Day ${game.over.day}.`;
+    const hint = document.createElement('p');
+    hint.className = 'gameover-hint';
+    hint.textContent = 'tap to play again';
+    el.append(title, line, hint);
+    el.classList.add('show');
+  }
 }
 
 function renderLog() {
@@ -1592,8 +1727,35 @@ document.getElementById('cheat-raid').addEventListener('click', () => {
 });
 document.getElementById('cheat-footman').addEventListener('click', () => {
   game.army.defend.footmen += 1;
+  flashTile('army:defend:1', 'spawn');
   render();
 });
+document.getElementById('cheat-worker').addEventListener('click', () => {
+  const w = createWorker();
+  game.workers.push(w);
+  autoAssignWorkers(game);
+  if (w.nodeId) flashTile(`node:${w.job}:${w.nodeId}`, 'spawn');
+  render();
+});
+document.getElementById('cheat-farm').addEventListener('click', () => {
+  game.structures.farm += 1;
+  flashTile('structure:farm:1', 'spawn');
+  render();
+});
+
+// Cheat buttons are icon-only; icons injected here so they share ICONS'
+// cache-busting.
+const CHEAT_ICONS = {
+  'cheat-btn': 'gold', 'cheat-train': 'build', 'cheat-harvest': 'harvest',
+  'cheat-raid': 'enemy', 'cheat-footman': 'footman',
+  'cheat-worker': 'worker', 'cheat-farm': 'farm'
+};
+Object.keys(CHEAT_ICONS).forEach(id => {
+  const btn = document.getElementById(id);
+  btn.appendChild(makeIcon(ICONS[CHEAT_ICONS[id]], btn.title));
+});
+
+document.getElementById('gameover').addEventListener('click', () => location.reload());
 
 // ── Boot ───────────────────────────────────────────────────────────────────
 
