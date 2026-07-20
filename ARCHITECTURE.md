@@ -51,9 +51,11 @@ sprite).** Times/costs are real WC2 values; every duration is multiplied by
 `TIME_SCALE` (via `scaledTime`) when a job starts.
 
 ### Raid combat
-`game.raids` holds live raiding parties (`{ size, grunt: {hp, dmg}, hpPool,
-arriveIn, strikeIn, targetType, targetHp }`). Grunt stats scale with the day
-(`RAIDER_HP_PER_DAY` / `RAIDER_DMG_PER_DAY`). `spawnRaid` on the raid
+`game.raids` holds live raiding parties (`{ kind, icon, label, size,
+grunt: {hp, dmg}, hpPool, arriveIn, strikeIn, targetType, targetHp }`).
+`RAIDER_TYPES` is the enemy roster — one party per active type per wave
+(grunts day 0+, axethrowers day 2+), stats scale with day, and defense
+damage splits across simultaneous parties. `spawnRaid` on the raid
 interval (`game.raid.interval` feeds the countdown ring on the enemy tile);
 `raidTick` runs volleys every `VOLLEY_EVERY` ticks — patrol strikes during
 the approach, defend+patrol+towers after arrival. Raider targeting: patrol
@@ -119,6 +121,14 @@ Pass `hp: { segments, partial, total }` (from `poolHp`/`raidHp`) to
 exactly two branches: `.construction-chip[data-job-uid]` and
 `.job-badge[data-node-id]`. Anything rendered through `jobChip` or a node
 badge animates for free — never add a third lookup scheme.
+
+### Tech, discovery, endgame
+`TECH` (lumber/weapons/armor: source building, per-tier icons/costs/times)
+generates `techCommand`s on their source structures; levels in `game.tech`
+are read by `harvestYield`/`unitDmg`/`unitHp`. Nodes with `discoverAt > 0`
+start hidden; exploration accumulates past the enemy-base find and reveals
+them. `game.over = { won, day }` freezes the sim and shows the #gameover
+overlay (hall destroyed = defeat, enemy base at 0 = victory; tap reloads).
 
 ## Recipes
 

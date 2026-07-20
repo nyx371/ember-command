@@ -68,7 +68,7 @@
 </ul>
 
 <h2><img class="icon" src="assets/icons/r_gold.png" alt="">Economy &amp; Workers</h2>
-<p><span class="status done">done</span> — Resource nodes are finite and have a <strong>distance</strong> from the town hall that lengthens each harvest cycle (gather time + round-trip travel). Workers pin to a node until it depletes, then go idle and auto-reassign. Depleted nodes disappear from the UI.</p>
+<p><span class="status done">done</span> — Resource nodes are finite and have a <strong>distance</strong> from the town hall that lengthens each harvest cycle (gather time + round-trip travel). Workers pin to a node until it depletes, then go idle and auto-reassign. Depleted nodes disappear from the UI. Three distant nodes (hill mine, deep woods, mountain mine) start hidden — <strong>scouts on Explore reveal them</strong> after locating the enemy base, so exploration stays valuable and the economy outlives the starting nodes.</p>
 
 <div class="table-wrap"><table>
   <tr><th>Node</th><th>Capacity</th><th>Distance</th></tr>
@@ -91,9 +91,9 @@
   <tr><td><img class="icon" src="assets/icons/h_bld_townhall.png" alt="">Town Hall</td><td>—</td><td>—</td><td>Trains workers, opens build menu, +4 supply</td><td><span class="status done">done</span></td></tr>
   <tr><td><img class="icon" src="assets/icons/h_bld_farm.png" alt="">Farm</td><td>500g 250w</td><td>100s</td><td>+4 supply, stackable</td><td><span class="status done">done</span></td></tr>
   <tr><td><img class="icon" src="assets/icons/h_bld_barracks.png" alt="">Barracks</td><td>700g 450w</td><td>200s</td><td>Trains footmen/archers; each adds +1 training slot and +5 queue depth</td><td><span class="status done">done</span></td></tr>
-  <tr><td><img class="icon" src="assets/icons/h_bld_lumbermill.png" alt="">Lumber Mill</td><td>600g 450w</td><td>150s</td><td>Unlocks archers (and future lumber upgrades)</td><td><span class="status done">done</span></td></tr>
-  <tr><td><img class="icon" src="assets/icons/h_bld_blacksmith.png" alt="">Blacksmith</td><td>800g 450w</td><td>200s</td><td>Buildable now; weapon/armor upgrades to come</td><td><span class="status todo">todo</span></td></tr>
-  <tr><td><img class="icon" src="assets/icons/h_bld_tower.png" alt="">Tower</td><td>550g 200w</td><td>60s</td><td>Shoots raiders (3 dmg/volley); upgradable</td><td><span class="status done">done</span></td></tr>
+  <tr><td><img class="icon" src="assets/icons/h_bld_lumbermill.png" alt="">Lumber Mill</td><td>600g 450w</td><td>150s</td><td>Unlocks archers + towers; lumber-yield upgrades (2 tiers)</td><td><span class="status done">done</span></td></tr>
+  <tr><td><img class="icon" src="assets/icons/h_bld_blacksmith.png" alt="">Blacksmith</td><td>800g 450w</td><td>200s</td><td>Weapon upgrades (+2 dmg) and armor upgrades (+10 hp), 2 tiers each</td><td><span class="status done">done</span></td></tr>
+  <tr><td><img class="icon" src="assets/icons/h_bld_tower.png" alt="">Tower</td><td>550g 200w</td><td>60s</td><td>Shoots raiders (3 dmg/volley); needs Lumber Mill; upgradable</td><td><span class="status done">done</span></td></tr>
   <tr><td><img class="icon" src="assets/icons/h_bld_watchtower.png" alt="">Guard Tower</td><td>500g 150w</td><td>140s</td><td>Tower upgrade (needs Lumber Mill), 8 dmg/volley</td><td><span class="status done">done</span></td></tr>
 </table></div>
 
@@ -116,16 +116,16 @@
 </table></div>
 
 <h2><img class="icon" src="assets/icons/o_unit_grunt.png" alt="">Threat &amp; Victory</h2>
-<p><span class="status done">done</span> — Raiding parties are real grunts with hp, damage, and an attack cooldown, shown as danger tiles at the bottom while active. They approach (patrol intercepts early — "Enemies approach our base!"), then exchange volleys: they cut down your patrol first, then defenders, then the towers shooting at them, then workers, then raze the remaining buildings one by one (town hall last) — with the alarm "Our town is being razed!" once your warriors are gone. Scouts and the attack force are away from the base: safe from raids, but useless against them until called back. Grunts get tougher and hit harder each day. Towers shoot back; the error toast raises the alarm. Reducing enemy base strength to zero via <code>Attack</code> logs victory.</p>
+<p><span class="status done">done</span> — Raiding parties are real grunts with hp, damage, and an attack cooldown, shown as danger tiles at the bottom while active. They approach (patrol intercepts early — "Enemies approach our base!"), then exchange volleys: they cut down your patrol first, then defenders, then the towers shooting at them, then workers, then raze the remaining buildings one by one (town hall last) — with the alarm "Our town is being razed!" once your warriors are gone. Scouts and the attack force are away from the base: safe from raids, but useless against them until called back. Grunts get tougher and hit harder each day, and from day 2 <strong>axethrowers</strong> join each wave as a second party; approaching parties fade in from black. Towers shoot back; the error toast raises the alarm.</p>
+<p><span class="status done">done</span> — <strong>Win/loss is real</strong>: destroying the enemy base via <code>Attack</code> ends the game in victory; losing the town hall ends it in defeat. A full-screen result shows the day count — tap to restart.</p>
 <div class="note"><strong>Global pace lever.</strong> All build/train/upgrade durations are the real WC2 seconds × <code>TIME_SCALE</code> (currently 0.3) — one constant to retune the whole game's tempo.</div>
-<div class="note"><strong>Open — real win/loss.</strong> Victory is only a log line and there is no loss condition yet. Candidates: destroy-the-base (classic), survive-to-day-N, economic victory. Related: what a win/loss does to a future save file.</div>
+<div class="note"><strong>Open — end-game refinements.</strong> Survive-to-day-N and economic-victory variants; what a win/loss does to a future save file.</div>
 
-<h2><img class="icon" src="assets/icons/h_bld_blacksmith.png" alt="">Upgrades (planned)</h2>
-<p>The Guard Tower upgrade <span class="status done">done</span> established the pattern: a single button on the source structure, timed, cancellable with refund. Planned on the same pattern, all <span class="status idea">idea</span>:</p>
+<h2><img class="icon" src="assets/icons/h_bld_blacksmith.png" alt="">Upgrades</h2>
+<p><span class="status done">done</span> — Tech upgrades follow the guard-tower pattern: one button on the source structure, timed, cancellable with refund. Implemented: <strong>lumber harvesting</strong> (Lumber Mill, 2 tiers, +25% yield each), <strong>weapons</strong> (Blacksmith, 2 tiers, +2 dmg per unit), <strong>armor</strong> (Blacksmith, 2 tiers, +10 hp per unit) — the player's counter-curve to daily raid scaling.</p>
 <ul>
-  <li><strong>Blacksmith</strong>: weapon/armor tiers 1–3 for footmen/archers</li>
-  <li><strong>Lumber Mill / Town Hall</strong>: harvest-efficiency bumps</li>
-  <li><strong>Hall tiers</strong>: Town Hall → Keep → Castle as the pacing lever against raid scaling — each tier unlocks units/structures/upgrades</li>
+  <li><span class="status idea">idea</span> <strong>Gold mining efficiency</strong> (Town Hall)</li>
+  <li><span class="status idea">idea</span> <strong>Hall tiers</strong>: Town Hall → Keep → Castle as the bigger pacing lever — each tier unlocks units/structures/upgrade tiers</li>
 </ul>
 
 <div class="note"><strong>Open — army assignment granularity.</strong> Currently orders apply per unit <em>type</em> (all footmen share one order). Candidate refinements: headcount splits per order, and a separate <code>Raid</code> posture (harass economy) distinct from <code>Attack</code> (kill the base). Needs prototyping to validate feel.</div>
