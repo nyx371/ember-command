@@ -61,7 +61,10 @@ grunt: {hp, dmg}, hpPool, arriveIn, strikeIn, targetType, targetHp }`).
 each raider killed pays its `bounty` in plunder gold. `spawnRaid` on the raid
 interval (`game.raid.interval` feeds the countdown ring on the enemy tile);
 `raidTick` runs volleys every `VOLLEY_EVERY` ticks — patrol strikes during
-the approach, defend+patrol+towers after arrival. Raider targeting: patrol
+the approach, defend+patrol+towers after arrival. Waves spawn silently and
+undiscovered; a standing patrol sets `raid.discovered` during the approach
+(toast + visible tile), otherwise the raid appears only on arrival. Wound
+regen is per order (`HEAL_BY_ORDER`: defend fastest, field none). Raider targeting: patrol
 pool → defend pool → towers (`RAID_TOWER_TARGETS`) → workers → remaining
 buildings per `RAID_TARGET_ORDER` (hall last). Explore/attack pools are away
 from the base: they neither fight raids nor get targeted. Wounds pools:
@@ -78,6 +81,11 @@ can force a raid and spawn footmen.
 - `kind: 'construct'` → `{ workerId, returnTo }` (builder released back to
   its node — or idle — on completion/cancel).
 - `kind: 'upgrade'` → `{ tag }` (used to block duplicate upgrades).
+- `kind: 'transfer'` → `{ from, to, type, count }` — a timed order-change
+  march (`transferTicks` = base + remoteness of both ends). Units leave the
+  source pool at start, are delivered by `advanceJobs` (no `complete`), count
+  toward supply while marching, and cancelling recalls them to `from`.
+  Same-route moves merge into the marching column.
 
 One `advanceJobs`, one `cancelJob` (refund + builder release), one
 `jobProgress`, one `jobChip`/`renderJobQueue`. Don't add parallel job arrays.

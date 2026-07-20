@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.12';
-const VERSION_TAG = 'unaffordable costs grey out';
+const VERSION = '0.13';
+const VERSION_TAG = 'marching orders, patrol scouting, defend regen';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -25,7 +25,7 @@ const ENEMY_REBUILD = 0.05;     // enemy strength rebuilt per tick
 const RAID_INTERVAL_BASE = 90;  // ticks between raids on day 0
 const RAID_INTERVAL_SCALE = 8;  // reduce interval by this per day
 const RAID_INTERVAL_MIN = 25;
-const RAID_ARRIVE_TICKS = 6;    // approach window — only patrol strikes during it
+const RAID_ARRIVE_TICKS = 10;   // approach window — patrol strikes and scouts it
 const VOLLEY_EVERY = 2;         // ticks between combat volleys (attack cooldown, both sides)
 // Enemy roster: each wave spawns one party per type whose fromWave has
 // arrived. Stats and headcount scale per WAVE (not per day) so the ramp is
@@ -36,7 +36,14 @@ const RAIDER_TYPES = {
   axethrower: { icon: 'axethrower', label: 'axethrowers', hp: 40, dmg: 9, hpPerWave: 4, dmgPerWave: 1, baseSize: 2, sizePerWave: 1, fromWave: 3, bounty: 40 }
 };
 const WORKER_HP = 30;
-const WOUND_HEAL_PER_TICK = 2;  // survivors regenerate between fights
+// Regen per tick by order — resting at base heals fastest, the field not at
+// all, so keeping units on defend has a real benefit.
+const HEAL_BY_ORDER = { defend: 3, patrol: 1, explore: 0, attack: 0 };
+const WORKER_HEAL_PER_TICK = 2;
+// Changing orders takes marching time (ticks): 2 + remoteness of both ends.
+// Pulling scouts home mid-raid costs real time — they can't teleport back.
+const ORDER_REMOTENESS = { defend: 0, patrol: 1, explore: 4, attack: 4 };
+const TRANSFER_BASE_TICKS = 2;
 const HP_BAR_LINGER_MS = 3000;  // keep a combat hp bar visible across volleys
 // Raider targeting: warriors first, then the towers shooting at them, then
 // workers, then the remaining buildings — the town hall falls last.
@@ -218,15 +225,16 @@ function createGame() {
     over: null,   // { won, day } once the game ends
     // One pool per standing order; each holds counts per ARMY type plus a
     // shared wounds pool for raid damage.
+    // One veteran footman guards the town from the start.
     army: Object.fromEntries(ORDERS.map(o =>
-      [o, { ...Object.fromEntries(Object.keys(ARMY).map(k => [k, 0])), wounds: 0 }])),
+      [o, { ...Object.fromEntries(Object.keys(ARMY).map(k => [k, o === 'defend' && k === 'footmen' ? 1 : 0])), wounds: 0 }])),
     structures: Object.fromEntries(Object.keys(BUILDINGS).map(k => [k, (k === 'hall' || k === 'farm') ? 1 : 0])),
     enemy: { strength: 20, known: false },
     exploreProgress: 0,
     raid: { nextIn: RAID_INTERVAL_BASE, interval: RAID_INTERVAL_BASE, wave: 0 },
     raids: [],            // active raiding parties (see spawnRaid)
     workerWounds: 0,      // damage accumulated toward the next worker death
-    log: ['Raiders are coming — raise an army before they do.', 'Tap the town hall to build and train.', 'Welcome to Ember Command.'],
+    log: ['Raiders are coming — one footman won\'t hold them forever.', 'Tap the town hall to build and train.', 'Welcome to Ember Command.'],
     cheats: { fastTrain: false, fastHarvest: false }
   };
 }
@@ -511,6 +519,11 @@ function cancelJob(state, uid) {
   state.jobs = state.jobs.filter(j => j !== job);
   refund(state, job.cost);
   if (job.kind === 'construct') releaseBuilder(state, job.workerId, job.returnTo);
+  if (job.kind === 'transfer') {
+    state.army[job.from][job.type] += job.count;
+    writeLog(state, `${job.label}: recalled.`);
+    return;
+  }
   writeLog(state, `${job.label}: cancelled, refunded.`);
 }
 
@@ -540,6 +553,12 @@ function advanceJobs(state) {
   state.jobs = state.jobs.filter(j => j.remaining > 0);
   done.forEach(job => {
     if (job.kind === 'construct') releaseBuilder(state, job.workerId, job.returnTo);
+    if (job.kind === 'transfer') {
+      state.army[job.to][job.type] += job.count;
+      flashTile(`army:${job.to}:1`, 'spawn');
+      writeLog(state, `${job.count} ${job.count === 1 ? ARMY[job.type].singular : ARMY[job.type].label} arrived at ${job.to}.`);
+      return;
+    }
     job.complete(state);
   });
 }
@@ -548,7 +567,8 @@ function advanceJobs(state) {
 
 function supplyUsed(state) {
   return state.workers.length
-       + ORDERS.reduce((sum, o) => sum + poolCount(state.army[o]), 0);
+       + ORDERS.reduce((sum, o) => sum + poolCount(state.army[o]), 0)
+       + state.jobs.filter(j => j.kind === 'transfer').reduce((sum, j) => sum + j.count, 0);
 }
 
 function supplyCap(state) {
@@ -663,26 +683,42 @@ function attackDamage(state) {
   return Object.keys(ARMY).reduce((dmg, k) => dmg + state.army.attack[k] * ARMY[k].attack, 0);
 }
 
-// Move one unit of a specific type between order pools; long-press moves all
-// of that type. Any per-type headcount split across orders is reachable this
-// way, one tap per unit.
-function moveUnit(state, from, to, type) {
+// Changing orders is a timed march (a 'transfer' job): units leave the source
+// pool immediately, spend the march in transit (not fighting, not targetable),
+// and join the target pool on arrival. Tapping the chip recalls them to where
+// they came from. Consecutive moves on the same route join the same column.
+function transferTicks(from, to) {
+  return TRANSFER_BASE_TICKS + ORDER_REMOTENESS[from] + ORDER_REMOTENESS[to];
+}
+
+function startTransfer(state, from, to, type, count) {
   const pool = state.army[from];
-  if (pool[type] <= 0) return;
-  pool[type] -= 1;
-  state.army[to][type] += 1;
+  const moved = Math.min(count, pool[type]);
+  if (moved <= 0) return;
+  pool[type] -= moved;
   if (poolCount(pool) === 0) pool.wounds = 0;
-  writeLog(state, `${cap(ARMY[type].singular)} → ${to}.`);
+  const marching = state.jobs.find(j => j.kind === 'transfer' && j.from === from && j.to === to && j.type === type);
+  if (marching) {
+    marching.count += moved;   // join the column already under way
+  } else {
+    const time = transferTicks(from, to);
+    // No complete() — advanceJobs delivers transfers itself so late joiners
+    // (merged counts) all arrive together.
+    state.jobs.push({
+      uid: nextId(), kind: 'transfer', from, to, type, count: moved,
+      icon: ARMY[type].icon, overlay: orderIcon(to), label: `${ARMY[type].label} → ${to}`,
+      duration: time, remaining: time, cost: {}
+    });
+  }
+  writeLog(state, `${moved} ${moved === 1 ? ARMY[type].singular : ARMY[type].label} marching to ${to}.`);
+}
+
+function moveUnit(state, from, to, type) {
+  startTransfer(state, from, to, type, 1);
 }
 
 function moveAllUnits(state, from, to, type) {
-  const pool = state.army[from];
-  const moved = pool[type];
-  if (moved <= 0) return;
-  state.army[to][type] += moved;
-  pool[type] = 0;
-  if (poolCount(pool) === 0) pool.wounds = 0;
-  writeLog(state, `${moved} ${moved === 1 ? ARMY[type].singular : ARMY[type].label} → ${to}.`);
+  startTransfer(state, from, to, type, state.army[from][type]);
 }
 
 // ── Raid combat ────────────────────────────────────────────────────────────
@@ -776,22 +812,32 @@ function spawnRaid(state) {
     const grunt = { hp: t.hp + wave * t.hpPerWave, dmg: t.dmg + wave * t.dmgPerWave };
     state.raids.push({
       id: nextId(), kind: key, icon: t.icon, label: t.label,
-      size, grunt, hpPool: size * grunt.hp,
+      size, grunt, hpPool: size * grunt.hp, discovered: false,
       arriveIn: RAID_ARRIVE_TICKS, strikeIn: VOLLEY_EVERY,
       targetType: null, targetHp: 0
     });
     total += size;
   });
-  writeLog(state, `Wave ${wave + 1}: ${total} raiders approaching!`);
-  flashError('Enemies approach our base!');
+  // No announcement — waves approach unseen unless a patrol spots them.
 }
 
 function raidTick(state) {
   state.raids.forEach(raid => {
     const arrived = raid.arriveIn <= 0;
     if (!arrived) {
+      // A standing patrol scouts the approach — without one, raiders appear
+      // out of nowhere when they arrive.
+      if (!raid.discovered && unitsOnOrder(state, 'patrol') > 0) {
+        raid.discovered = true;
+        writeLog(state, `Patrol spotted ${raid.size} ${raid.label} approaching!`);
+        flashError('Patrol spotted enemies approaching!');
+      }
       raid.arriveIn -= 1;
-      if (raid.arriveIn <= 0) flashError('Our town is under attack!');
+      if (raid.arriveIn <= 0) {
+        raid.discovered = true;
+        writeLog(state, `${raid.size} ${raid.label} attack the town!`);
+        flashError('Our town is under attack!');
+      }
     }
     raid.strikeIn -= 1;
     if (raid.strikeIn > 0) return;
@@ -852,12 +898,12 @@ function gameTick() {
   autoAssignWorkers(game);
   harvestTick(game);
 
-  // Survivors patch up between fights — combat damage dwarfs this, but after
-  // a raid the wound pools drain back to zero (and the hp bars fade away).
+  // Survivors patch up between fights — fastest while resting on defend, not
+  // at all in the field (see HEAL_BY_ORDER).
   ORDERS.forEach(o => {
-    game.army[o].wounds = Math.max(0, game.army[o].wounds - WOUND_HEAL_PER_TICK);
+    game.army[o].wounds = Math.max(0, game.army[o].wounds - HEAL_BY_ORDER[o]);
   });
-  game.workerWounds = Math.max(0, game.workerWounds - WOUND_HEAL_PER_TICK);
+  game.workerWounds = Math.max(0, game.workerWounds - WORKER_HEAL_PER_TICK);
 
   // Exploration — accumulates per exploring unit. Finds the enemy base first,
   // then keeps revealing distant resource nodes at their discoverAt thresholds.
@@ -1344,8 +1390,9 @@ function render() {
   renderGameOver();
   validateSelection(game);
   dom.day.textContent = `DAY ${currentDay(game) + 1}`;
-  dom.raidclock.textContent = game.raids.length > 0 ? 'RAID!' : `raid in ${game.raid.nextIn}s`;
-  dom.raidclock.classList.toggle('alert', game.raids.length > 0);
+  const visibleRaids = game.raids.some(r => r.discovered);
+  dom.raidclock.textContent = visibleRaids ? 'RAID!' : '';
+  dom.raidclock.classList.toggle('alert', visibleRaids);
   renderResources();
   // Full rebuild resets scrollLeft on the horizontal strips — capture and
   // restore so the view keeps its place across repaints.
@@ -1391,6 +1438,12 @@ function jobChip(job) {
   chip.title = `${job.label} — tap to cancel, refund resources`;
   chip.setAttribute('aria-label', `cancel ${job.label}`);
   chip.appendChild(makeIcon(ICONS[job.icon], job.label));
+  if (job.kind === 'transfer' && job.count > 1) {
+    const n = document.createElement('span');
+    n.className = 'chip-count';
+    n.textContent = job.count;
+    chip.appendChild(n);
+  }
   chip.appendChild(radialProgressCanvas(jobProgress(game, job)));
   chip.addEventListener('click', () => {
     cancelJob(game, job.uid);
@@ -1487,19 +1540,10 @@ function renderWorld() {
   const enemies = document.createElement('section');
   enemies.className = 'world-group enemies';
 
-  const timer = document.createElement('div');
-  timer.className = 'raid-timer';
-  timer.title = 'next attack';
-  const fill = document.createElement('i');
-  const pct = Math.max(0, Math.min(1, (game.raid.interval - game.raid.nextIn) / game.raid.interval));
-  fill.style.width = `${Math.round(pct * 100)}%`;
-  timer.appendChild(fill);
-  enemies.appendChild(timer);
-
   const raidTiles = document.createElement('div');
   raidTiles.className = 'tile-row';
   raidTiles.dataset.scroll = 'enemies';
-  game.raids.forEach(raid => {
+  game.raids.filter(raid => raid.discovered).forEach(raid => {
     raidTiles.appendChild(entityButton({
       kind: 'enemy', type: 'raid', id: raid.id, compact: true,
       icon: raid.icon, label: raid.label, danger: true,
@@ -1544,7 +1588,10 @@ function entityInfo(state) {
     const pool = state.army[type];
     if (!pool) return type;
     const parts = Object.keys(ARMY).filter(k => pool[k] > 0).map(k => `${pool[k]} ${ARMY[k].label}`);
-    const base = `${type} · ${parts.length ? parts.join(', ') : 'no units'}`;
+    const enRoute = state.jobs.filter(j => j.kind === 'transfer' && j.to === type)
+      .reduce((sum, j) => sum + j.count, 0);
+    let base = `${type} · ${parts.length ? parts.join(', ') : 'no units'}`;
+    if (enRoute > 0) base += ` · ${enRoute} en route`;
     if (type !== 'attack') return base;
     return `${base} · enemy base ${state.enemy.known ? Math.ceil(state.enemy.strength) : 'unfound'}`;
   }
