@@ -224,8 +224,10 @@ button { touch-action: manipulation; }
 /* The three bands of the map: far field, near base, base. Each is tinted a
    step lighter as you come home, holds a min-height so it stays legible when
    empty, and scrolls with everything else — nothing is pinned. No boxes —
-   a plain dividing line separates each band from the next. */
+   a plain dividing line separates each band from the next. Heights are whole
+   multiples of the tile height (--tile) so bands read as N button rows. */
 .world-zone {
+  --tile: 42px;
   flex: 0 0 auto;
   position: relative;
   display: flex;
@@ -234,9 +236,9 @@ button { touch-action: manipulation; }
   padding: 5px;
 }
 .zone-far, .zone-near { border-bottom: 1px solid rgba(255, 255, 255, 0.12); }
-.zone-far  { background: rgba(255, 255, 255, 0.015); min-height: 320px; }
-.zone-near { background: rgba(255, 255, 255, 0.04);  min-height: 180px; }
-.zone-base { background: rgba(255, 255, 255, 0.07);  min-height: 260px; }
+.zone-far  { background: rgba(255, 255, 255, 0.015); min-height: calc(var(--tile) * 8); }
+.zone-near { background: rgba(255, 255, 255, 0.04);  min-height: calc(var(--tile) * 4); }
+.zone-base { background: rgba(255, 255, 255, 0.07);  min-height: calc(var(--tile) * 6); }
 
 .world-group.away { align-content: start; }
 /* Grows with its content (tiles + in-flight job chips); the base min-height
@@ -601,9 +603,11 @@ button { touch-action: manipulation; }
   /* Compact tiles are 36px, so the reserved row height comes down to match. */
   .world-group,
   .world-group.structures { min-height: 38px; }
-  .zone-far { min-height: 210px; }
-  .zone-near { min-height: 120px; }
-  .zone-base { min-height: 160px; }
+  /* Compact tiles are 36px; zone heights stay whole multiples of them. */
+  .world-zone { --tile: 36px; }
+  .zone-far { min-height: calc(var(--tile) * 6); }
+  .zone-near { min-height: calc(var(--tile) * 3); }
+  .zone-base { min-height: calc(var(--tile) * 5); }
   .shell { grid-template-rows: 52px 1fr; gap: 6px; padding-left: 6px; padding-right: 6px; }
   .topbar { padding: 6px; }
   .world { grid-template-rows: 24px 1fr 108px; }

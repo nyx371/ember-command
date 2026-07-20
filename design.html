@@ -51,7 +51,7 @@
 <main>
 
 <h1>Ember Command</h1>
-<p class="subtitle">game design document — last updated 2026-07-19 · see <code>ARCHITECTURE.md</code> for the code map</p>
+<p class="subtitle">game design document — last updated 2026-07-20 · see <code>ARCHITECTURE.md</code> for the code map</p>
 
 <h2>Concept</h2>
 <p>An abstract real-time strategy game inspired by Warcraft II. <strong>You command at scale, not at the unit level</strong> — standing orders and high-level taps instead of clicking units around a map. It should feel like being a general, not a babysitter.</p>
@@ -132,6 +132,30 @@
 
 <h2>Persistence</h2>
 <p><span class="status idea">idea</span> — autosave to local storage, resume on reload, no explicit load step. Not implemented; every reload is a fresh start.</p>
+
+<h2>Design Review — Proposed Directions (2026-07-20)</h2>
+<p>A critical pass over the running game. Everything here is proposal, not decision — promote items into the sections above as they're decided.</p>
+
+<p><strong>Diagnosis.</strong> The opening is decision-dense (build order, labour split, first patrol) and the ending is real, but the <em>middle game idles</em>: once the economy self-runs and postures are set, the player is waiting for raids and watching timers. <strong>Attack</strong> — the win condition — is the least interesting order: assign and wait, with no visible fight. The biggest wins are whatever puts mid-game decisions back and makes the enemy side legible.</p>
+
+<ul>
+  <li><span class="status idea">idea</span> <strong>The world as sites, not just bands.</strong> Give the far zone discrete discoverable sites: enemy <em>outposts</em> (where raids muster — razing one slows or removes a raid source), neutral camps (one-shot loot ventures), and the stronghold itself. Explore reveals them one by one; Attack/Raid target one site at a time. Turns the three zones into an abstract map and gives Attack intermediate objectives. Largest single design lever.</li>
+  <li><span class="status idea">idea</span> <strong>Mirror the enemy base.</strong> Make it a real entity — hp segments, a garrison that thins as you grind, visible rebuilding, counter-pressure that spikes while you besiege. The attack force should trade volleys and wounds like raid combat at home, not silently drain a number.</li>
+  <li><span class="status idea">idea</span> <strong>Raid variety as posture puzzles.</strong> Wolf riders that outrun the patrol buffer (defenders matter), siege parties that ignore units and hit buildings (patrol matters double), a telegraphed horde every N waves ("war drums — three days to prepare"). Each variant asks for a different posture split — the game's core verb.</li>
+  <li><span class="status idea">idea</span> <strong>Resolve Raid vs Attack</strong> (open note under Upgrades) as: <code>Raid</code> = fast strike on an outpost or the enemy economy — quick march, steals gold, low risk; <code>Attack</code> = commitment against the stronghold — slow march, casualties, wins the game.</li>
+  <li><span class="status idea">idea</span> <strong>Hall tiers as the pacing spine.</strong> Already listed under Upgrades — promote to next major feature: Keep/Castle gate knights and tier-2 tech so the mid-game has a build ladder to climb between waves.</li>
+  <li><span class="status idea">idea</span> <strong>A hero.</strong> One named unit that leads whichever posture it joins (small aura bonus), falls to 1hp instead of dying, levels across the run. Cheap to build atop per-order pools; large attachment payoff, answers the hero-override open question.</li>
+</ul>
+
+<div class="note"><strong>UI/UX review — where the current paradigm strains.</strong> The command card (select a tile, act at the bottom) is a desktop RTS convention: it costs eye travel and two taps for the game's most frequent action, moving units between postures. The vertical zone stack is a list wearing a map costume — meaningful space, but empty of things to look at. And the game never shows the player the race they're in (income rate, army power, threat size), so posture decisions are vibes, not reads.</div>
+
+<ul>
+  <li><span class="status idea">idea</span> <strong>Drag between pools.</strong> Direct manipulation for the core verb: drag an army tile from Defend onto Patrol to move one unit (hold-drag = all). Command card stays for build/train/tech. Removes the select→scan→tap loop; the zones already put source and target on one screen.</li>
+  <li><span class="status idea">idea</span> <strong>Theater map.</strong> Evolve the zone bands into a stylized territory view: sites positioned within their band, posture tokens standing where they operate, raids visibly walking the road home. Same full-rebuild DOM approach — positioned tiles instead of rows.</li>
+  <li><span class="status idea">idea</span> <strong>Surface the race.</strong> A one-line stat strip: gold/lumber per minute, army power per posture, and (with a patrol out) the sighted wave's size. Turns posture math from guesswork into a read.</li>
+  <li><span class="status idea">idea</span> <strong>Advisor line.</strong> One contextual hint slot ("Supply capped — build a farm", "No patrol — the next wave arrives unseen"). Doubles as onboarding; cheaper than a tutorial.</li>
+  <li><span class="status idea">idea</span> <strong>Event ticker.</strong> Battle and economy events narrate into the buried menu log; float the latest one briefly under the top bar. (Toast stays errors-only, per convention.)</li>
+</ul>
 
 <h2>UI Conventions Established So Far</h2>
 <p>Patterns already built — extend these rather than inventing new ones:</p>
