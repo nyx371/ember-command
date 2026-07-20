@@ -61,8 +61,15 @@ grunt: {hp, dmg}, hpPool, arriveIn, strikeIn, targetType, targetHp }`).
 each raider killed pays its `bounty` in plunder gold. `spawnRaid` on the raid
 interval (`game.raid.interval` feeds the countdown ring on the enemy tile);
 `raidTick` runs the two sides on offset cadences — my side volleys every
-`DEFENSE_VOLLEY_EVERY` (2) ticks (patrol only during the approach),
-raiders every `RAID_VOLLEY_EVERY` (3) once arrived. Waves spawn silently and
+`DEFENSE_VOLLEY_EVERY` (2) ticks, raiders every `RAID_VOLLEY_EVERY` (3) once
+arrived. Combat is staged by zone (`raid.atBase`): a raid approaches through
+the near zone (patrol fires at it the whole way), then on arrival fights the
+patrol there — two-way, patrol only, no defenders or towers — and only once
+the patrol is wiped (or was never there) does it break through to the base
+zone, where defenders + towers engage it. The breakthrough is sticky: a
+patrol re-formed afterwards is bypassed. `defenseDamage(state, raid)` is
+stage-aware (near: patrol pool; base: defend pool + towers), and my volley
+splits across parties in the same stage. Waves spawn silently and
 undiscovered; a standing patrol spots them instantly at spawn (and any patrol
 raised mid-approach picks them up next tick) — otherwise the raid appears
 only on arrival. Army tiles show the dominant unit type as the primary
@@ -74,8 +81,9 @@ pool → defend pool → towers (`RAID_TOWER_TARGETS`) → workers → remaining
 buildings per `RAID_TARGET_ORDER` (hall last). Explore/attack pools are away
 from the base: they neither fight raids nor get targeted. Wounds pools:
 `army[order].wounds`, `game.workerWounds`. Alarms via `flashError`
-('Enemies approach our base!' on spawn, 'Our town is under attack!' on
-arrival, 'Our town is being razed!' once warriors are gone). Cheat buttons
+('Patrol spotted enemies approaching!' on discovery, 'Our patrol engages the
+raiders!' on arrival with a patrol standing, 'Our town is under attack!' on
+breakthrough, 'Our town is being razed!' once warriors are gone). Cheat buttons
 can force a raid and spawn footmen.
 
 ### Timed jobs (one system)

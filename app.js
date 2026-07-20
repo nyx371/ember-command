@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.19';
-const VERSION_TAG = 'scroll over icons, bigger zones, smaller order icons';
+const VERSION = '0.20';
+const VERSION_TAG = 'raids fight the patrol in the near zone, break through to base';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -729,18 +729,17 @@ function moveAllUnits(state, from, to, type) {
 // raiders nor get targeted.
 
 // Damage my side deals per volley. Only defend and patrol pools fight raids —
-// scouts and the attack force are away from the base. During a raid's approach
-// only patrol intercepts; once it arrives, defend + patrol + towers all fight.
+// scouts and the attack force are away from the base. A raid fights the patrol
+// at the perimeter (near zone); only once it breaks through to the base do
+// defenders and towers open fire.
 function poolDamage(state, pool) {
   return Object.keys(ARMY).reduce((sum, k) => sum + pool[k] * unitDmg(state, k), 0);
 }
 
-function defenseDamage(state, arrived) {
-  const armyDmg = poolDamage(state, state.army.patrol) + (arrived ? poolDamage(state, state.army.defend) : 0);
-  const towerDmg = arrived
-    ? Object.keys(BUILDINGS).reduce((sum, k) => sum + (BUILDINGS[k].dmg || 0) * state.structures[k], 0)
-    : 0;
-  return armyDmg + towerDmg;
+function defenseDamage(state, raid) {
+  if (!raid.atBase) return poolDamage(state, state.army.patrol);
+  return poolDamage(state, state.army.defend)
+    + Object.keys(BUILDINGS).reduce((sum, k) => sum + (BUILDINGS[k].dmg || 0) * state.structures[k], 0);
 }
 
 // Damage flows into the pool's wounds; every full hp's worth kills one unit
@@ -814,7 +813,7 @@ function spawnRaid(state) {
     state.raids.push({
       id: nextId(), kind: key, icon: t.icon, label: t.label,
       size, grunt, hpPool: size * grunt.hp, discovered: false,
-      arriveIn: RAID_ARRIVE_TICKS,
+      arriveIn: RAID_ARRIVE_TICKS, atBase: false,
       myStrikeIn: DEFENSE_VOLLEY_EVERY, foeStrikeIn: RAID_VOLLEY_EVERY,
       targetType: null, targetHp: 0
     });
@@ -833,10 +832,9 @@ function spawnRaid(state) {
 
 function raidTick(state) {
   state.raids.forEach(raid => {
-    const arrived = raid.arriveIn <= 0;
-    if (!arrived) {
+    if (raid.arriveIn > 0) {
       // A standing patrol scouts the approach — without one, raiders appear
-      // out of nowhere when they arrive.
+      // out of nowhere when they reach the perimeter.
       if (!raid.discovered && unitsOnOrder(state, 'patrol') > 0) {
         raid.discovered = true;
         writeLog(state, `Patrol spotted ${raid.size} ${raid.label} approaching!`);
@@ -845,15 +843,28 @@ function raidTick(state) {
       raid.arriveIn -= 1;
       if (raid.arriveIn <= 0) {
         raid.discovered = true;
-        writeLog(state, `${raid.size} ${raid.label} attack the town!`);
-        flashError('Our town is under attack!');
+        if (unitsOnOrder(state, 'patrol') > 0) {
+          writeLog(state, `${raid.size} ${raid.label} clash with our patrol!`);
+          flashError('Our patrol engages the raiders!');
+        }
       }
     }
-    // My side volleys on its own cadence (patrol only while they approach).
+    // A raid is held at the perimeter as long as the patrol stands; only once
+    // the patrol is defeated (or was never there) does it advance on the town.
+    if (raid.arriveIn <= 0 && !raid.atBase && unitsOnOrder(state, 'patrol') === 0) {
+      raid.atBase = true;
+      writeLog(state, `${raid.size} ${raid.label} attack the town!`);
+      flashError('Our town is under attack!');
+    }
+    const arrived = raid.arriveIn <= 0;
+    // My side volleys on its own cadence: the patrol fires while the raid is
+    // out in the field, defenders + towers once it reaches the base. Damage
+    // splits across the parties fighting in the same place.
     raid.myStrikeIn -= 1;
     if (raid.myStrikeIn <= 0) {
       raid.myStrikeIn = DEFENSE_VOLLEY_EVERY;
-      const dealt = defenseDamage(state, arrived) / state.raids.length;
+      const peers = state.raids.filter(r => !!r.atBase === !!raid.atBase).length;
+      const dealt = defenseDamage(state, raid) / peers;
       if (dealt > 0) {
         flashTile(`enemy:raid:${raid.id}`, 'damage');
         raid.lastHitAt = performance.now();
@@ -874,9 +885,10 @@ function raidTick(state) {
       }
     }
 
-    // Raiders strike on a slower, offset cadence, and only once arrived:
-    // patrol first, then defenders; scouts and the attack force are away and
-    // untouchable. Out of warriors -> towers, workers, buildings.
+    // Raiders strike back on a slower, offset cadence, and only once arrived:
+    // the patrol while held at the perimeter, then defenders at the base;
+    // scouts and the attack force are away and untouchable. Out of warriors
+    // -> towers, workers, buildings.
     if (!arrived) {
       raid.foeStrikeIn = RAID_VOLLEY_EVERY;
       return;
@@ -885,9 +897,12 @@ function raidTick(state) {
     if (raid.foeStrikeIn > 0) return;
     raid.foeStrikeIn = RAID_VOLLEY_EVERY;
     const dmg = raid.size * raid.grunt.dmg;
+    if (!raid.atBase) {
+      damagePool(state, 'patrol', dmg);
+      return;
+    }
     const towersStanding = RAID_TOWER_TARGETS.some(k => state.structures[k] > 0);
-    if (unitsOnOrder(state, 'patrol') > 0) damagePool(state, 'patrol', dmg);
-    else if (unitsOnOrder(state, 'defend') > 0) damagePool(state, 'defend', dmg);
+    if (unitsOnOrder(state, 'defend') > 0) damagePool(state, 'defend', dmg);
     else {
       if (!raid.razing) {
         raid.razing = true;
@@ -1599,10 +1614,10 @@ function renderWorld() {
   const patrol = armySection('patrol', ['patrol'], 'patrol');
   const defend = armySection('defend', ['defend'], 'defend');
 
-  // Enemy raiders, bucketed by how close they are: a party spawns in the far
-  // field, crosses into the near field mid-approach, and lands in the base zone
-  // once it arrives. Each bucket is its own row so a column visibly moves down
-  // the map as it closes in.
+  // Enemy raiders share the near zone with the patrol — they approach through
+  // it, fight the patrol there, and only drop into the base zone once the
+  // patrol is defeated. Each zone has its own enemy row so a column visibly
+  // moves down the map when it breaks through.
   function enemyRow(zoneKey, raids) {
     const enemies = document.createElement('section');
     enemies.className = 'world-group enemies';
@@ -1623,15 +1638,14 @@ function renderWorld() {
   }
 
   const seen = game.raids.filter(raid => raid.discovered);
-  const raidZone = raid => raid.arriveIn <= 0 ? 'base'
-    : raid.arriveIn > RAID_ARRIVE_TICKS / 2 ? 'far' : 'near';
+  const raidZone = raid => raid.atBase ? 'base' : 'near';
 
   // Three zones, read top to bottom as distance from home:
-  //   far   — beyond the map's edge: where scouts and attack columns go, and
-  //           where a raid first appears (only if something spotted it).
-  //   near  — the approach: patrols stand here, and reveal raiders crossing it.
+  //   far   — beyond the map's edge: where scouts and attack columns go.
+  //   near  — the approach: patrols stand here, and raiders cross it and fight
+  //           the patrol here until it falls.
   //   base  — home: defenders, workers on their nodes, the buildings, and any
-  //           raid that has actually arrived.
+  //           raid that has broken through the patrol.
   // Every zone (and every row inside it) stays mounted when empty so tiles never
   // shift position as pools fill and drain; the whole stack scrolls as one.
   dom.world.append(
