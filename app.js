@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.07';
-const VERSION_TAG = 'tech upgrades, scouting finds, axethrowers, win/loss';
+const VERSION = '0.08';
+const VERSION_TAG = 'maxed upgrades hidden, scroll keeps its place';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -911,11 +911,11 @@ function techCommand(key) {
   const level = s => s.tech[key];
   const busy = s => pendingUpgrades(s, key) > 0;
   const { available, reason } = gated([
-    [s => level(s) < t.max, 'Fully upgraded'],
     [s => !busy(s), 'Already researching']
   ]);
   return {
     id: `tech-${key}`,
+    hidden: s => level(s) >= t.max,
     get icon() { return t.icons[Math.min(game.tech[key], t.max - 1)]; },
     label: `upgrade ${t.label}`,
     get cost() { return costIcons(t.costs[Math.min(game.tech[key], t.max - 1)]); },
@@ -1315,7 +1315,16 @@ function render() {
   validateSelection(game);
   dom.day.textContent = `DAY ${currentDay(game) + 1}`;
   renderResources();
+  // Full rebuild resets scrollLeft on the horizontal strips — capture and
+  // restore so the view keeps its place across repaints.
+  const scrollPos = {};
+  dom.world.querySelectorAll('[data-scroll]').forEach(el => {
+    scrollPos[el.dataset.scroll] = el.scrollLeft;
+  });
   renderWorld();
+  dom.world.querySelectorAll('[data-scroll]').forEach(el => {
+    if (scrollPos[el.dataset.scroll]) el.scrollLeft = scrollPos[el.dataset.scroll];
+  });
   renderOrders();
   renderLog();
 }
@@ -1379,6 +1388,7 @@ function renderWorld() {
   // Building tiles scroll horizontally instead of wrapping (like the nodes row).
   const structTiles = document.createElement('div');
   structTiles.className = 'tile-row';
+  structTiles.dataset.scroll = 'structures';
   structTiles.appendChild(entityButton({
     kind: 'structure', type: 'hall', id: 1, compact: true,
     icon: 'hall', label: 'town hall',
@@ -1401,6 +1411,7 @@ function renderWorld() {
   // idle-workers tile only appears when there's nothing left to harvest.
   const workers = document.createElement('section');
   workers.className = 'world-group workers';
+  workers.dataset.scroll = 'workers';
 
   const liveNodes = game.nodes.filter(n => n.discovered && n.remaining > 0);
 
@@ -1455,6 +1466,7 @@ function renderWorld() {
 
   const raidTiles = document.createElement('div');
   raidTiles.className = 'tile-row';
+  raidTiles.dataset.scroll = 'enemies';
   game.raids.forEach(raid => {
     raidTiles.appendChild(entityButton({
       kind: 'enemy', type: 'raid', id: raid.id, compact: true,
@@ -1515,7 +1527,9 @@ function renderOrders() {
   info.textContent = entityInfo(game);
   dom.orders.appendChild(info);
 
-  selectedCommands(game).forEach((command, index) => {
+  selectedCommands(game)
+    .filter(command => !(command.hidden && command.hidden(game)))
+    .forEach((command, index) => {
     const button = document.createElement('button');
     button.className = 'command';
     button.dataset.command = command.id;
