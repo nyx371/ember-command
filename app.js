@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.14';
-const VERSION_TAG = 'desynced volleys, transfer strip, instant scouting';
+const VERSION = '0.15';
+const VERSION_TAG = 'unit-first army tiles, blinking order badge';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -1216,7 +1216,8 @@ function selectEntity(kind, type, id) {
 const SELECTION_VALID = {
   structure: (s, sel) => sel.type === 'hall' || s.structures[sel.type] > 0,
   node: (s, sel) => { const n = nodeById(s, sel.id); return !!n && n.remaining > 0; },
-  army: (s, sel) => ORDERS.includes(sel.type) && unitsOnOrder(s, sel.type) > 0,
+  army: (s, sel) => ORDERS.includes(sel.type)
+    && (unitsOnOrder(s, sel.type) > 0 || s.jobs.some(j => j.kind === 'transfer' && j.to === sel.type)),
   workerGroup: () => true,
   enemy: () => true
 };
@@ -1243,7 +1244,7 @@ function makeIcon(src, label) {
 }
 
 const RADIAL_SIZE = 44;
-const RADIAL_R = 17;
+const RADIAL_R = 10;   // ~60% of the original 17 — subtler ring
 const RADIAL_HIGH_ALPHA = 0.95;
 const RADIAL_MIN_ALPHA = 0.45;
 const RADIAL_START_ANGLE = -Math.PI / 2; // 12 o'clock
@@ -1274,7 +1275,7 @@ function radialProgressCanvas(p, siblingCount = 1) {
 
     ctx.beginPath();
     ctx.arc(cx, cy, RADIAL_R, RADIAL_START_ANGLE, endAngle, false);
-    ctx.lineWidth = 8;
+    ctx.lineWidth = 5;
     ctx.lineCap = 'butt';
     ctx.strokeStyle = gradient;
     ctx.stroke();
@@ -1282,7 +1283,7 @@ function radialProgressCanvas(p, siblingCount = 1) {
     // Clear the head's footprint before filling it, so the translucent fill
     // replaces those pixels instead of blending on top of the gradient tail
     // already painted there — avoids the tip reading dimmer than the back.
-    const headR = 4;
+    const headR = 3;
     const hx = cx + RADIAL_R * Math.cos(endAngle);
     const hy = cy + RADIAL_R * Math.sin(endAngle);
     ctx.save();
@@ -1314,7 +1315,7 @@ function nodeProgressBars(state, node) {
     .map(w => Math.min(1, ((cd - w.cooldown) + tickFraction(step)) / cd));
 }
 
-function entityButton({ kind, type, id, icon, label, count, meta, danger, compact, jobIcon, progressBars, nodeId, countLabel, countIcon, hp, fade, dimmed }) {
+function entityButton({ kind, type, id, icon, label, count, meta, danger, compact, jobIcon, badgeBlink, progressBars, nodeId, countLabel, countIcon, hp, fade, dimmed }) {
   const button = document.createElement('button');
   const classes = ['entity'];
   if (danger)  classes.push('danger');
@@ -1343,7 +1344,7 @@ function entityButton({ kind, type, id, icon, label, count, meta, danger, compac
   const hasProgress = progressBars && progressBars.length > 0;
   if (jobIcon || hasProgress) {
     const badge = document.createElement('span');
-    badge.className = 'job-badge';
+    badge.className = badgeBlink ? 'job-badge badge-blink' : 'job-badge';
     if (nodeId) badge.dataset.nodeId = nodeId;
     if (jobIcon) badge.appendChild(makeIcon(ICONS[jobIcon], meta || jobIcon));
     if (hasProgress) {
@@ -1545,19 +1546,25 @@ function renderWorld() {
   const army = document.createElement('section');
   army.className = 'world-group army';
   ORDERS.forEach(order => {
-    const n = unitsOnOrder(game, order);
-    if (n === 0) return;   // empty order groups stay hidden
+    const pool = game.army[order];
+    const n = poolCount(pool);
+    const incoming = game.jobs.filter(j => j.kind === 'transfer' && j.to === order);
+    const inCount = incoming.reduce((sum, j) => sum + j.count, 0);
+    if (n === 0 && inCount === 0) return;   // empty order groups stay hidden
+    // Primary icon is the dominant unit type; the order shows as the corner
+    // badge, which blinks (with a march ring) while a column is inbound —
+    // tapping the tile then recalls the marchers to their previous order.
+    const domType = Object.keys(ARMY).reduce((best, k) =>
+      (pool[k] > (best ? pool[best] : 0)) ? k : best, null) || (incoming[0] && incoming[0].type) || 'footmen';
     army.appendChild(entityButton({
       kind: 'army', type: order, id: 1, compact: true,
-      icon: orderIcon(order), label: order,
-      countLabel: n, countIcon: 'footman',
-      hp: poolHp(game.army[order])
+      icon: ARMY[domType].icon, label: order,
+      jobIcon: orderIcon(order), badgeBlink: inCount > 0,
+      progressBars: incoming.length > 0 ? incoming.map(j => jobProgress(game, j)) : undefined,
+      countLabel: n + inCount,
+      hp: poolHp(pool)
     }));
   });
-
-  // Marching columns show under the unit tiles they belong to.
-  const transferQueue = renderJobQueue(['transfer']);
-  if (transferQueue) army.appendChild(transferQueue);
 
   // Enemies row: a slim horizontal bar filling toward the next attack, plus one
   // compact danger tile per raiding party (dimmed while still approaching).
@@ -1773,6 +1780,12 @@ dom.world.addEventListener('pointerup', event => {
   if (!tap || event.pointerId !== tap.id) return;
   if (Math.hypot(event.clientX - tap.x, event.clientY - tap.y) > 10) return;
   if (tap.button.dataset.kind === 'enemy') return;
+  // Tapping an order tile with an inbound march recalls the column to its
+  // previous order (the blinking badge is the affordance).
+  if (tap.button.dataset.kind === 'army') {
+    const marching = game.jobs.filter(j => j.kind === 'transfer' && j.to === tap.button.dataset.type);
+    marching.forEach(j => cancelJob(game, j.uid));
+  }
   selectEntity(tap.button.dataset.kind, tap.button.dataset.type, tap.button.dataset.id);
 }, { passive: true });
 dom.world.addEventListener('pointercancel', () => { worldTap = null; });

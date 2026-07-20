@@ -416,6 +416,12 @@ button { touch-action: manipulation; }
   margin: -30%;
   image-rendering: pixelated;
 }
+@keyframes badge-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+.job-badge.badge-blink { animation: badge-blink 0.8s ease-in-out infinite; }
+
 .radial-progress {
   position: absolute;
   top: 0; left: 0;
