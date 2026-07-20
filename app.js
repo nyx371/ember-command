@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.28';
-const VERSION_TAG = 'explore progress ring; marches are separate tiles with rings, no blink';
+const VERSION = '0.29';
+const VERSION_TAG = 'instant scout joins, reward in clear toast, fluid progress rings';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -758,6 +758,8 @@ function strikeHp(site) {
 // Ring on the scouts' wilderness tile: how far the accumulated explore points
 // have come from the last discovery milestone toward the next one (enemy
 // base, hidden node, or garrisoned site). Null once everything is found.
+// Interpolates within the tick — each tick adds one point per explorer — so
+// the 100ms animator can spin it fluidly, faster with more scouts.
 function exploreRing(state) {
   const all = [
     EXPLORE_THRESHOLD,
@@ -768,7 +770,8 @@ function exploreRing(state) {
   if (!ahead.length) return null;
   const next = Math.min(...ahead);
   const prev = Math.max(0, ...all.filter(t => t <= state.exploreProgress));
-  return (state.exploreProgress - prev) / (next - prev);
+  const p = state.exploreProgress + tickFraction(poolCount(state.army.explore));
+  return Math.min(1, (p - prev) / (next - prev));
 }
 
 function attackDamage(state) {
@@ -789,6 +792,14 @@ function startTransfer(state, from, to, type, count) {
   if (moved <= 0) return;
   pool[type] -= moved;
   if (poolCount(pool) === 0) pool.wounds = 0;
+  // Joining the scouts is instant — the unit just adds to the explorer pool
+  // and progress speeds up. (Coming back from explore still takes a march.)
+  if (to === 'explore') {
+    state.army.explore[type] += moved;
+    flashTile('army:explore:1', 'spawn');
+    writeLog(state, `${moved} ${moved === 1 ? ARMY[type].singular : ARMY[type].label} joined the scouts.`);
+    return;
+  }
   const marching = state.jobs.find(j => j.kind === 'transfer' && j.from === from && j.to === to && j.type === type);
   if (marching) {
     marching.count += moved;   // join the column already under way
@@ -1061,7 +1072,7 @@ function damageStrike(state, site, dmg) {
 function conquerSite(state, site) {
   site.cleared = true;
   writeLog(state, `${cap(site.label)} cleared!`);
-  flashError(`${cap(site.label)} cleared!`);
+  flashError(`${cap(site.label)} cleared — ${site.rewardText}!`);
   const survivors = site.strike;
   site.strike = null;
   const back = site.returning || { wounds: 0 };
@@ -1645,7 +1656,7 @@ function hpBarEl(hp, extraClass) {
   return bar;
 }
 
-function entityButton({ kind, type, id, icon, label, count, meta, danger, compact, jobIcon, badgeBlink, progressBars, nodeId, countLabel, countIcon, hp, fade, dimmed }) {
+function entityButton({ kind, type, id, icon, label, count, meta, danger, compact, jobIcon, badgeBlink, progressBars, nodeId, jobUid, exploreBadge, countLabel, countIcon, hp, fade, dimmed }) {
   const button = document.createElement('button');
   const classes = ['entity'];
   if (danger)  classes.push('danger');
@@ -1676,6 +1687,8 @@ function entityButton({ kind, type, id, icon, label, count, meta, danger, compac
     const badge = document.createElement('span');
     badge.className = badgeBlink ? 'job-badge badge-blink' : 'job-badge';
     if (nodeId) badge.dataset.nodeId = nodeId;
+    if (jobUid) badge.dataset.jobUid = jobUid;
+    if (exploreBadge) badge.dataset.exploreRing = '1';
     if (jobIcon) badge.appendChild(makeIcon(ICONS[jobIcon], meta || jobIcon));
     if (hasProgress) {
       progressBars.forEach((p, i) => badge.appendChild(radialProgressCanvas(p, progressBars.length, i === 0)));
@@ -1888,7 +1901,7 @@ function renderWorld() {
     return entityButton({
       kind: 'march', type: job.to, id: job.uid, compact: true,
       icon: ARMY[job.type].icon, label: `${job.count} marching to ${job.to} — tap to recall`,
-      jobIcon: orderIcon(job.to),
+      jobIcon: orderIcon(job.to), jobUid: job.uid,
       progressBars: [jobProgress(game, job)],
       countLabel: job.count
     });
@@ -1962,32 +1975,28 @@ function renderWorld() {
   }
   // Scouts on Explore live here too: an empty stretch of wilderness they're
   // combing. The vision badge carries a progress ring — how close the
-  // accumulated explore points are to the next discovery. They storm
+  // accumulated explore points are to the next discovery (units sent to
+  // explore join instantly, so more scouts just spin it faster). They storm
   // garrisoned sites themselves on discovery, so this tile empties into a
-  // site tile when something turns up. Tapping it selects the explore pool
-  // as usual; columns marching to explore stand beside it as march tiles.
+  // site tile when something turns up. Tapping it selects the explore pool.
   const scoutPool = game.army.explore;
-  const scoutMarches = game.jobs.filter(j => j.kind === 'transfer' && j.to === 'explore');
   const scoutsOut = poolCount(scoutPool);
-  if (scoutsOut + scoutMarches.length > 0) {
-    const ring = scoutsOut > 0 ? exploreRing(game) : null;
+  if (scoutsOut > 0) {
+    const ring = exploreRing(game);
     const btn = entityButton({
       kind: 'army', type: 'explore', id: 1, compact: true,
       icon: 'siteTerrain', label: 'exploring',
-      jobIcon: 'explore',
+      jobIcon: 'explore', exploreBadge: true,
       progressBars: ring != null ? [ring] : undefined,
       hp: poolHp(scoutPool)
     });
     btn.classList.add('site-big');
-    if (scoutsOut > 0) {
-      const domType = Object.keys(ARMY).reduce((best, k) =>
-        (scoutPool[k] > (scoutPool[best] || 0) ? k : best), 'footmen');
-      const chip = siteChip(ARMY[domType].icon, scoutsOut);
-      chip.classList.add('mine');
-      btn.appendChild(chip);
-    }
+    const domType = Object.keys(ARMY).reduce((best, k) =>
+      (scoutPool[k] > (scoutPool[best] || 0) ? k : best), 'footmen');
+    const chip = siteChip(ARMY[domType].icon, scoutsOut);
+    chip.classList.add('mine');
+    btn.appendChild(chip);
     siteTiles.appendChild(btn);
-    scoutMarches.forEach(j => siteTiles.appendChild(marchTile(j)));
   }
   game.sites.forEach(site => {
     if (!site.discovered) return;
@@ -2197,15 +2206,16 @@ function renderLog() {
   });
 }
 
-// Smooth ring animation between ticks. Two uniform cases cover everything:
-// job chips (any kind) and node harvest badges — new jobs or nodes never need
-// changes here.
+// Smooth ring animation between ticks. Three uniform cases cover everything:
+// anything bound to a job uid (construction chips AND march-tile badges),
+// node harvest badges, and the scouts' explore ring — new jobs, nodes, or
+// tiles that reuse these data attributes never need changes here.
 function updateProgressRings() {
-  document.querySelectorAll('.construction-chip[data-job-uid]').forEach(chip => {
-    const job = game.jobs.find(j => j.uid === Number(chip.dataset.jobUid));
+  document.querySelectorAll('.construction-chip[data-job-uid], .job-badge[data-job-uid]').forEach(el => {
+    const job = game.jobs.find(j => j.uid === Number(el.dataset.jobUid));
     if (!job) return;
-    chip.querySelectorAll('.radial-progress').forEach(el => el.remove());
-    chip.appendChild(radialProgressCanvas(jobProgress(game, job)));
+    el.querySelectorAll('.radial-progress').forEach(c => c.remove());
+    el.appendChild(radialProgressCanvas(jobProgress(game, job)));
   });
 
   document.querySelectorAll('.job-badge[data-node-id]').forEach(badge => {
@@ -2213,6 +2223,12 @@ function updateProgressRings() {
     const values = node ? nodeProgressBars(game, node) : [];
     badge.querySelectorAll('.radial-progress').forEach(el => el.remove());
     values.forEach((p, i) => badge.appendChild(radialProgressCanvas(p, values.length, i === 0)));
+  });
+
+  document.querySelectorAll('.job-badge[data-explore-ring]').forEach(badge => {
+    const p = exploreRing(game);
+    badge.querySelectorAll('.radial-progress').forEach(el => el.remove());
+    if (p != null) badge.appendChild(radialProgressCanvas(p));
   });
 }
 

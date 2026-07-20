@@ -124,7 +124,8 @@ while marching/returning), red garrison hp bar plus a green strike bar.
   march (`transferTicks` = base + remoteness of both ends). Units leave the
   source pool at start, are delivered by `advanceJobs` (no `complete`), count
   toward supply while marching, and cancelling recalls them to `from`.
-  Same-route moves merge into the marching column.
+  Same-route moves merge into the marching column. Moves TO 'explore'
+  skip the job entirely — units join the explore pool instantly.
 
 One `advanceJobs`, one `cancelJob` (refund + builder release), one
 `jobProgress`, one `jobChip`/`renderJobQueue`. Don't add parallel job arrays.
@@ -168,9 +169,10 @@ Pass `hp: { segments, partial, total }` (from `poolHp`/`raidHp`) to
 
 ### Progress rings
 `radialProgressCanvas(p, siblings)` draws one ring. The 100ms animator has
-exactly two branches: `.construction-chip[data-job-uid]` and
-`.job-badge[data-node-id]`. Anything rendered through `jobChip` or a node
-badge animates for free — never add a third lookup scheme.
+exactly three branches: anything carrying `data-job-uid` (construction chips
+and march-tile badges), `.job-badge[data-node-id]`, and the scouts'
+`.job-badge[data-explore-ring]`. Reuse these data attributes — never add a
+fourth lookup scheme.
 
 ### Tech, discovery, endgame
 `TECH` (lumber/weapons/armor: source building, per-tier icons/costs/times)
