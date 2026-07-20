@@ -494,6 +494,8 @@ button { touch-action: manipulation; }
   margin-right: 3px;
   line-height: 1;
 }
+.cost-amt.cost-short { color: var(--muted); }
+.cost-icon.cost-short { opacity: 0.55; filter: grayscale(0.6); }
 
 .command {
   position: relative;

@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.11';
-const VERSION_TAG = 'start with 400g and a farm';
+const VERSION = '0.12';
+const VERSION_TAG = 'unaffordable costs grey out';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -1593,14 +1593,17 @@ function renderOrders() {
       const costEl = document.createElement('span');
       costEl.className = 'command-cost-icons';
       command.cost.forEach(({ icon, n }) => {
+        // Grey out the pieces of the cost you can't currently cover.
+        const short = (RESOURCE_KEYS.includes(icon) && game.resources[icon] < n)
+                   || (icon === 'supply' && !supplyFree(game));
         const img = document.createElement('img');
-        img.className = 'cost-icon';
+        img.className = short ? 'cost-icon cost-short' : 'cost-icon';
         img.src = `${ICONS[icon]}?v=${ICON_VERSION}`;
         img.alt = icon;
         img.draggable = false;
         costEl.appendChild(img);
         const amt = document.createElement('span');
-        amt.className = 'cost-amt';
+        amt.className = short ? 'cost-amt cost-short' : 'cost-amt';
         amt.textContent = n;
         costEl.appendChild(amt);
       });
