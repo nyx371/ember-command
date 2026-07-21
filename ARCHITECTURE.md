@@ -169,9 +169,12 @@ idle → most plentiful node's crew. Harvest cycle =
 
 ### Selection
 `game.selected = { kind, type, id }`, kinds `structure | workerGroup | node |
-army | enemy`. `validateSelection` (top of `render()`) resets anything that no
-longer renders to the town hall — keep `SELECTION_VALID` in sync when adding a
-kind. `selected.id` is compared with `String()` (node ids are strings).
+army | enemy | site` (`march` tiles cancel on tap, never select). A stale
+selection is left alone: `selectionValid` gates `selectedCommands`/
+`entityInfo`, so a gone target just shows an empty command card — nothing
+auto-selects, including finished buildings. Keep `SELECTION_VALID` in sync
+when adding a kind. `selected.id` is compared with `String()` (node ids are
+strings).
 
 ### Tile feedback (flashes + hp bars)
 `flashTile(key, 'damage'|'spawn')` registers a transient flash for a tile key

@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.33';
-const VERSION_TAG = 'keep upgrade, per-building research slots, combined hp bars, scouts never idle';
+const VERSION = '0.34';
+const VERSION_TAG = 'no auto-select, enemies above patrol, staggered raid volleys, new keep art';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -145,8 +145,7 @@ const BUILDINGS = {
   barracks: {
     icon: 'barracks', label: 'barracks', hp: 800,
     build: { cost: { gold: 700, lumber: 450 }, time: 200 },
-    blurb: s => `Barracks · ${productionMeta(s, 'barracks') || 'ready'}`,
-    onBuilt: s => { s.selected = { kind: 'structure', type: 'barracks', id: 1 }; }
+    blurb: s => `Barracks · ${productionMeta(s, 'barracks') || 'ready'}`
   },
   lumbermill: {
     icon: 'lumbermill', label: 'lumber mill', hp: 600,
@@ -259,7 +258,7 @@ const ICONS = {
   ballistaUp1: 'assets/icons/c_upgrade_ballista.png',
   ballistaUp2: 'assets/icons/c_upgrade_catapult2.png',
   cannontower: 'assets/icons/h_bld_cannontower.png',
-  keep: 'assets/icons/h_bld_keep.png',
+  keep: 'assets/icons/h_bld_castle2.png',
   axe2: 'assets/icons/c_axe2.png',
   axe3: 'assets/icons/c_axe3.png',
   sword2: 'assets/icons/c_sword2.png',
@@ -998,20 +997,25 @@ function spawnRaid(state) {
   const wave = state.raid.wave;
   state.raid.wave += 1;
   let total = 0;
+  let party = 0;
   Object.keys(RAIDER_TYPES).forEach(key => {
     const t = RAIDER_TYPES[key];
     if (wave < t.fromWave) return;
     const size = t.baseSize + (wave - t.fromWave) * t.sizePerWave;
     if (size <= 0) return;
     const grunt = { hp: t.hp + wave * t.hpPerWave, dmg: t.dmg + wave * t.dmgPerWave };
+    // Each party's first strike is offset by its index, so simultaneous
+    // parties volley on staggered ticks rather than all at once.
+    const foeDelay = RAID_VOLLEY_EVERY + party;
     state.raids.push({
       id: nextId(), kind: key, icon: t.icon, label: t.label,
       size, grunt, hpPool: size * grunt.hp, discovered: false,
       arriveIn: RAID_ARRIVE_TICKS, atBase: false,
-      myStrikeIn: DEFENSE_VOLLEY_EVERY, foeStrikeIn: RAID_VOLLEY_EVERY,
+      myStrikeIn: DEFENSE_VOLLEY_EVERY, foeStrikeIn: foeDelay, foeDelay,
       targetType: null
     });
     total += size;
+    party += 1;
   });
   // A standing patrol spots the wave the moment it sets out; otherwise it
   // approaches unseen until a patrol picks it up (or it arrives).
@@ -1085,7 +1089,9 @@ function raidTick(state) {
     // scouts and the attack force are away and untouchable. Out of warriors
     // -> towers, workers, buildings.
     if (!arrived) {
-      raid.foeStrikeIn = RAID_VOLLEY_EVERY;
+      // Hold each party at its own staggered phase until it arrives, so the
+      // first volleys land on different ticks.
+      raid.foeStrikeIn = raid.foeDelay || RAID_VOLLEY_EVERY;
       return;
     }
     raid.foeStrikeIn -= 1;
@@ -1602,6 +1608,7 @@ function selectedCommands(state) {
   // Build menu is modal over whatever is selected; the builder is chosen at
   // dispatch time by builderWorker (idle first, then richest node's crew).
   if (state.buildMenu) return buildMenuCommands();
+  if (!selectionValid(state)) return [];   // stale selection -> empty card
   if (state.selected.kind === 'structure') return COMMANDS.structure[state.selected.type] || [];
   if (state.selected.kind === 'workerGroup') return COMMANDS.workerGroup;
   if (state.selected.kind === 'node') {
@@ -1703,9 +1710,9 @@ function selectEntity(kind, type, id) {
   render();
 }
 
-// Selection must always point at something that still renders; anything that
-// disappeared (depleted node, structure consumed by an upgrade, emptied army
-// group) falls back to the town hall.
+// Selection is left alone even when its target disappears (depleted node,
+// structure consumed by an upgrade, emptied army group) — a stale selection
+// simply shows an empty command bar until the player taps something else.
 const SELECTION_VALID = {
   structure: (s, sel) => sel.type === 'hall' || s.structures[sel.type] > 0,
   node: (s, sel) => { const n = nodeById(s, sel.id); return !!n && n.remaining > 0; },
@@ -1720,11 +1727,9 @@ const SELECTION_VALID = {
   }
 };
 
-function validateSelection(state) {
+function selectionValid(state) {
   const valid = SELECTION_VALID[state.selected.kind];
-  if (!valid || !valid(state, state.selected)) {
-    state.selected = { kind: 'structure', type: 'hall', id: 1 };
-  }
+  return !!valid && valid(state, state.selected);
 }
 
 // ── Render helpers ─────────────────────────────────────────────────────────
@@ -1919,7 +1924,6 @@ function orderIcon(order) {
 
 function render() {
   renderGameOver();
-  validateSelection(game);
   dom.day.textContent = `DAY ${currentDay(game) + 1}`;
   const visibleRaids = game.raids.some(r => r.discovered);
   dom.raidclock.textContent = visibleRaids ? 'RAID!' : '';
@@ -2228,7 +2232,7 @@ function renderWorld() {
   // shift position as pools fill and drain; the whole stack scrolls as one.
   dom.world.append(
     zone('far', [away, sitesRow, enemyRow('far', seen.filter(r => raidZone(r) === 'far'))]),
-    zone('near', [patrol, enemyRow('near', seen.filter(r => raidZone(r) === 'near'))]),
+    zone('near', [enemyRow('near', seen.filter(r => raidZone(r) === 'near')), patrol]),
     zone('base', [enemyRow('base', seen.filter(r => raidZone(r) === 'base')), defend, workers, structures])
   );
 }
@@ -2252,6 +2256,7 @@ function productionMeta(state, producer) {
 function entityInfo(state) {
   const { kind, type } = state.selected;
   if (state.buildMenu) return 'Choose a building';
+  if (!selectionValid(state)) return '';
   if (kind === 'structure') {
     const b = BUILDINGS[type];
     if (!b) return type;
