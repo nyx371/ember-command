@@ -413,7 +413,7 @@ button { touch-action: manipulation; }
   50% { transform: translateX(1px); }
   75% { transform: translateX(-1px); }
 }
-.entity.flash-attack { animation: tile-shake 0.35s ease-in-out; animation-delay: var(--flash-delay, 0ms); }
+.entity.flash-attack { animation: tile-shake 0.35s ease-in-out; animation-delay: var(--shake-delay, 0ms); }
 
 /* Segmented hp bar along a tile's bottom edge: one segment per unit, drained
    left-to-right; collapses to one continuous bar for hordes (>20). */
@@ -439,7 +439,7 @@ button { touch-action: manipulation; }
   height: 100%;
   background: #7cbf6a;
 }
-.entity.danger .hp-seg i { background: var(--danger); }
+.entity.danger .hp-seg i { background: #e0503a; }
 /* The strike force's own bar on a site tile — green, sitting just above the
    garrison's red one. */
 .entity.danger .hp-bar.mine { bottom: 6px; }
@@ -508,11 +508,16 @@ button { touch-action: manipulation; }
   position: absolute;
   top: 2px;
   right: 2px;
-  width: 18px;
-  height: 18px;
+  width: 36px;
+  height: 36px;
   margin: 0;
   image-rendering: pixelated;
 }
+/* The exploring tile's vision badge sits bottom-right instead (same size as
+   order icons), its ring following it down. */
+.entity.site-big .job-badge { top: auto; bottom: 0; }
+.entity.site-big .job-badge .icon { top: auto; bottom: 2px; }
+.entity.site-big .job-badge .radial-progress { top: auto; bottom: -3px; }
 @keyframes badge-blink {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.3; }

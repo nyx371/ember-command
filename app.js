@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.30';
-const VERSION_TAG = 'repairable building damage, staggered attack flashes, start at base';
+const VERSION = '0.31';
+const VERSION_TAG = 'kill-attackers cheat, parallel shake+flash, bigger order icons';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -225,6 +225,7 @@ const ICONS = {
   siteTerrain: 'assets/icons/n_site_terrain.png',
   vision: 'assets/icons/c_cast_vision.png',
   repair: 'assets/icons/c_repair.png',
+  deathcoil: 'assets/icons/c_cast_deathcoil.png',
   axe2: 'assets/icons/c_axe2.png',
   axe3: 'assets/icons/c_axe3.png',
   sword2: 'assets/icons/c_sword2.png',
@@ -1196,7 +1197,10 @@ function siteTick(state) {
     if (site.foeStrikeIn > 0) return;
     site.foeStrikeIn = RAID_VOLLEY_EVERY;
     const dmg = site.guardsLeft * site.guards.dmg + site.towersLeft * SITE_TOWER.dmg;
-    if (dmg > 0) damageStrike(state, site, dmg);
+    if (dmg > 0) {
+      flashTile(`site:${site.key}:1`, 'attack');
+      damageStrike(state, site, dmg);
+    }
   });
 }
 
@@ -1531,31 +1535,36 @@ function commandFaded(state, command) {
 
 // Transient tile flashes (red = taking damage, white = spawn/assignment,
 // attack = a subtle shake on the attacker). Keyed by tile identity so they
-// survive the full-rebuild render; entityButton applies the class while the
-// entry is fresh, then it expires. One entry per tile — a damage flash
-// registered after a shake simply wins, which is the right priority.
+// survive the full-rebuild render; entityButton applies the classes while the
+// entries are fresh, then they expire. Two independent channels per tile —
+// the overlay flash (damage/spawn, an ::after animation) and the attack shake
+// (a transform animation) — so a tile can shake from its own volley while
+// flashing red from the one it just took, in parallel.
 const FLASH_MS = 600;
 const tileFlashes = new Map();
 
 function flashTile(key, kind) {
-  // A fresh damage flash outranks an attack shake on the same tile — getting
-  // hit must always read, shaking is garnish.
-  const current = tileFlashes.get(key);
-  if (kind === 'attack' && current && current.kind === 'damage' && current.until > performance.now()) return;
   // Combat flashes get a per-tile 50–100ms stagger (via CSS animation-delay)
   // so simultaneous volleys don't all strike in the same frame.
   const delay = kind === 'spawn' ? 0 : 50 + Math.round(Math.random() * 50);
-  tileFlashes.set(key, { kind, delay, until: performance.now() + FLASH_MS + delay });
+  const entry = tileFlashes.get(key) || {};
+  entry[kind === 'attack' ? 'attack' : 'overlay'] =
+    { kind, delay, until: performance.now() + FLASH_MS + delay };
+  tileFlashes.set(key, entry);
 }
 
 function tileFlash(key) {
-  const f = tileFlashes.get(key);
-  if (!f) return null;
-  if (f.until <= performance.now()) {
+  const entry = tileFlashes.get(key);
+  if (!entry) return null;
+  const now = performance.now();
+  ['overlay', 'attack'].forEach(ch => {
+    if (entry[ch] && entry[ch].until <= now) delete entry[ch];
+  });
+  if (!entry.overlay && !entry.attack) {
     tileFlashes.delete(key);
     return null;
   }
-  return { cls: { damage: 'flash-damage', spawn: 'flash-spawn', attack: 'flash-attack' }[f.kind], delay: f.delay };
+  return entry;
 }
 
 let errorTimer = null;
@@ -1711,16 +1720,24 @@ function hpBarEl(hp, extraClass) {
   return bar;
 }
 
-function entityButton({ kind, type, id, icon, label, count, meta, danger, compact, jobIcon, badgeBlink, progressBars, nodeId, jobUid, exploreBadge, countLabel, countIcon, hp, fade, dimmed }) {
+function entityButton({ kind, type, id, icon, label, count, meta, danger, compact, jobIcon, badgeBlink, progressBars, nodeId, jobUid, exploreBadge, countLabel, countIcon, hp, dimmed }) {
   const button = document.createElement('button');
   const classes = ['entity'];
   if (danger)  classes.push('danger');
   if (compact) classes.push('compact');
   if (dimmed)  classes.push('dimmed');
   const flash = tileFlash(`${kind}:${type}:${id}`);
-  if (flash) classes.push(flash.cls);
+  if (flash && flash.overlay) {
+    classes.push(flash.overlay.kind === 'damage' ? 'flash-damage' : 'flash-spawn');
+  }
+  if (flash && flash.attack) classes.push('flash-attack');
   button.className = classes.join(' ');
-  if (flash && flash.delay) button.style.setProperty('--flash-delay', `${flash.delay}ms`);
+  if (flash && flash.overlay && flash.overlay.delay) {
+    button.style.setProperty('--flash-delay', `${flash.overlay.delay}ms`);
+  }
+  if (flash && flash.attack && flash.attack.delay) {
+    button.style.setProperty('--shake-delay', `${flash.attack.delay}ms`);
+  }
   if (game.selected.kind === kind && game.selected.type === type && String(game.selected.id) === String(id)) {
     button.classList.add('selected');
   }
@@ -1731,11 +1748,6 @@ function entityButton({ kind, type, id, icon, label, count, meta, danger, compac
   button.setAttribute('aria-label', label);
 
   const iconEl = makeIcon(ICONS[icon], label);
-  // Approaching enemies emerge from black — brightness ramps 0 → 1, keeping
-  // the sprite's own colors (no greyscale/tint).
-  if (typeof fade === 'number' && fade < 1) {
-    iconEl.style.filter = `brightness(${Math.max(0, Math.min(1, fade)).toFixed(2)})`;
-  }
   button.appendChild(iconEl);
 
   const hasProgress = progressBars && progressBars.length > 0;
@@ -2002,7 +2014,6 @@ function renderWorld() {
         kind: 'enemy', type: 'raid', id: raid.id, compact: true,
         icon: raid.icon, label: raid.label, danger: true,
         countLabel: raid.size,
-        fade: raid.arriveIn > 0 ? (RAID_ARRIVE_TICKS - raid.arriveIn) / RAID_ARRIVE_TICKS : 1,
         hp: raidHp(raid)
       }));
     });
@@ -2421,6 +2432,13 @@ document.getElementById('cheat-farm').addEventListener('click', () => {
   flashTile('structure:farm:1', 'spawn');
   render();
 });
+document.getElementById('cheat-kill').addEventListener('click', () => {
+  if (game.raids.length > 0) {
+    writeLog(game, 'All attackers struck down.');
+    game.raids = [];
+  }
+  render();
+});
 document.getElementById('cheat-scout').addEventListener('click', () => {
   // Everything scouting could ever find: enemy base, scoutable nodes, sites.
   // Site-locked rewards (discoverAt: Infinity) still need conquest.
@@ -2452,7 +2470,8 @@ document.getElementById('cheat-scout').addEventListener('click', () => {
 const CHEAT_ICONS = {
   'cheat-btn': 'gold', 'cheat-train': 'build', 'cheat-harvest': 'harvest',
   'cheat-raid': 'enemy', 'cheat-footman': 'footman',
-  'cheat-worker': 'worker', 'cheat-farm': 'farm', 'cheat-scout': 'vision'
+  'cheat-worker': 'worker', 'cheat-farm': 'farm', 'cheat-scout': 'vision',
+  'cheat-kill': 'deathcoil'
 };
 Object.keys(CHEAT_ICONS).forEach(id => {
   const btn = document.getElementById(id);
