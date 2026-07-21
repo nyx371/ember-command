@@ -37,10 +37,30 @@ button { touch-action: manipulation; }
   margin: 0 auto;
   padding: calc(env(safe-area-inset-top) + 8px) 8px calc(env(safe-area-inset-bottom) + 8px);
   display: grid;
-  grid-template-rows: 56px 1fr;
+  grid-template-rows: 56px 46px 1fr;
   gap: 8px;
   overflow: hidden;
 }
+
+/* Production queue strip: fixed height whether empty or full, scrolls
+   horizontally when chips overflow. */
+.queue-strip {
+  height: 46px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 5px 6px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x;
+  scrollbar-width: none;
+}
+.queue-strip::-webkit-scrollbar { display: none; }
+.queue-strip .construction-chip { flex: 0 0 auto; }
 
 .panel,
 .topbar {
@@ -680,7 +700,7 @@ button { touch-action: manipulation; }
   .zone-far { min-height: calc(var(--tile) * 6); }
   .zone-near { min-height: calc(var(--tile) * 3); }
   .zone-base { min-height: calc(var(--tile) * 5); }
-  .shell { grid-template-rows: 52px 1fr; gap: 6px; padding-left: 6px; padding-right: 6px; }
+  .shell { grid-template-rows: 52px 42px 1fr; gap: 6px; padding-left: 6px; padding-right: 6px; }
   .topbar { padding: 6px; }
   .world { grid-template-rows: 24px 1fr 108px; }
   .world-canvas { gap: 4px; padding: 4px; }

@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.31';
-const VERSION_TAG = 'kill-attackers cheat, parallel shake+flash, bigger order icons';
+const VERSION = '0.32';
+const VERSION_TAG = 'gentler waves, ballista + cannon tower, top queue strip, richer mine';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -23,7 +23,7 @@ const SUPPLY_BASE = 4;
 const EXPLORE_THRESHOLD = 90;   // explore-unit-ticks to find enemy base
 const ENEMY_REBUILD = 0.05;     // enemy strength rebuilt per tick
 const RAID_INTERVAL_BASE = 90;  // ticks between raids on day 0
-const RAID_INTERVAL_SCALE = 8;  // reduce interval by this per day
+const RAID_INTERVAL_SCALE = 5;  // reduce interval by this per day
 const RAID_INTERVAL_MIN = 25;
 const RAID_ARRIVE_TICKS = 10;   // approach window — patrol strikes and scouts it
 const DEFENSE_VOLLEY_EVERY = 2; // my side strikes every 2 ticks...
@@ -32,9 +32,11 @@ const RAID_VOLLEY_EVERY = 3;    // ...raiders every 3 — offset cadences, not l
 // arrived. Stats and headcount scale per WAVE (not per day) so the ramp is
 // deterministic — wave 1 is always a lone grunt — while the shrinking raid
 // interval still accelerates pressure in real time.
+// Wave scaling ramps gently: +1 raider and a little hp/dmg per wave, with
+// axethrowers only joining from wave 6.
 const RAIDER_TYPES = {
-  grunt:      { icon: 'enemy',      label: 'grunts',      hp: 60, dmg: 7, hpPerWave: 6, dmgPerWave: 1, baseSize: 1, sizePerWave: 2, fromWave: 0, bounty: 30 },
-  axethrower: { icon: 'axethrower', label: 'axethrowers', hp: 40, dmg: 9, hpPerWave: 4, dmgPerWave: 1, baseSize: 2, sizePerWave: 1, fromWave: 3, bounty: 40 }
+  grunt:      { icon: 'enemy',      label: 'grunts',      hp: 60, dmg: 7, hpPerWave: 4, dmgPerWave: 0.5, baseSize: 1, sizePerWave: 1, fromWave: 0, bounty: 30 },
+  axethrower: { icon: 'axethrower', label: 'axethrowers', hp: 40, dmg: 9, hpPerWave: 3, dmgPerWave: 0.5, baseSize: 1, sizePerWave: 1, fromWave: 5, bounty: 40 }
 };
 // Conquerable sites: how long the assault column marches each way (same as
 // marching to the far field) and the watch-tower stats their garrisons use.
@@ -55,18 +57,20 @@ const TRANSFER_BASE_TICKS = 2;
 const HP_BAR_LINGER_MS = 3000;  // keep a combat hp bar visible across volleys
 // Raider targeting: warriors first, then the towers shooting at them, then
 // workers, then the remaining buildings — the town hall falls last.
-const RAID_TOWER_TARGETS = ['guardtower', 'tower'];
+const RAID_TOWER_TARGETS = ['cannontower', 'guardtower', 'tower'];
 const RAID_TARGET_ORDER = ['farm', 'barracks', 'lumbermill', 'blacksmith', 'hall'];
 
 // discoverAt is explore-progress (explorer-ticks); 0 = known from the start.
 // Scouts keep exploring after finding the enemy base and reveal these in turn.
 const NODE_DEFS = [
-  { id: 'gold-1',   type: 'gold',   label: 'gold mine',   icon: 'goldSite',   distance: 1, capacity: 20000, discoverAt: 0 },
+  { id: 'gold-1',   type: 'gold',   label: 'gold mine',   icon: 'goldSite',   distance: 1, capacity: 48000, discoverAt: 0 },
   { id: 'forest-1', type: 'lumber', label: 'forest',      icon: 'lumberSite', distance: 1, capacity: 25000, discoverAt: 0 },
   { id: 'forest-2', type: 'lumber', label: 'far forest',  icon: 'lumberSite', distance: 5, capacity: 25000, discoverAt: 0 },
-  { id: 'gold-2',   type: 'gold',   label: 'hill mine',   icon: 'goldSite',   distance: 4, capacity: 25000, discoverAt: 160 },
-  { id: 'forest-3', type: 'lumber', label: 'deep woods',  icon: 'lumberSite', distance: 6, capacity: 30000, discoverAt: 280 },
-  { id: 'gold-3',   type: 'gold',   label: 'mountain mine', icon: 'goldSite', distance: 9, capacity: 40000, discoverAt: 450 },
+  // The hill mine is deliberately the FIRST thing exploration finds — the
+  // opening scout trip pays off with economy, not a fight.
+  { id: 'gold-2',   type: 'gold',   label: 'hill mine',   icon: 'goldSite',   distance: 4, capacity: 25000, discoverAt: 80 },
+  { id: 'forest-3', type: 'lumber', label: 'deep woods',  icon: 'lumberSite', distance: 6, capacity: 30000, discoverAt: 220 },
+  { id: 'gold-3',   type: 'gold',   label: 'mountain mine', icon: 'goldSite', distance: 9, capacity: 40000, discoverAt: 500 },
   // Unlocked by clearing the overrun-mine site, never by scouting alone.
   { id: 'gold-4',   type: 'gold',   label: 'rich gold mine', icon: 'goldSite', distance: 3, capacity: 30000, discoverAt: Infinity }
 ];
@@ -78,15 +82,19 @@ const NODE_DEFS = [
 // { nodeId } reveals that NODE_DEFS entry (give it discoverAt: Infinity so
 // scouts can't find it first), { units } march home with the survivors.
 // All sites share the terrain art (siteTerrain); `rewardIcon` is the
-// contextual badge that tells the player what clearing it pays.
+// contextual badge that tells the player what clearing it pays. Garrisons
+// listed here are the base — they scale up with the raid-wave counter at the
+// moment of discovery (see discoverSite), so late finds are tougher, just
+// like attack waves. Thresholds sit AFTER the hill mine (80): exploration's
+// first find is always economy, never a fight.
 const SITES = [
-  { key: 'camp',  icon: 'siteTerrain', rewardIcon: 'gold', label: 'raider camp', discoverAt: 130,
+  { key: 'camp',  icon: 'siteTerrain', rewardIcon: 'gold', label: 'raider camp', discoverAt: 260,
     guards: { count: 3, hp: 60, dmg: 7 }, towers: 1,
     reward: { cache: { gold: 700, lumber: 500 } }, rewardText: 'war chest 700g 500w' },
-  { key: 'mine',  icon: 'siteTerrain', rewardIcon: 'goldSite', label: 'overrun mine', discoverAt: 240,
+  { key: 'mine',  icon: 'siteTerrain', rewardIcon: 'goldSite', label: 'overrun mine', discoverAt: 400,
     guards: { count: 5, hp: 66, dmg: 8 }, towers: 1,
     reward: { nodeId: 'gold-4' }, rewardText: 'rich gold mine' },
-  { key: 'stockade', icon: 'siteTerrain', rewardIcon: 'footman', label: 'prison camp', discoverAt: 380,
+  { key: 'stockade', icon: 'siteTerrain', rewardIcon: 'footman', label: 'prison camp', discoverAt: 560,
     guards: { count: 6, hp: 72, dmg: 9 }, towers: 2,
     reward: { units: { footmen: 3 } }, rewardText: '3 captive footmen' }
 ];
@@ -102,11 +110,15 @@ const TECH = {
              costs: [{ gold: 800 }, { gold: 2400 }], times: [200, 220] },
   armor:   { source: 'blacksmith', label: 'armor', max: 2,
              icons: ['shield2', 'shield3'],
-             costs: [{ gold: 300, lumber: 300 }, { gold: 900, lumber: 500 }], times: [200, 250] }
+             costs: [{ gold: 300, lumber: 300 }, { gold: 900, lumber: 500 }], times: [200, 250] },
+  ballista: { source: 'blacksmith', label: 'ballista engineering', max: 2,
+             icons: ['ballistaUp1', 'ballistaUp2'],
+             costs: [{ gold: 500, lumber: 250 }, { gold: 1500, lumber: 600 }], times: [250, 275] }
 };
 const LUMBER_YIELD_PER_LEVEL = 0.25;  // +25% lumber per cycle per tier
 const WEAPON_DMG_PER_LEVEL = 2;       // per unit, footmen and archers alike
 const ARMOR_HP_PER_LEVEL = 10;
+const BALLISTA_DMG_PER_LEVEL = 10;    // ballista engineering, ballistas only
 
 // ── Data tables ────────────────────────────────────────────────────────────
 // Adding a building or unit should normally mean touching ONLY these tables
@@ -154,6 +166,11 @@ const BUILDINGS = {
     icon: 'guardtower', label: 'guard tower',   // via tower upgrade, not the build menu
     hp: 130, dmg: 8,
     blurb: 'Guard Tower · base defense'
+  },
+  cannontower: {
+    icon: 'cannontower', label: 'cannon tower',   // via tower upgrade, needs blacksmith
+    hp: 160, dmg: 14,
+    blurb: 'Cannon Tower · heavy base defense'
   }
 };
 
@@ -178,6 +195,11 @@ const UNITS = {
     icon: 'archer', label: 'archer', producer: 'barracks', time: 70, cost: { gold: 500, lumber: 50 },
     requires: ['lumbermill'],
     done: s => { s.army.defend.archers += 1; flashTile('army:defend:1', 'spawn'); writeLog(s, 'Archer ready.'); }
+  },
+  ballista: {
+    icon: 'ballista', label: 'ballista', producer: 'barracks', time: 250, cost: { gold: 900, lumber: 300 },
+    requires: ['blacksmith'],
+    done: s => { s.army.defend.ballistas += 1; flashTile('army:defend:1', 'spawn'); writeLog(s, 'Ballista ready.'); }
   }
 };
 
@@ -185,8 +207,9 @@ const UNITS = {
 // first within a pool); `attack` is siege dps against the enemy base. Units
 // live in per-order pools on `game.army` (see ORDERS).
 const ARMY = {
-  footmen: { icon: 'footman', label: 'footmen', singular: 'footman', hp: 60, dmg: 7, attack: 0.10 },
-  archers: { icon: 'archer',  label: 'archers', singular: 'archer',  hp: 40, dmg: 5, attack: 0.06 }
+  footmen:   { icon: 'footman',  label: 'footmen',   singular: 'footman',  hp: 60,  dmg: 7,  attack: 0.10 },
+  archers:   { icon: 'archer',   label: 'archers',   singular: 'archer',   hp: 40,  dmg: 5,  attack: 0.06 },
+  ballistas: { icon: 'ballista', label: 'ballistas', singular: 'ballista', hp: 110, dmg: 25, attack: 0.50 }
 };
 
 // Standing orders an army unit can hold. Units live in one pool per order and
@@ -194,6 +217,7 @@ const ARMY = {
 const ORDERS = ['defend', 'patrol', 'explore', 'attack'];
 
 const GUARD_TOWER = { cost: { gold: 500, lumber: 150 }, time: 140 };
+const CANNON_TOWER = { cost: { gold: 1000, lumber: 300 }, time: 190 };
 
 const ICONS = {
   gold: 'assets/icons/r_gold.png',
@@ -226,6 +250,10 @@ const ICONS = {
   vision: 'assets/icons/c_cast_vision.png',
   repair: 'assets/icons/c_repair.png',
   deathcoil: 'assets/icons/c_cast_deathcoil.png',
+  ballista: 'assets/icons/h_unit_ballista.png',
+  ballistaUp1: 'assets/icons/c_upgrade_ballista.png',
+  ballistaUp2: 'assets/icons/c_upgrade_catapult2.png',
+  cannontower: 'assets/icons/h_bld_cannontower.png',
   axe2: 'assets/icons/c_axe2.png',
   axe3: 'assets/icons/c_axe3.png',
   sword2: 'assets/icons/c_sword2.png',
@@ -256,7 +284,7 @@ function createGame() {
     buildMenu: false,
     workers: [],
     nodes: NODE_DEFS.map(d => ({ ...d, remaining: d.capacity, discovered: d.discoverAt === 0 })),
-    tech: { lumber: 0, weapons: 0, armor: 0 },
+    tech: Object.fromEntries(Object.keys(TECH).map(k => [k, 0])),
     over: null,   // { won, day } once the game ends
     // One pool per standing order; each holds counts per ARMY type plus a
     // shared wounds pool for raid damage.
@@ -302,6 +330,7 @@ function tickFraction(step) {
 
 const dom = {
   stores: document.querySelector('#stores'),
+  queue: document.querySelector('#queue'),
   world: document.querySelector('#world'),
   orders: document.querySelector('#orders'),
   log: document.querySelector('#log'),
@@ -672,7 +701,8 @@ function poolCount(pool) {
 
 // Tech-adjusted combat stats and harvest yield.
 function unitDmg(state, type) {
-  return ARMY[type].dmg + state.tech.weapons * WEAPON_DMG_PER_LEVEL;
+  return ARMY[type].dmg + state.tech.weapons * WEAPON_DMG_PER_LEVEL
+       + (type === 'ballistas' ? state.tech.ballista * BALLISTA_DMG_PER_LEVEL : 0);
 }
 
 function unitHp(state, type) {
@@ -1073,6 +1103,22 @@ function siteByKey(state, key) {
   return state.sites.find(s => s.key === key);
 }
 
+// Sites toughen the later they're found: at the moment of discovery the
+// garrison scales with the raid-wave counter, mirroring how attack waves
+// ramp (more guards, harder guards).
+function discoverSite(state, site) {
+  const wave = state.raid.wave;
+  site.guards = {
+    count: site.guards.count + Math.floor(wave / 2),
+    hp: site.guards.hp + wave * 4,
+    dmg: site.guards.dmg + wave * 0.5
+  };
+  site.guardsLeft = site.guards.count;
+  site.guardPool = site.guards.count * site.guards.hp;
+  site.discovered = true;
+  flashTile(`site:${site.key}:1`, 'spawn');
+}
+
 function strikeCount(col) {
   return col ? Object.keys(ARMY).reduce((n, k) => n + (col[k] || 0), 0) : 0;
 }
@@ -1244,8 +1290,7 @@ function gameTick() {
     });
     game.sites.forEach(site => {
       if (!site.discovered && game.exploreProgress >= site.discoverAt) {
-        site.discovered = true;
-        flashTile(`site:${site.key}:1`, 'spawn');
+        discoverSite(game, site);
         // The scouts that found a garrisoned site storm it on the spot: the
         // whole explore pool becomes the strike force (survivors march home
         // to defend after the fight, like any assault). Exploration pauses
@@ -1345,27 +1390,42 @@ function techCommand(key) {
   };
 }
 
-function guardTowerCommand() {
+// Both tower upgrades draw from the same pool of plain towers, so each
+// counts the other's in-flight upgrades when checking for a free one.
+function towersFree(s) {
+  return s.structures.tower > pendingUpgrades(s, 'guardtower') + pendingUpgrades(s, 'cannontower');
+}
+
+function towerUpgradeCommand(key, spec, requires, reqLabel) {
+  const b = BUILDINGS[key];
   const { available, reason } = gated([
-    [s => s.structures.lumbermill > 0, 'Need a lumber mill'],
-    [s => s.structures.tower > pendingUpgrades(s, 'guardtower'), 'No tower free to upgrade']
+    [s => s.structures[requires] > 0, reqLabel],
+    [towersFree, 'No tower free to upgrade']
   ]);
   return {
-    id: 'upgrade-guardtower', icon: 'guardtower', label: 'upgrade to guard tower',
-    cost: costIcons(GUARD_TOWER.cost),
+    id: `upgrade-${key}`, icon: key, label: `upgrade to ${b.label}`,
+    cost: costIcons(spec.cost),
     available, reason,
-    enabled: s => available(s) && canAfford(s, GUARD_TOWER.cost),
+    enabled: s => available(s) && canAfford(s, spec.cost),
     run: s => startUpgrade(s, {
-      tag: 'guardtower', icon: 'guardtower', label: 'guard tower',
-      time: GUARD_TOWER.time, cost: GUARD_TOWER.cost,
+      tag: key, icon: key, label: b.label,
+      time: spec.time, cost: spec.cost,
       complete: st => {
         st.structures.tower -= 1;
-        st.structures.guardtower += 1;
-        flashTile('structure:guardtower:1', 'spawn');
-        writeLog(st, 'Guard tower ready.');
+        st.structures[key] += 1;
+        flashTile(`structure:${key}:1`, 'spawn');
+        writeLog(st, `${cap(b.label)} ready.`);
       }
     })
   };
+}
+
+function guardTowerCommand() {
+  return towerUpgradeCommand('guardtower', GUARD_TOWER, 'lumbermill', 'Need a lumber mill');
+}
+
+function cannonTowerCommand() {
+  return towerUpgradeCommand('cannontower', CANNON_TOWER, 'blacksmith', 'Need a blacksmith');
 }
 
 // Commands for a selected order group: one button per (unit type present ×
@@ -1427,7 +1487,7 @@ const COMMANDS = {
       reason: () => 'No worker available',
       run: s => { s.buildMenu = true; }
     });
-    (byStructure.tower = byStructure.tower || []).push(guardTowerCommand());
+    (byStructure.tower = byStructure.tower || []).push(guardTowerCommand(), cannonTowerCommand());
     Object.keys(TECH).forEach(key => {
       const source = TECH[key].source;
       (byStructure[source] = byStructure[source] || []).push(techCommand(key));
@@ -1809,6 +1869,7 @@ function render() {
   dom.raidclock.textContent = visibleRaids ? 'RAID!' : '';
   dom.raidclock.classList.toggle('alert', visibleRaids);
   renderResources();
+  renderQueueStrip();
   // Full rebuild resets scroll on the horizontal strips and on the world canvas
   // itself (now vertically scrollable) — capture and restore so the view keeps
   // its place across repaints.
@@ -1870,13 +1931,15 @@ function jobChip(job) {
   return chip;
 }
 
-function renderJobQueue(kinds) {
-  const jobs = game.jobs.filter(j => kinds.includes(j.kind));
-  if (!jobs.length) return null;
-  const list = document.createElement('div');
-  list.className = 'construction-queue';
-  jobs.forEach(job => list.appendChild(jobChip(job)));
-  return list;
+// The production queue lives in its own fixed-height strip at the very top,
+// under the resource bar — it never grows or collapses, so the layout below
+// stays put whether the queue is empty or full.
+function renderQueueStrip() {
+  const scrollLeft = dom.queue.scrollLeft;
+  dom.queue.replaceChildren();
+  game.jobs.filter(j => ['train', 'construct', 'upgrade'].includes(j.kind))
+    .forEach(job => dom.queue.appendChild(jobChip(job)));
+  if (scrollLeft) dom.queue.scrollLeft = scrollLeft;
 }
 
 function renderWorld() {
@@ -1884,11 +1947,6 @@ function renderWorld() {
 
   const structures = document.createElement('section');
   structures.className = 'world-group structures';
-
-  // In-flight production chips render above the town hall, at the top of the
-  // row; marching columns live under the army tiles instead.
-  const jobQueue = renderJobQueue(['train', 'construct', 'upgrade']);
-  if (jobQueue) structures.appendChild(jobQueue);
 
   // Building tiles scroll horizontally instead of wrapping (like the nodes row).
   const structTiles = document.createElement('div');
@@ -2456,10 +2514,7 @@ document.getElementById('cheat-scout').addEventListener('click', () => {
     }
   });
   game.sites.forEach(s => {
-    if (!s.discovered) {
-      s.discovered = true;
-      flashTile(`site:${s.key}:1`, 'spawn');
-    }
+    if (!s.discovered) discoverSite(game, s);
   });
   writeLog(game, 'The map lies revealed.');
   render();

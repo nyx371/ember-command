@@ -39,7 +39,7 @@ timers: `gameTick` (1s, simulation + render) and `updateProgressRings`
 - `UNITS` — per trainable unit: `producer` (structure key), `cost`, `time`,
   optional `requires: [structureKey]`, `done(state)`. Generates train
   commands, auto-attached to their producer's command list.
-- `ARMY` — per unit type: `icon`, `label`, `singular`, `hp`/`dmg` (raid
+- `ARMY` — per unit type (footmen, archers, ballistas): `icon`, `label`, `singular`, `hp`/`dmg` (raid
   combat; first listed type soaks damage first within a pool), `attack`
   (siege dps vs the enemy base). Units live in per-order pools:
   `game.army[order] = { footmen, archers, wounds }` for each of `ORDERS`
@@ -61,7 +61,7 @@ every structure has a repair command, hidden unless damaged, that rides the
 construct-job machinery (`startRepair`, `REPAIR_HP_PER_TICK`, worker returns
 to its node).
 `RAIDER_TYPES` is the enemy roster — one party per active type per wave
-(grunts wave 1+, axethrowers wave 4+); stats and headcount scale per WAVE
+(grunts wave 1+, axethrowers wave 6+; the ramp is gentle — +1 raider and a little hp/dmg per wave); stats and headcount scale per WAVE
 (`game.raid.wave`), defense damage splits across simultaneous parties, and
 each raider killed pays its `bounty` in plunder gold. `spawnRaid` on the raid
 interval (`game.raid.interval` feeds the countdown ring on the enemy tile);
@@ -82,7 +82,7 @@ icon with the order as a corner badge; a column mid-march renders as its own
 tile beside the destination group (kind `march`, badge ring = march
 progress, no blinking) and tapping that tile recalls the column. The scouts'
 wilderness tile carries an `exploreRing` — progress from the last discovery
-milestone to the next. Production chips stay above the town hall. Wound
+milestone to the next. Production chips live in the fixed-height #queue strip under the resource bar (`renderQueueStrip`), never in the world. Wound
 regen: defenders only (`HEAL_DEFEND_PER_TICK`), paused while a raid is at
 the base; no other order heals. Workers mend very slowly
 (`WORKER_HEAL_PER_TICK` = 1), also paused while a raid is at the base. Raider targeting: patrol
@@ -100,7 +100,9 @@ can force a raid and spawn footmen.
 per `SITE_TOWER`); instances live on `game.sites` with garrison state and up
 to three of our columns each: `march` (heading out, `SITE_MARCH_TICKS`),
 `strike` (fighting there), `returning` (heading home). Exploration reveals
-them like distant nodes — and the scouts that find a garrisoned site storm
+them like distant nodes (thresholds sit after the hill mine's, so the first
+find is always economy), and `discoverSite` scales the garrison with the
+raid-wave counter at discovery — late finds are tougher — and the scouts that find a garrisoned site storm
 it on the spot: the whole explore pool becomes `site.strike` and scouting
 pauses until fresh scouts are sent (node finds don't interrupt). Scouts
 render as their own `.site-big` wilderness tile (vision badge, kind
@@ -196,7 +198,8 @@ overlay (hall destroyed = defeat, enemy base at 0 = victory; tap reloads).
   add the `ARMY` entry and have `done` increment `units.<key>.count`.
 - **New upgrade**: a command via `gated(...)` calling `startUpgrade` with a
   unique `tag`; block duplicates with `pendingUpgrades(s, tag)`. See
-  `guardTowerCommand`.
+  `towerUpgradeCommand` (guard/cannon tower share it via `towersFree`).
+  Upgrades never take a worker — only construction and repair do.
 - **New resource node**: entry in `NODE_DEFS`. Tiles, harvest, depletion,
   auto-assign all follow.
 - **New conquerable site**: entry in `SITES` (+`ICONS` if a new sprite);
