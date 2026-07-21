@@ -113,7 +113,9 @@ fight resolves. `siteTick` runs the fight on the raid
 cadences — our volley chews guards then towers; the garrison hits the strike
 pool (`damageStrike`) — and `conquerSite` applies the reward ({cache} pays
 out, {nodeId} reveals a `discoverAt: Infinity` node, {units} join the
-survivors) and sends everyone home to defend. Expedition units count toward
+survivors). Scout-originated strikes (`site.strikeFrom === 'explore'`)
+return survivors + freed units straight to the explore pool — they resume
+exploring instantly; commanded assaults march home to defend. Expedition units count toward
 supply (`siteUnits` in `supplyUsed`); a wiped strike leaves garrison damage
 standing. Renders in the far zone as one double-size tile (`.site-big`) of shared
 terrain art (`siteTerrain`) with a `rewardIcon` badge top-left,
@@ -127,7 +129,10 @@ while marching/returning), red garrison hp bar plus a green strike bar.
   building count; queue cap = `QUEUE_MAX ×` building count.
 - `kind: 'construct'` → `{ workerId, returnTo }` (builder released back to
   its node — or idle — on completion/cancel).
-- `kind: 'upgrade'` → `{ tag }` (used to block duplicate upgrades).
+- `kind: 'upgrade'` → `{ tag, source }`. `tag` blocks duplicates of one
+  track; `source` enforces one research at a time per source building
+  (`upgradeSlotFree` — more blacksmiths = more parallel slots). Never takes
+  a worker.
 - `kind: 'transfer'` → `{ from, to, type, count }` — a timed order-change
   march (`transferTicks` = base + remoteness of both ends). Units leave the
   source pool at start, are delivered by `advanceJobs` (no `complete`), count
@@ -171,9 +176,9 @@ kind. `selected.id` is compared with `String()` (node ids are strings).
 ### Tile feedback (flashes + hp bars)
 `flashTile(key, 'damage'|'spawn')` registers a transient flash for a tile key
 (`kind:type:id`); `entityButton` applies the class while fresh (`FLASH_MS`).
-Pass `hp: { segments, partial, total }` (from `poolHp`/`raidHp`) to
-`entityButton` for the segmented hp bar (green for own tiles, red under
-`.danger`).
+Pass `hp: { total }` (from `poolHp`/`raidHp`, which still compute
+segments/partial for callers) to `entityButton`; `hpBarEl` renders ONE
+combined bar per group (green for own tiles, red under `.danger`).
 
 ### Progress rings
 `radialProgressCanvas(p, siblings)` draws one ring. The 100ms animator has
@@ -187,7 +192,10 @@ fourth lookup scheme.
 generates `techCommand`s on their source structures; levels in `game.tech`
 are read by `harvestYield`/`unitDmg`/`unitHp`. Nodes with `discoverAt > 0`
 start hidden; exploration accumulates past the enemy-base find and reveals
-them. `game.over = { won, day }` freezes the sim and shows the #gameover
+them. Town Hall → Keep is `game.hallTier` (1 = keep): same structure key, so
+loss condition/targeting/training are untouched; `buildingMaxHp` adds the
+tier hp bonus and `supplyCap` the supply perk; tile icon/label swap.
+`game.over = { won, day }` freezes the sim and shows the #gameover
 overlay (hall destroyed = defeat, enemy base at 0 = victory; tap reloads).
 
 ## Recipes

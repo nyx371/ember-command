@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.32';
-const VERSION_TAG = 'gentler waves, ballista + cannon tower, top queue strip, richer mine';
+const VERSION = '0.33';
+const VERSION_TAG = 'keep upgrade, per-building research slots, combined hp bars, scouts never idle';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -23,6 +23,7 @@ const SUPPLY_BASE = 4;
 const EXPLORE_THRESHOLD = 90;   // explore-unit-ticks to find enemy base
 const ENEMY_REBUILD = 0.05;     // enemy strength rebuilt per tick
 const RAID_INTERVAL_BASE = 90;  // ticks between raids on day 0
+const RAID_FIRST_DELAY = 150;   // the very first wave holds off a while longer
 const RAID_INTERVAL_SCALE = 5;  // reduce interval by this per day
 const RAID_INTERVAL_MIN = 25;
 const RAID_ARRIVE_TICKS = 10;   // approach window — patrol strikes and scouts it
@@ -133,7 +134,7 @@ const BUILDINGS = {
   hall: {
     icon: 'hall', label: 'town hall',
     supply: 4, hp: 1200,
-    blurb: s => `Town Hall · ${productionMeta(s, 'hall') || 'ready'} · +${Math.round(incomePerTick(s, 'gold'))}g +${Math.round(incomePerTick(s, 'lumber'))}w /s`
+    blurb: s => `${s.hallTier > 0 ? 'Keep' : 'Town Hall'} · ${productionMeta(s, 'hall') || 'ready'} · +${Math.round(incomePerTick(s, 'gold'))}g +${Math.round(incomePerTick(s, 'lumber'))}w /s`
   },
   farm: {
     icon: 'farm', label: 'farm',
@@ -218,6 +219,10 @@ const ORDERS = ['defend', 'patrol', 'explore', 'attack'];
 
 const GUARD_TOWER = { cost: { gold: 500, lumber: 150 }, time: 140 };
 const CANNON_TOWER = { cost: { gold: 1000, lumber: 300 }, time: 190 };
+// Town Hall → Keep (hall tier 1): tougher hall, a little more supply. The
+// hall keeps its structure key — only game.hallTier changes — so the loss
+// condition, targeting, and worker training are untouched.
+const KEEP_UPGRADE = { cost: { gold: 2000, lumber: 1000 }, time: 200, hpBonus: 600, supply: 4 };
 
 const ICONS = {
   gold: 'assets/icons/r_gold.png',
@@ -254,6 +259,7 @@ const ICONS = {
   ballistaUp1: 'assets/icons/c_upgrade_ballista.png',
   ballistaUp2: 'assets/icons/c_upgrade_catapult2.png',
   cannontower: 'assets/icons/h_bld_cannontower.png',
+  keep: 'assets/icons/h_bld_keep.png',
   axe2: 'assets/icons/c_axe2.png',
   axe3: 'assets/icons/c_axe3.png',
   sword2: 'assets/icons/c_sword2.png',
@@ -292,6 +298,7 @@ function createGame() {
     army: Object.fromEntries(ORDERS.map(o =>
       [o, { ...Object.fromEntries(Object.keys(ARMY).map(k => [k, o === 'defend' && k === 'footmen' ? 1 : 0])), wounds: 0 }])),
     structures: Object.fromEntries(Object.keys(BUILDINGS).map(k => [k, (k === 'hall' || k === 'farm') ? 1 : 0])),
+    hallTier: 0,   // 0 = town hall, 1 = keep
     // Accumulated raid damage on the front instance of each building type —
     // persists after the raid dies, until repaired (or the building falls).
     structureDamage: Object.fromEntries(Object.keys(BUILDINGS).map(k => [k, 0])),
@@ -308,7 +315,7 @@ function createGame() {
       lastHitAt: 0, strikeHitAt: 0
     })),
     exploreProgress: 0,
-    raid: { nextIn: RAID_INTERVAL_BASE, interval: RAID_INTERVAL_BASE, wave: 0 },
+    raid: { nextIn: RAID_FIRST_DELAY, interval: RAID_INTERVAL_BASE, wave: 0 },
     raids: [],            // active raiding parties (see spawnRaid)
     workerWounds: 0,      // damage accumulated toward the next worker death
     log: ['Raiders are coming — one footman won\'t hold them forever.', 'Tap the town hall to build and train.', 'Welcome to Ember Command.'],
@@ -611,11 +618,18 @@ function startUpgrade(state, spec) {
   spend(state, spec.cost);
   const time = scaledTime(spec.time);
   state.jobs.push({
-    uid: nextId(), kind: 'upgrade', tag: spec.tag,
+    uid: nextId(), kind: 'upgrade', tag: spec.tag, source: spec.source,
     icon: spec.icon, label: spec.label, duration: time, remaining: time,
     cost: spec.cost, complete: spec.complete
   });
   writeLog(state, `${spec.label}: upgrading.`);
+}
+
+// One research at a time per source building — a second blacksmith (etc.)
+// unlocks a second parallel upgrade slot.
+function upgradeSlotFree(state, source) {
+  return state.jobs.filter(j => j.kind === 'upgrade' && j.source === source).length
+       < state.structures[source];
 }
 
 function cancelJob(state, uid) {
@@ -679,7 +693,14 @@ function supplyUsed(state) {
 
 function supplyCap(state) {
   return SUPPLY_BASE + Object.keys(BUILDINGS)
-    .reduce((sum, k) => sum + (BUILDINGS[k].supply || 0) * state.structures[k], 0);
+    .reduce((sum, k) => sum + (BUILDINGS[k].supply || 0) * state.structures[k], 0)
+    + state.hallTier * KEEP_UPGRADE.supply;
+}
+
+// The hall's max hp grows with its tier; every other building reads straight
+// from the table.
+function buildingMaxHp(state, key) {
+  return BUILDINGS[key].hp + (key === 'hall' ? state.hallTier * KEEP_UPGRADE.hpBonus : 0);
 }
 
 function supplyFree(state) {
@@ -767,7 +788,7 @@ function nodeHp(state, node) {
 function buildingHp(state, key) {
   const dmg = state.structureDamage[key];
   if (!dmg || dmg <= 0) return null;
-  const full = BUILDINGS[key].hp;
+  const full = buildingMaxHp(state, key);
   const segments = state.structures[key];
   if (segments <= 0) return null;
   return {
@@ -961,7 +982,7 @@ function damageBuildings(state, raid, dmg, order) {
   const key = raid.targetType;
   flashTile(`structure:${key}:1`, 'damage');
   state.structureDamage[key] += dmg;
-  if (state.structureDamage[key] >= BUILDINGS[key].hp) {
+  if (state.structureDamage[key] >= buildingMaxHp(state, key)) {
     state.structures[key] -= 1;
     state.structureDamage[key] = 0;
     writeLog(state, `${cap(BUILDINGS[key].label)} destroyed by raiders!`);
@@ -1162,10 +1183,6 @@ function conquerSite(state, site) {
   flashError(`${cap(site.label)} cleared — ${site.rewardText}!`);
   const survivors = site.strike;
   site.strike = null;
-  const back = site.returning || { wounds: 0 };
-  back.returnIn = SITE_MARCH_TICKS;
-  Object.keys(ARMY).forEach(k => { back[k] = (back[k] || 0) + (survivors[k] || 0); });
-  back.wounds = (back.wounds || 0) + (survivors.wounds || 0);
   const r = site.reward;
   if (r.cache) {
     refund(state, r.cache);
@@ -1179,10 +1196,26 @@ function conquerSite(state, site) {
       writeLog(state, `The ${node.label} is ours — send workers.`);
     }
   }
+  const freed = r.units || {};
   if (r.units) {
-    Object.keys(r.units).forEach(k => { back[k] = (back[k] || 0) + r.units[k]; });
-    writeLog(state, `${Object.values(r.units).reduce((a, b) => a + b, 0)} freed footmen join the march home.`);
+    writeLog(state, `${Object.values(r.units).reduce((a, b) => a + b, 0)} freed footmen join the survivors.`);
   }
+  // Scouts that stormed the place are already out here — they pocket the
+  // loot and go straight back to exploring, no march home, no cooldown.
+  // Commanded assaults from the defend pool march home as before.
+  if (site.strikeFrom === 'explore') {
+    Object.keys(ARMY).forEach(k => {
+      state.army.explore[k] += (survivors[k] || 0) + (freed[k] || 0);
+    });
+    state.army.explore.wounds += survivors.wounds || 0;
+    flashTile('army:explore:1', 'spawn');
+    writeLog(state, 'The scouts resume exploring.');
+    return;
+  }
+  const back = site.returning || { wounds: 0 };
+  back.returnIn = SITE_MARCH_TICKS;
+  Object.keys(ARMY).forEach(k => { back[k] = (back[k] || 0) + (survivors[k] || 0) + (freed[k] || 0); });
+  back.wounds = (back.wounds || 0) + (survivors.wounds || 0);
   site.returning = back;
 }
 
@@ -1194,6 +1227,7 @@ function siteTick(state) {
         const strike = site.strike || { wounds: 0 };
         Object.keys(ARMY).forEach(k => { strike[k] = (strike[k] || 0) + (site.march[k] || 0); });
         site.strike = strike;
+        site.strikeFrom = 'defend';   // commanded assaults march home afterwards
         site.march = null;
         writeLog(state, `Our warriors storm the ${site.label}!`);
       }
@@ -1303,6 +1337,7 @@ function gameTick() {
           strike.wounds = (strike.wounds || 0) + scouts.wounds;
           scouts.wounds = 0;
           site.strike = strike;
+          site.strikeFrom = 'explore';   // victors resume exploring on the spot
           writeLog(game, `Scouts found a ${site.label} — and storm it!`);
         } else {
           writeLog(game, `Scouts found a ${site.label} — ${site.guards.count} grunts and ${site.towers} watch tower${site.towers === 1 ? '' : 's'} guard it.`);
@@ -1365,7 +1400,8 @@ function techCommand(key) {
   const level = s => s.tech[key];
   const busy = s => pendingUpgrades(s, key) > 0;
   const { available, reason } = gated([
-    [s => !busy(s), 'Already researching']
+    [s => !busy(s), 'Already researching'],
+    [s => upgradeSlotFree(s, t.source), `${cap(BUILDINGS[t.source].label)} busy — build another`]
   ]);
   return {
     id: `tech-${key}`,
@@ -1378,7 +1414,7 @@ function techCommand(key) {
     run: s => {
       const tier = level(s);
       startUpgrade(s, {
-        tag: key, icon: t.icons[tier], label: `${t.label} ${tier + 1}`,
+        tag: key, source: t.source, icon: t.icons[tier], label: `${t.label} ${tier + 1}`,
         time: t.times[tier], cost: t.costs[tier],
         complete: st => {
           st.tech[key] += 1;
@@ -1408,7 +1444,7 @@ function towerUpgradeCommand(key, spec, requires, reqLabel) {
     available, reason,
     enabled: s => available(s) && canAfford(s, spec.cost),
     run: s => startUpgrade(s, {
-      tag: key, icon: key, label: b.label,
+      tag: key, source: 'tower', icon: key, label: b.label,
       time: spec.time, cost: spec.cost,
       complete: st => {
         st.structures.tower -= 1;
@@ -1422,6 +1458,29 @@ function towerUpgradeCommand(key, spec, requires, reqLabel) {
 
 function guardTowerCommand() {
   return towerUpgradeCommand('guardtower', GUARD_TOWER, 'lumbermill', 'Need a lumber mill');
+}
+
+function keepCommand() {
+  const { available, reason } = gated([
+    [s => s.structures.barracks > 0, 'Need a barracks'],
+    [s => upgradeSlotFree(s, 'hall'), 'The hall is already being upgraded']
+  ]);
+  return {
+    id: 'upgrade-keep', icon: 'keep', label: 'upgrade to keep',
+    cost: costIcons(KEEP_UPGRADE.cost),
+    hidden: s => s.hallTier > 0,
+    available, reason,
+    enabled: s => s.hallTier === 0 && available(s) && canAfford(s, KEEP_UPGRADE.cost),
+    run: s => startUpgrade(s, {
+      tag: 'keep', source: 'hall', icon: 'keep', label: 'keep',
+      time: KEEP_UPGRADE.time, cost: KEEP_UPGRADE.cost,
+      complete: st => {
+        st.hallTier = 1;
+        flashTile('structure:hall:1', 'spawn');
+        writeLog(st, 'The town hall now stands as a keep.');
+      }
+    })
+  };
 }
 
 function cannonTowerCommand() {
@@ -1486,7 +1545,7 @@ const COMMANDS = {
       enabled: s => builderWorker(s) != null,
       reason: () => 'No worker available',
       run: s => { s.buildMenu = true; }
-    });
+    }, keepCommand());
     (byStructure.tower = byStructure.tower || []).push(guardTowerCommand(), cannonTowerCommand());
     Object.keys(TECH).forEach(key => {
       const source = TECH[key].source;
@@ -1763,20 +1822,17 @@ function nodeProgressBars(state, node) {
     .map(w => Math.min(1, ((cd - w.cooldown) + tickFraction(step)) / cd));
 }
 
+// One continuous bar per group, showing the pool's combined hp — no
+// per-unit segmentation.
 function hpBarEl(hp, extraClass) {
   const bar = document.createElement('span');
   bar.className = extraClass ? `hp-bar ${extraClass}` : 'hp-bar';
-  const segs = hp.segments <= 20 ? hp.segments : 1;
-  for (let i = 0; i < segs; i += 1) {
-    const seg = document.createElement('span');
-    seg.className = 'hp-seg';
-    const fill = document.createElement('i');
-    const isLast = i === segs - 1;
-    const pct = segs === 1 ? hp.total : (isLast ? hp.partial : 1);
-    fill.style.width = `${Math.round(Math.max(0, Math.min(1, pct)) * 100)}%`;
-    seg.appendChild(fill);
-    bar.appendChild(seg);
-  }
+  const seg = document.createElement('span');
+  seg.className = 'hp-seg';
+  const fill = document.createElement('i');
+  fill.style.width = `${Math.round(Math.max(0, Math.min(1, hp.total)) * 100)}%`;
+  seg.appendChild(fill);
+  bar.appendChild(seg);
   return bar;
 }
 
@@ -1954,7 +2010,8 @@ function renderWorld() {
   structTiles.dataset.scroll = 'structures';
   structTiles.appendChild(entityButton({
     kind: 'structure', type: 'hall', id: 1, compact: true,
-    icon: 'hall', label: 'town hall',
+    icon: game.hallTier > 0 ? 'keep' : 'hall',
+    label: game.hallTier > 0 ? 'keep' : 'town hall',
     hp: buildingHp(game, 'hall')
   }));
   Object.keys(BUILDINGS).forEach(key => {
