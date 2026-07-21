@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.29';
-const VERSION_TAG = 'instant scout joins, reward in clear toast, fluid progress rings';
+const VERSION = '0.30';
+const VERSION_TAG = 'repairable building damage, staggered attack flashes, start at base';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -42,11 +42,12 @@ const SITE_MARCH_TICKS = 6;
 const SITE_TOWER = { hp: 100, dmg: 6 };
 
 const WORKER_HP = 30;
+const REPAIR_HP_PER_TICK = 20;  // how fast one worker patches a building up
 // Regen per tick — only defenders resting between fights heal (never while a
 // raid is at the base, never on patrol or in the field), so pulling wounded
 // units back to defend has a real benefit.
 const HEAL_DEFEND_PER_TICK = 3;
-const WORKER_HEAL_PER_TICK = 2;
+const WORKER_HEAL_PER_TICK = 1;   // very slow, and only while not under attack
 // Changing orders takes marching time (ticks): 2 + remoteness of both ends.
 // Pulling scouts home mid-raid costs real time — they can't teleport back.
 const ORDER_REMOTENESS = { defend: 0, patrol: 1, explore: 4, attack: 4 };
@@ -223,6 +224,7 @@ const ICONS = {
   orctower: 'assets/icons/o_bld_watchtower.png',
   siteTerrain: 'assets/icons/n_site_terrain.png',
   vision: 'assets/icons/c_cast_vision.png',
+  repair: 'assets/icons/c_repair.png',
   axe2: 'assets/icons/c_axe2.png',
   axe3: 'assets/icons/c_axe3.png',
   sword2: 'assets/icons/c_sword2.png',
@@ -261,6 +263,9 @@ function createGame() {
     army: Object.fromEntries(ORDERS.map(o =>
       [o, { ...Object.fromEntries(Object.keys(ARMY).map(k => [k, o === 'defend' && k === 'footmen' ? 1 : 0])), wounds: 0 }])),
     structures: Object.fromEntries(Object.keys(BUILDINGS).map(k => [k, (k === 'hall' || k === 'farm') ? 1 : 0])),
+    // Accumulated raid damage on the front instance of each building type —
+    // persists after the raid dies, until repaired (or the building falls).
+    structureDamage: Object.fromEntries(Object.keys(BUILDINGS).map(k => [k, 0])),
     enemy: { strength: 20, known: false },
     // Conquerable sites (see SITES): garrison state plus up to three of our
     // columns per site — `march` heading out, `strike` fighting there,
@@ -544,6 +549,33 @@ function startConstruction(state, key) {
   writeLog(state, `${b.label}: worker dispatched.`);
 }
 
+// Repair rides the construct-job machinery: a worker is pulled the same way,
+// walks over, patches the accumulated damage off, and returns to its node.
+function pendingRepair(state, key) {
+  return state.jobs.some(j => j.kind === 'construct' && j.repairKey === key);
+}
+
+function startRepair(state, key) {
+  const worker = builderWorker(state);
+  if (!worker) return;
+  const returnTo = worker.nodeId;
+  worker.job = 'building';
+  worker.nodeId = null;
+  worker.cooldown = 0;
+  const time = Math.max(1, Math.ceil(state.structureDamage[key] / REPAIR_HP_PER_TICK));
+  state.jobs.push({
+    uid: nextId(), kind: 'construct', workerId: worker.id, returnTo, repairKey: key,
+    icon: 'repair', label: `repair ${BUILDINGS[key].label}`, duration: time, remaining: time,
+    cost: {},
+    complete: s => {
+      s.structureDamage[key] = 0;
+      flashTile(`structure:${key}:1`, 'spawn');
+      writeLog(s, `${cap(BUILDINGS[key].label)} repaired.`);
+    }
+  });
+  writeLog(state, `Repairing the ${BUILDINGS[key].label}.`);
+}
+
 function startUpgrade(state, spec) {
   if (!canAfford(state, spec.cost)) return;
   spend(state, spec.cost);
@@ -700,16 +732,17 @@ function nodeHp(state, node) {
   };
 }
 
-// Structure tiles: bar only while a raid is actively chewing that type.
+// Structure tiles: bar whenever the type carries unrepaired damage.
 function buildingHp(state, key) {
+  const dmg = state.structureDamage[key];
+  if (!dmg || dmg <= 0) return null;
   const full = BUILDINGS[key].hp;
-  const raid = state.raids.find(r => r.targetType === key && r.targetHp > 0 && r.targetHp < full);
-  if (!raid) return null;
   const segments = state.structures[key];
+  if (segments <= 0) return null;
   return {
     segments,
-    partial: raid.targetHp / full,
-    total: ((segments - 1) * full + raid.targetHp) / (segments * full)
+    partial: (full - dmg) / full,
+    total: ((segments - 1) * full + (full - dmg)) / (segments * full)
   };
 }
 
@@ -864,6 +897,11 @@ function damagePool(state, order, dmg) {
 function damageWorkers(state, dmg) {
   state.workerLastHitAt = performance.now();
   state.workerWounds += dmg;
+  // The crew being hit is wherever the next victim works — flash its node red
+  // on every strike, not just on a death.
+  const target = state.workers.filter(w => w.job !== 'building').pop()
+              || state.workers[state.workers.length - 1];
+  if (target && target.nodeId) flashTile(`node:${target.job}:${target.nodeId}`, 'damage');
   while (state.workerWounds >= WORKER_HP && state.workers.length > 0) {
     state.workerWounds -= WORKER_HP;
     // Builders die last; a dead builder takes its construction down with it.
@@ -881,20 +919,22 @@ function damageWorkers(state, dmg) {
   if (state.workers.length === 0) state.workerWounds = 0;
 }
 
-// Raiders razing buildings: chew through the current target's hp, then destroy
-// it and pick the next from the given priority list.
+// Raiders razing buildings: damage accumulates on the building type
+// (persisting until repaired), destroying one instance when it exceeds its
+// hp; the raid then picks its next target from the given priority list.
 function damageBuildings(state, raid, dmg, order) {
   if (!raid.targetType || !order.includes(raid.targetType) || state.structures[raid.targetType] <= 0) {
     raid.targetType = order.find(k => state.structures[k] > 0) || null;
-    raid.targetHp = raid.targetType ? BUILDINGS[raid.targetType].hp : 0;
   }
   if (!raid.targetType) return;   // nothing left standing
-  flashTile(`structure:${raid.targetType}:1`, 'damage');
-  raid.targetHp -= dmg;
-  if (raid.targetHp <= 0) {
-    state.structures[raid.targetType] -= 1;
-    writeLog(state, `${cap(BUILDINGS[raid.targetType].label)} destroyed by raiders!`);
-    if (raid.targetType === 'hall') {
+  const key = raid.targetType;
+  flashTile(`structure:${key}:1`, 'damage');
+  state.structureDamage[key] += dmg;
+  if (state.structureDamage[key] >= BUILDINGS[key].hp) {
+    state.structures[key] -= 1;
+    state.structureDamage[key] = 0;
+    writeLog(state, `${cap(BUILDINGS[key].label)} destroyed by raiders!`);
+    if (key === 'hall') {
       flashError('The town hall has fallen!');
       state.over = { won: false, day: currentDay(state) + 1 };
     }
@@ -917,7 +957,7 @@ function spawnRaid(state) {
       size, grunt, hpPool: size * grunt.hp, discovered: false,
       arriveIn: RAID_ARRIVE_TICKS, atBase: false,
       myStrikeIn: DEFENSE_VOLLEY_EVERY, foeStrikeIn: RAID_VOLLEY_EVERY,
-      targetType: null, targetHp: 0
+      targetType: null
     });
     total += size;
   });
@@ -1175,11 +1215,12 @@ function gameTick() {
   harvestTick(game);
 
   // Survivors patch up between fights — defenders only, and never while a
-  // raid is inside the base fighting them.
+  // raid is inside the base fighting them. Workers mend very slowly, and not
+  // at all while the town is under attack.
   if (!game.raids.some(r => r.atBase)) {
     game.army.defend.wounds = Math.max(0, game.army.defend.wounds - HEAL_DEFEND_PER_TICK);
+    game.workerWounds = Math.max(0, game.workerWounds - WORKER_HEAL_PER_TICK);
   }
-  game.workerWounds = Math.max(0, game.workerWounds - WORKER_HEAL_PER_TICK);
 
   // Exploration — accumulates per exploring unit. Finds the enemy base first,
   // then keeps revealing distant resource nodes at their discoverAt thresholds.
@@ -1205,6 +1246,7 @@ function gameTick() {
         // whole explore pool becomes the strike force (survivors march home
         // to defend after the fight, like any assault). Exploration pauses
         // until fresh scouts are sent.
+        flashError('Enemy camp discovered!');
         const scouts = game.army.explore;
         if (!site.cleared && poolCount(scouts) > 0) {
           const strike = site.strike || { wounds: 0 };
@@ -1213,7 +1255,6 @@ function gameTick() {
           scouts.wounds = 0;
           site.strike = strike;
           writeLog(game, `Scouts found a ${site.label} — and storm it!`);
-          flashError(`Scouts storm the ${site.label}!`);
         } else {
           writeLog(game, `Scouts found a ${site.label} — ${site.guards.count} grunts and ${site.towers} watch tower${site.towers === 1 ? '' : 's'} guard it.`);
         }
@@ -1387,6 +1428,17 @@ const COMMANDS = {
       const source = TECH[key].source;
       (byStructure[source] = byStructure[source] || []).push(techCommand(key));
     });
+    // Every building gets a repair command, hidden until it carries damage.
+    Object.keys(BUILDINGS).forEach(key => {
+      const b = BUILDINGS[key];
+      (byStructure[key] = byStructure[key] || []).push({
+        id: `repair-${key}`, icon: 'repair', label: `repair ${b.label}`, cost: '',
+        hidden: s => !(s.structureDamage[key] > 0) || pendingRepair(s, key),
+        enabled: s => s.structureDamage[key] > 0 && !pendingRepair(s, key) && builderWorker(s) != null,
+        reason: () => 'No worker available',
+        run: s => startRepair(s, key)
+      });
+    });
     return byStructure;
   })(),
   workerGroup: []
@@ -1490,17 +1542,20 @@ function flashTile(key, kind) {
   // hit must always read, shaking is garnish.
   const current = tileFlashes.get(key);
   if (kind === 'attack' && current && current.kind === 'damage' && current.until > performance.now()) return;
-  tileFlashes.set(key, { kind, until: performance.now() + FLASH_MS });
+  // Combat flashes get a per-tile 50–100ms stagger (via CSS animation-delay)
+  // so simultaneous volleys don't all strike in the same frame.
+  const delay = kind === 'spawn' ? 0 : 50 + Math.round(Math.random() * 50);
+  tileFlashes.set(key, { kind, delay, until: performance.now() + FLASH_MS + delay });
 }
 
-function tileFlashClass(key) {
+function tileFlash(key) {
   const f = tileFlashes.get(key);
   if (!f) return null;
   if (f.until <= performance.now()) {
     tileFlashes.delete(key);
     return null;
   }
-  return { damage: 'flash-damage', spawn: 'flash-spawn', attack: 'flash-attack' }[f.kind];
+  return { cls: { damage: 'flash-damage', spawn: 'flash-spawn', attack: 'flash-attack' }[f.kind], delay: f.delay };
 }
 
 let errorTimer = null;
@@ -1662,9 +1717,10 @@ function entityButton({ kind, type, id, icon, label, count, meta, danger, compac
   if (danger)  classes.push('danger');
   if (compact) classes.push('compact');
   if (dimmed)  classes.push('dimmed');
-  const flash = tileFlashClass(`${kind}:${type}:${id}`);
-  if (flash) classes.push(flash);
+  const flash = tileFlash(`${kind}:${type}:${id}`);
+  if (flash) classes.push(flash.cls);
   button.className = classes.join(' ');
+  if (flash && flash.delay) button.style.setProperty('--flash-delay', `${flash.delay}ms`);
   if (game.selected.kind === kind && game.selected.type === type && String(game.selected.id) === String(id)) {
     button.classList.add('selected');
   }
@@ -2416,6 +2472,9 @@ function spawnStartingWorkers(remaining) {
 }
 
 render();
+// Open on the home front: the world starts scrolled to the base zone at the
+// bottom (later renders preserve wherever the player scrolls).
+dom.world.scrollTop = dom.world.scrollHeight;
 spawnStartingWorkers(4);
 
 setInterval(gameTick, TICK_MS);

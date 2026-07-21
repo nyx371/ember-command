@@ -54,7 +54,12 @@ sprite).** Times/costs are real WC2 values; every duration is multiplied by
 
 ### Raid combat
 `game.raids` holds live raiding parties (`{ kind, icon, label, size,
-grunt: {hp, dmg}, hpPool, arriveIn, strikeIn, targetType, targetHp }`).
+grunt: {hp, dmg}, hpPool, arriveIn, strikeIn, targetType }`). Building
+damage is persistent: raids accumulate it in `game.structureDamage[key]`
+(destroying an instance past its hp); it stays until a worker repairs it —
+every structure has a repair command, hidden unless damaged, that rides the
+construct-job machinery (`startRepair`, `REPAIR_HP_PER_TICK`, worker returns
+to its node).
 `RAIDER_TYPES` is the enemy roster — one party per active type per wave
 (grunts wave 1+, axethrowers wave 4+); stats and headcount scale per WAVE
 (`game.raid.wave`), defense damage splits across simultaneous parties, and
@@ -79,7 +84,8 @@ progress, no blinking) and tapping that tile recalls the column. The scouts'
 wilderness tile carries an `exploreRing` — progress from the last discovery
 milestone to the next. Production chips stay above the town hall. Wound
 regen: defenders only (`HEAL_DEFEND_PER_TICK`), paused while a raid is at
-the base; no other order heals. Raider targeting: patrol
+the base; no other order heals. Workers mend very slowly
+(`WORKER_HEAL_PER_TICK` = 1), also paused while a raid is at the base. Raider targeting: patrol
 pool → defend pool → towers (`RAID_TOWER_TARGETS`) → workers → remaining
 buildings per `RAID_TARGET_ORDER` (hall last). Explore/attack pools are away
 from the base: they neither fight raids nor get targeted. Wounds pools:
