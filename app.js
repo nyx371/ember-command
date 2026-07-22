@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.35';
-const VERSION_TAG = 'per-type defend tiles, tower fire shake, full column composition on sites';
+const VERSION = '0.36';
+const VERSION_TAG = 'knights + castle tier, ogres + catapults, stronghold campaign';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -21,7 +21,18 @@ const QUEUE_MAX = 5;            // queued units allowed per producing structure
 const SUPPLY_BASE = 4;
 
 const EXPLORE_THRESHOLD = 90;   // explore-unit-ticks to find enemy base
-const ENEMY_REBUILD = 0.05;     // enemy strength rebuilt per tick
+const ENEMY_REBUILD = 0.05;     // stronghold hp repaired per tick
+const RAID_OUTPOST_RELIEF = 25; // raid-interval bonus per razed outpost
+
+// The enemy homeland: the attack force grinds through these in order —
+// outposts first (each razed one permanently slows the raid schedule), then
+// the stronghold itself, whose fall wins the game. `defense` is attrition
+// dealt per tick to the attack pool while it grinds that target.
+const ENEMY_TARGETS = [
+  { key: 'outpost1',   icon: 'outpost',    label: 'orc outpost',    hp: 40,  defense: 2 },
+  { key: 'outpost2',   icon: 'outpost',    label: 'orc war camp',   hp: 60,  defense: 3 },
+  { key: 'stronghold', icon: 'stronghold', label: 'orc stronghold', hp: 120, defense: 4 }
+];
 const RAID_INTERVAL_BASE = 90;  // ticks between raids on day 0
 const RAID_FIRST_DELAY = 150;   // the very first wave holds off a while longer
 const RAID_INTERVAL_SCALE = 5;  // reduce interval by this per day
@@ -33,11 +44,16 @@ const RAID_VOLLEY_EVERY = 3;    // ...raiders every 3 — offset cadences, not l
 // arrived. Stats and headcount scale per WAVE (not per day) so the ramp is
 // deterministic — wave 1 is always a lone grunt — while the shrinking raid
 // interval still accelerates pressure in real time.
-// Wave scaling ramps gently: +1 raider and a little hp/dmg per wave, with
-// axethrowers only joining from wave 6.
+// Wave scaling ramps gently: +1 raider and a little hp/dmg per wave.
+// Axethrowers join from wave 6, ogres (heavies) from wave 9, and catapults
+// from wave 12 — `siege: true` parties ignore units entirely and shell
+// buildings from beyond tower range (towers can't shoot back; only warriors
+// can stop them).
 const RAIDER_TYPES = {
-  grunt:      { icon: 'enemy',      label: 'grunts',      hp: 60, dmg: 7, hpPerWave: 4, dmgPerWave: 0.5, baseSize: 1, sizePerWave: 1, fromWave: 0, bounty: 30 },
-  axethrower: { icon: 'axethrower', label: 'axethrowers', hp: 40, dmg: 9, hpPerWave: 3, dmgPerWave: 0.5, baseSize: 1, sizePerWave: 1, fromWave: 5, bounty: 40 }
+  grunt:      { icon: 'enemy',      label: 'grunts',      hp: 60,  dmg: 7,  hpPerWave: 4, dmgPerWave: 0.5, baseSize: 1, sizePerWave: 1,   fromWave: 0,  bounty: 30 },
+  axethrower: { icon: 'axethrower', label: 'axethrowers', hp: 40,  dmg: 9,  hpPerWave: 3, dmgPerWave: 0.5, baseSize: 1, sizePerWave: 1,   fromWave: 5,  bounty: 40 },
+  ogre:       { icon: 'ogre',       label: 'ogres',       hp: 110, dmg: 12, hpPerWave: 4, dmgPerWave: 0.5, baseSize: 1, sizePerWave: 0.5, fromWave: 9,  bounty: 60 },
+  catapult:   { icon: 'catapult',   label: 'catapults',   hp: 110, dmg: 25, hpPerWave: 3, dmgPerWave: 1,   baseSize: 1, sizePerWave: 0.5, fromWave: 12, bounty: 80, siege: true }
 };
 // Conquerable sites: how long the assault column marches each way (same as
 // marching to the far field) and the watch-tower stats their garrisons use.
@@ -134,7 +150,7 @@ const BUILDINGS = {
   hall: {
     icon: 'hall', label: 'town hall',
     supply: 4, hp: 1200,
-    blurb: s => `${s.hallTier > 0 ? 'Keep' : 'Town Hall'} · ${productionMeta(s, 'hall') || 'ready'} · +${Math.round(incomePerTick(s, 'gold'))}g +${Math.round(incomePerTick(s, 'lumber'))}w /s`
+    blurb: s => `${cap(hallTierName(s))} · ${productionMeta(s, 'hall') || 'ready'} · +${Math.round(incomePerTick(s, 'gold'))}g +${Math.round(incomePerTick(s, 'lumber'))}w /s`
   },
   farm: {
     icon: 'farm', label: 'farm',
@@ -171,6 +187,11 @@ const BUILDINGS = {
     icon: 'cannontower', label: 'cannon tower',   // via tower upgrade, needs blacksmith
     hp: 160, dmg: 14,
     blurb: 'Cannon Tower · heavy base defense'
+  },
+  stables: {
+    icon: 'stables', label: 'stables', hp: 500,
+    build: { cost: { gold: 1000, lumber: 300 }, time: 150, requiresTier: 1 },
+    blurb: 'Stables · trains knights'
   }
 };
 
@@ -200,6 +221,10 @@ const UNITS = {
     icon: 'ballista', label: 'ballista', producer: 'barracks', time: 250, cost: { gold: 900, lumber: 300 },
     requires: ['blacksmith'],
     done: s => { s.army.defend.ballistas += 1; flashTile('army:defend:1', 'spawn'); writeLog(s, 'Ballista ready.'); }
+  },
+  knight: {
+    icon: 'knight', label: 'knight', producer: 'stables', time: 90, cost: { gold: 800, lumber: 100 },
+    done: s => { s.army.defend.knights += 1; flashTile('army:defend:1', 'spawn'); writeLog(s, 'Knight ready.'); }
   }
 };
 
@@ -208,6 +233,7 @@ const UNITS = {
 // live in per-order pools on `game.army` (see ORDERS).
 const ARMY = {
   footmen:   { icon: 'footman',  label: 'footmen',   singular: 'footman',  hp: 60,  dmg: 7,  attack: 0.10 },
+  knights:   { icon: 'knight',   label: 'knights',   singular: 'knight',   hp: 90,  dmg: 10, attack: 0.15 },
   archers:   { icon: 'archer',   label: 'archers',   singular: 'archer',   hp: 40,  dmg: 5,  attack: 0.06 },
   ballistas: { icon: 'ballista', label: 'ballistas', singular: 'ballista', hp: 110, dmg: 25, attack: 0.50 }
 };
@@ -218,10 +244,18 @@ const ORDERS = ['defend', 'patrol', 'explore', 'attack'];
 
 const GUARD_TOWER = { cost: { gold: 500, lumber: 150 }, time: 140 };
 const CANNON_TOWER = { cost: { gold: 1000, lumber: 300 }, time: 190 };
-// Town Hall → Keep (hall tier 1): tougher hall, a little more supply. The
-// hall keeps its structure key — only game.hallTier changes — so the loss
-// condition, targeting, and worker training are untouched.
-const KEEP_UPGRADE = { cost: { gold: 2000, lumber: 1000 }, time: 200, hpBonus: 600, supply: 4 };
+// Hall tiers: Town Hall → Keep → Castle. The hall keeps its structure key —
+// only game.hallTier changes — so the loss condition, targeting, and worker
+// training are untouched. Each tier: tougher hall, a little more supply;
+// the Keep gates the Stables, the Castle needs them (WC2 ladder).
+const HALL_TIERS = [
+  { key: 'keep',   label: 'keep',   icon: 'keep',
+    cost: { gold: 2000, lumber: 1000 }, time: 200, hpBonus: 600, supply: 4,
+    requires: s => s.structures.barracks > 0, reqLabel: 'Need a barracks' },
+  { key: 'castle', label: 'castle', icon: 'castle',
+    cost: { gold: 2500, lumber: 1200 }, time: 200, hpBonus: 600, supply: 4,
+    requires: s => s.structures.stables > 0, reqLabel: 'Need stables' }
+];
 
 const ICONS = {
   gold: 'assets/icons/r_gold.png',
@@ -259,6 +293,13 @@ const ICONS = {
   ballistaUp2: 'assets/icons/c_upgrade_catapult2.png',
   cannontower: 'assets/icons/h_bld_cannontower.png',
   keep: 'assets/icons/h_bld_castle2.png',
+  castle: 'assets/icons/h_bld_castle.png',
+  stables: 'assets/icons/h_bld_stables.png',
+  knight: 'assets/icons/h_unit_knight.png',
+  ogre: 'assets/icons/o_unit_ogre.png',
+  catapult: 'assets/icons/o_unit_catapult.png',
+  outpost: 'assets/icons/o_bld_greathall.png',
+  stronghold: 'assets/icons/o_bld_fortress.png',
   axe2: 'assets/icons/c_axe2.png',
   axe3: 'assets/icons/c_axe3.png',
   sword2: 'assets/icons/c_sword2.png',
@@ -301,7 +342,10 @@ function createGame() {
     // Accumulated raid damage on the front instance of each building type —
     // persists after the raid dies, until repaired (or the building falls).
     structureDamage: Object.fromEntries(Object.keys(BUILDINGS).map(k => [k, 0])),
-    enemy: { strength: 20, known: false },
+    enemy: {
+      known: false,
+      targets: ENEMY_TARGETS.map(t => ({ ...t, left: t.hp, razed: false, lastHitAt: 0 }))
+    },
     // Conquerable sites (see SITES): garrison state plus up to three of our
     // columns per site — `march` heading out, `strike` fighting there,
     // `returning` heading home. All count toward supply.
@@ -690,16 +734,28 @@ function supplyUsed(state) {
        + state.sites.reduce((sum, s) => sum + siteUnits(s), 0);
 }
 
+function hallTierBonus(state, field) {
+  return HALL_TIERS.slice(0, state.hallTier).reduce((sum, t) => sum + t[field], 0);
+}
+
 function supplyCap(state) {
   return SUPPLY_BASE + Object.keys(BUILDINGS)
     .reduce((sum, k) => sum + (BUILDINGS[k].supply || 0) * state.structures[k], 0)
-    + state.hallTier * KEEP_UPGRADE.supply;
+    + hallTierBonus(state, 'supply');
 }
 
 // The hall's max hp grows with its tier; every other building reads straight
 // from the table.
 function buildingMaxHp(state, key) {
-  return BUILDINGS[key].hp + (key === 'hall' ? state.hallTier * KEEP_UPGRADE.hpBonus : 0);
+  return BUILDINGS[key].hp + (key === 'hall' ? hallTierBonus(state, 'hpBonus') : 0);
+}
+
+function hallTierName(state) {
+  return state.hallTier > 0 ? HALL_TIERS[state.hallTier - 1].label : 'town hall';
+}
+
+function hallTierIcon(state) {
+  return state.hallTier > 0 ? HALL_TIERS[state.hallTier - 1].icon : 'hall';
 }
 
 function supplyFree(state) {
@@ -710,7 +766,6 @@ function clampGame(state) {
   for (const key of Object.keys(state.resources)) {
     state.resources[key] = Math.max(0, Math.floor(state.resources[key]));
   }
-  state.enemy.strength = Math.max(0, state.enemy.strength);
 }
 
 // ── Army ───────────────────────────────────────────────────────────────────
@@ -862,6 +917,15 @@ function attackDamage(state) {
   return Object.keys(ARMY).reduce((dmg, k) => dmg + state.army.attack[k] * ARMY[k].attack, 0);
 }
 
+function enemyTarget(state) {
+  return state.enemy.targets.find(t => !t.razed) || null;
+}
+
+function enemyTargetHp(target) {
+  if (target.left >= target.hp && !recentlyHit(target.lastHitAt)) return null;
+  return { segments: 1, partial: target.left / target.hp, total: target.left / target.hp };
+}
+
 // Changing orders is a timed march (a 'transfer' job): units leave the source
 // pool immediately, spend the march in transit (not fighting, not targetable),
 // and join the target pool on arrival. Tapping the chip recalls them to where
@@ -924,8 +988,10 @@ function poolDamage(state, pool) {
 
 function defenseDamage(state, raid) {
   if (!raid.atBase) return poolDamage(state, state.army.patrol);
-  return poolDamage(state, state.army.defend)
-    + Object.keys(BUILDINGS).reduce((sum, k) => sum + (BUILDINGS[k].dmg || 0) * state.structures[k], 0);
+  // Siege parties sit beyond tower range — only warriors can reach them.
+  const towerDmg = raid.siege ? 0
+    : Object.keys(BUILDINGS).reduce((sum, k) => sum + (BUILDINGS[k].dmg || 0) * state.structures[k], 0);
+  return poolDamage(state, state.army.defend) + towerDmg;
 }
 
 // Damage flows into the pool's wounds; every full hp's worth kills one unit
@@ -1001,14 +1067,14 @@ function spawnRaid(state) {
   Object.keys(RAIDER_TYPES).forEach(key => {
     const t = RAIDER_TYPES[key];
     if (wave < t.fromWave) return;
-    const size = t.baseSize + (wave - t.fromWave) * t.sizePerWave;
+    const size = Math.floor(t.baseSize + (wave - t.fromWave) * t.sizePerWave);
     if (size <= 0) return;
     const grunt = { hp: t.hp + wave * t.hpPerWave, dmg: t.dmg + wave * t.dmgPerWave };
     // Each party's first strike is offset by its index, so simultaneous
     // parties volley on staggered ticks rather than all at once.
     const foeDelay = RAID_VOLLEY_EVERY + party;
     state.raids.push({
-      id: nextId(), kind: key, icon: t.icon, label: t.label,
+      id: nextId(), kind: key, icon: t.icon, label: t.label, siege: !!t.siege,
       size, grunt, hpPool: size * grunt.hp, discovered: false,
       arriveIn: RAID_ARRIVE_TICKS, atBase: false,
       myStrikeIn: DEFENSE_VOLLEY_EVERY, foeStrikeIn: foeDelay, foeDelay,
@@ -1110,6 +1176,16 @@ function raidTick(state) {
       return;
     }
     const towersStanding = RAID_TOWER_TARGETS.some(k => state.structures[k] > 0);
+    // Catapults shell buildings and nothing else — towers first (they
+    // outrange them), then the rest. Warriors are simply ignored.
+    if (raid.siege) {
+      if (!raid.razing) {
+        raid.razing = true;
+        flashError('Catapults are shelling the town!');
+      }
+      damageBuildings(state, raid, dmg, towersStanding ? RAID_TOWER_TARGETS : RAID_TARGET_ORDER);
+      return;
+    }
     if (unitsOnOrder(state, 'defend') > 0) damagePool(state, 'defend', dmg);
     else {
       if (!raid.razing) {
@@ -1325,7 +1401,7 @@ function gameTick() {
     game.exploreProgress += explorers;
     if (!game.enemy.known && game.exploreProgress >= EXPLORE_THRESHOLD) {
       game.enemy.known = true;
-      writeLog(game, 'Enemy base located! Attack order unlocked.');
+      writeLog(game, 'Enemy homeland located! Attack order unlocked.');
     }
     game.nodes.forEach(n => {
       if (!n.discovered && game.exploreProgress >= n.discoverAt) {
@@ -1358,23 +1434,41 @@ function gameTick() {
     });
   }
 
-  // Auto-attack — chips away at enemy strength
-  if (game.enemy.known) {
-    game.enemy.strength = Math.max(0, game.enemy.strength - attackDamage(game));
-    if (game.enemy.strength === 0 && !game.over) {
-      writeLog(game, 'Enemy base destroyed! Victory!');
-      game.over = { won: true, day: currentDay(game) + 1 };
+  // Attack — the attack force grinds the enemy homeland target by target:
+  // outposts first, then the stronghold, whose fall wins the game. The
+  // target's garrison hits back (slow attrition on the attack pool, which
+  // never heals), and the stronghold repairs itself between blows.
+  const warTarget = enemyTarget(game);
+  if (game.enemy.known && warTarget && !game.over) {
+    const siege = attackDamage(game);
+    if (siege > 0) {
+      warTarget.left = Math.max(0, warTarget.left - siege);
+      warTarget.lastHitAt = performance.now();
+      flashTile(`enemy:base:${warTarget.key}`, 'damage');
+      flashTile('army:attack:1', 'attack');
+      if (warTarget.defense > 0) damagePool(game, 'attack', warTarget.defense);
+      if (warTarget.left <= 0) {
+        warTarget.razed = true;
+        if (warTarget.key === 'stronghold') {
+          writeLog(game, 'The orc stronghold lies in ruins! Victory!');
+          game.over = { won: true, day: currentDay(game) + 1 };
+        } else {
+          writeLog(game, `${cap(warTarget.label)} razed — the raids will thin out.`);
+          flashError(`${cap(warTarget.label)} razed!`);
+        }
+      }
     }
   }
+  const hold = game.enemy.targets.find(t => t.key === 'stronghold');
+  if (!hold.razed) hold.left = Math.min(hold.hp, hold.left + ENEMY_REBUILD);
 
-  // Enemy slowly rebuilds
-  game.enemy.strength += ENEMY_REBUILD;
-
-  // Raids — spawn on a shrinking interval, then fight tick by tick.
+  // Raids — spawn on a shrinking interval, then fight tick by tick. Every
+  // razed outpost permanently stretches the interval back out.
   game.raid.nextIn -= 1;
   if (game.raid.nextIn <= 0) {
     spawnRaid(game);
-    game.raid.interval = Math.max(RAID_INTERVAL_MIN, RAID_INTERVAL_BASE - currentDay(game) * RAID_INTERVAL_SCALE);
+    const relief = game.enemy.targets.filter(t => t.razed && t.key !== 'stronghold').length * RAID_OUTPOST_RELIEF;
+    game.raid.interval = Math.max(RAID_INTERVAL_MIN, RAID_INTERVAL_BASE - currentDay(game) * RAID_INTERVAL_SCALE) + relief;
     game.raid.nextIn = game.raid.interval;
   }
   raidTick(game);
@@ -1472,24 +1566,26 @@ function guardTowerCommand() {
   return towerUpgradeCommand('guardtower', GUARD_TOWER, 'lumbermill', 'Need a lumber mill');
 }
 
-function keepCommand() {
+// One command per hall tier — each shows only while it's the next step up.
+function hallTierCommand(tierIndex) {
+  const t = HALL_TIERS[tierIndex];
   const { available, reason } = gated([
-    [s => s.structures.barracks > 0, 'Need a barracks'],
+    [t.requires, t.reqLabel],
     [s => upgradeSlotFree(s, 'hall'), 'The hall is already being upgraded']
   ]);
   return {
-    id: 'upgrade-keep', icon: 'keep', label: 'upgrade to keep',
-    cost: costIcons(KEEP_UPGRADE.cost),
-    hidden: s => s.hallTier > 0,
+    id: `upgrade-${t.key}`, icon: t.icon, label: `upgrade to ${t.label}`,
+    cost: costIcons(t.cost),
+    hidden: s => s.hallTier !== tierIndex,
     available, reason,
-    enabled: s => s.hallTier === 0 && available(s) && canAfford(s, KEEP_UPGRADE.cost),
+    enabled: s => s.hallTier === tierIndex && available(s) && canAfford(s, t.cost),
     run: s => startUpgrade(s, {
-      tag: 'keep', source: 'hall', icon: 'keep', label: 'keep',
-      time: KEEP_UPGRADE.time, cost: KEEP_UPGRADE.cost,
+      tag: t.key, source: 'hall', icon: t.icon, label: t.label,
+      time: t.time, cost: t.cost,
       complete: st => {
-        st.hallTier = 1;
+        st.hallTier = tierIndex + 1;
         flashTile('structure:hall:1', 'spawn');
-        writeLog(st, 'The town hall now stands as a keep.');
+        writeLog(st, `Our hall now stands as a ${t.label}.`);
       }
     })
   };
@@ -1503,11 +1599,12 @@ function cannonTowerCommand() {
 // other order) — the unit's icon with the target order overlaid in the
 // corner. Tap moves one of that type, hold moves all of them. Only types
 // actually in the group produce buttons, so the card stays small.
-function armyGroupCommands(state, order) {
+function armyGroupCommands(state, order, onlyType) {
   const pool = state.army[order];
   const commands = [];
   Object.keys(ARMY).forEach(type => {
     if (pool[type] <= 0) return;
+    if (onlyType && type !== onlyType) return;
     ORDERS.filter(o => o !== order).forEach(o => {
       commands.push({
         id: `move-${order}-${type}-${o}`,
@@ -1557,7 +1654,7 @@ const COMMANDS = {
       enabled: s => builderWorker(s) != null,
       reason: () => 'No worker available',
       run: s => { s.buildMenu = true; }
-    }, keepCommand());
+    }, ...HALL_TIERS.map((t, i) => hallTierCommand(i)));
     (byStructure.tower = byStructure.tower || []).push(guardTowerCommand(), cannonTowerCommand());
     Object.keys(TECH).forEach(key => {
       const source = TECH[key].source;
@@ -1585,6 +1682,9 @@ function buildMenuCommands() {
       const b = BUILDINGS[key];
       const { available, reason } = gated([
         ...(b.build.requires || []).map(req => [s => s.structures[req] > 0, `Need a ${BUILDINGS[req].label}`]),
+        ...(b.build.requiresTier
+          ? [[s => s.hallTier >= b.build.requiresTier, `Need a ${HALL_TIERS[b.build.requiresTier - 1].label}`]]
+          : []),
         [s => builderWorker(s) != null, 'No worker available']
       ]);
       return {
@@ -1621,7 +1721,11 @@ function selectedCommands(state) {
     const node = nodeById(state, state.selected.id);
     return node ? nodeCommands(state, node) : [];
   }
-  if (state.selected.kind === 'army') return armyGroupCommands(state, state.selected.type);
+  if (state.selected.kind === 'army') {
+    // A per-type tile (defend) scopes the card to that type's moves.
+    const only = ARMY[state.selected.id] ? state.selected.id : null;
+    return armyGroupCommands(state, state.selected.type, only);
+  }
   if (state.selected.kind === 'site') {
     const site = siteByKey(state, state.selected.type);
     return site ? siteCommands(state, site) : [];
@@ -1722,8 +1826,11 @@ function selectEntity(kind, type, id) {
 const SELECTION_VALID = {
   structure: (s, sel) => sel.type === 'hall' || s.structures[sel.type] > 0,
   node: (s, sel) => { const n = nodeById(s, sel.id); return !!n && n.remaining > 0; },
-  army: (s, sel) => ORDERS.includes(sel.type)
-    && (unitsOnOrder(s, sel.type) > 0 || s.jobs.some(j => j.kind === 'transfer' && j.to === sel.type)),
+  army: (s, sel) => {
+    if (!ORDERS.includes(sel.type)) return false;
+    if (ARMY[sel.id]) return s.army[sel.type][sel.id] > 0;   // per-type tile
+    return unitsOnOrder(s, sel.type) > 0 || s.jobs.some(j => j.kind === 'transfer' && j.to === sel.type);
+  },
   workerGroup: () => true,
   enemy: () => true,
   // A cleared site stays selectable while our columns are still out there.
@@ -2020,8 +2127,7 @@ function renderWorld() {
   structTiles.dataset.scroll = 'structures';
   structTiles.appendChild(entityButton({
     kind: 'structure', type: 'hall', id: 1, compact: true,
-    icon: game.hallTier > 0 ? 'keep' : 'hall',
-    label: game.hallTier > 0 ? 'keep' : 'town hall',
+    icon: hallTierIcon(game), label: hallTierName(game),
     hp: buildingHp(game, 'hall')
   }));
   Object.keys(BUILDINGS).forEach(key => {
@@ -2079,8 +2185,10 @@ function renderWorld() {
     if (n === 0) return [];
     const types = Object.keys(ARMY).filter(k => pool[k] > 0);
     if (order === 'defend') {
+      // Each type tile is its own selection (id = type key), so tapping the
+      // footmen never highlights the archers.
       return types.map((k, i) => entityButton({
-        kind: 'army', type: order, id: 1, compact: true,
+        kind: 'army', type: order, id: k, compact: true,
         icon: ARMY[k].icon, label: `${order} ${ARMY[k].label}`,
         jobIcon: orderIcon(order),
         countLabel: pool[k],
@@ -2206,6 +2314,20 @@ function renderWorld() {
     btn.appendChild(mineChips(scoutPool));
     siteTiles.appendChild(btn);
   }
+  // The enemy homeland: once found, the attack force's current target stands
+  // at the end of the sites row — a danger tile with its hp bar and our
+  // besieging units' chips.
+  const warTarget = enemyTarget(game);
+  if (game.enemy.known && warTarget) {
+    const btn = entityButton({
+      kind: 'enemy', type: 'base', id: warTarget.key, compact: true,
+      icon: warTarget.icon, label: warTarget.label, danger: true,
+      hp: enemyTargetHp(warTarget)
+    });
+    btn.classList.add('site-big');
+    if (unitsOnOrder(game, 'attack') > 0) btn.appendChild(mineChips(game.army.attack));
+    siteTiles.appendChild(btn);
+  }
   game.sites.forEach(site => {
     if (!site.discovered) return;
     const mine = siteUnits(site);
@@ -2315,7 +2437,10 @@ function entityInfo(state) {
     let base = `${type} · ${parts.length ? parts.join(', ') : 'no units'}`;
     if (enRoute > 0) base += ` · ${enRoute} en route`;
     if (type !== 'attack') return base;
-    return `${base} · enemy base ${state.enemy.known ? Math.ceil(state.enemy.strength) : 'unfound'}`;
+    const target = enemyTarget(state);
+    if (!state.enemy.known) return `${base} · enemy unfound — explore`;
+    return target ? `${base} · besieging ${target.label} ${Math.ceil(target.left)}/${target.hp}`
+                  : `${base} · the enemy is destroyed`;
   }
   return '';
 }
@@ -2588,7 +2713,7 @@ document.getElementById('cheat-scout').addEventListener('click', () => {
     ...game.sites.map(s => s.discoverAt));
   if (!game.enemy.known) {
     game.enemy.known = true;
-    writeLog(game, 'Enemy base located! Attack order unlocked.');
+    writeLog(game, 'Enemy homeland located! Attack order unlocked.');
   }
   game.nodes.forEach(n => {
     if (!n.discovered && Number.isFinite(n.discoverAt)) {
