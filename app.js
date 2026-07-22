@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.38';
-const VERSION_TAG = 'war-signs forecast, three new sites with rescues, slower defend regen';
+const VERSION = '0.39';
+const VERSION_TAG = 'directional lunges, scrolling commands, random site pool, vague war signs';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -102,25 +102,37 @@ const NODE_DEFS = [
 // contextual badge that tells the player what clearing it pays. Garrisons
 // listed here are the base — they scale up with the raid-wave counter at the
 // moment of discovery (see discoverSite), so late finds are tougher, just
-// like attack waves. Thresholds sit AFTER the hill mine (80): exploration's
-// first find is always economy, never a fight.
-const SITES = [
-  { key: 'camp',  icon: 'siteTerrain', rewardIcon: 'gold', label: 'raider camp', discoverAt: 260,
+// like attack waves. Each run draws SITE_SLOTS.length sites at random from
+// the pool (no repeats) and lays them on the discovery ladder in slot order;
+// slots sit AFTER the hill mine (80), so exploration's first find is always
+// economy, never a fight.
+const SITE_SLOTS = [260, 400, 560, 750, 950, 1200];
+const SITE_POOL = [
+  { key: 'camp',  icon: 'siteTerrain', rewardIcon: 'gold', label: 'raider camp',
     guards: { count: 3, hp: 60, dmg: 7 }, towers: 1,
     reward: { cache: { gold: 2500, lumber: 1500 } }, rewardText: 'war chest 2500g 1500w' },
-  { key: 'mine',  icon: 'siteTerrain', rewardIcon: 'goldSite', label: 'overrun mine', discoverAt: 400,
+  { key: 'warband', icon: 'siteTerrain', rewardIcon: 'gold', label: 'orc warband',
+    guards: { count: 4, hp: 70, dmg: 8 }, towers: 0,
+    reward: { cache: { gold: 1500, lumber: 800 } }, rewardText: 'plunder 1500g 800w' },
+  { key: 'mine',  icon: 'siteTerrain', rewardIcon: 'goldSite', label: 'overrun mine',
     guards: { count: 5, hp: 66, dmg: 8 }, towers: 1,
     reward: { nodeId: 'gold-4' }, rewardText: 'rich gold mine' },
-  { key: 'stockade', icon: 'siteTerrain', rewardIcon: 'footman', label: 'prison camp', discoverAt: 560,
+  { key: 'stockade', icon: 'siteTerrain', rewardIcon: 'footman', label: 'prison camp',
     guards: { count: 6, hp: 72, dmg: 9 }, towers: 2,
     reward: { units: { footmen: 3 } }, rewardText: '3 captive footmen' },
-  { key: 'loggers', icon: 'siteTerrain', rewardIcon: 'worker', label: 'logging camp', discoverAt: 750,
+  { key: 'loggers', icon: 'siteTerrain', rewardIcon: 'worker', label: 'logging camp',
     guards: { count: 5, hp: 80, dmg: 9 }, towers: 1,
     reward: { workers: 3 }, rewardText: '3 captive peasants' },
-  { key: 'hoard', icon: 'siteTerrain', rewardIcon: 'gold', label: 'orc hoard', discoverAt: 950,
+  { key: 'pens', icon: 'siteTerrain', rewardIcon: 'worker', label: 'work pens',
+    guards: { count: 4, hp: 75, dmg: 9 }, towers: 0,
+    reward: { workers: 2, units: { footmen: 1 } }, rewardText: 'captive peasants & footman' },
+  { key: 'shrine', icon: 'siteTerrain', rewardIcon: 'gold', label: 'orc shrine',
+    guards: { count: 6, hp: 75, dmg: 9 }, towers: 1,
+    reward: { cache: { gold: 3000 } }, rewardText: 'looted idol 3000g' },
+  { key: 'hoard', icon: 'siteTerrain', rewardIcon: 'gold', label: 'orc hoard',
     guards: { count: 8, hp: 80, dmg: 10 }, towers: 2,
     reward: { cache: { gold: 4000, lumber: 2500 } }, rewardText: 'war hoard 4000g 2500w' },
-  { key: 'armory', icon: 'siteTerrain', rewardIcon: 'knight', label: 'slave pens', discoverAt: 1200,
+  { key: 'armory', icon: 'siteTerrain', rewardIcon: 'knight', label: 'slave pens',
     guards: { count: 10, hp: 85, dmg: 10 }, towers: 2,
     reward: { units: { knights: 2, archers: 2 } }, rewardText: 'captive knights & archers' }
 ];
@@ -301,8 +313,8 @@ const ICONS = {
   ballistaUp1: 'assets/icons/c_upgrade_ballista.png',
   ballistaUp2: 'assets/icons/c_upgrade_catapult2.png',
   cannontower: 'assets/icons/h_bld_cannontower.png',
-  keep: 'assets/icons/h_bld_castle2.png',
-  castle: 'assets/icons/h_bld_castle.png',
+  keep: 'assets/icons/h_bld_keep.png',
+  castle: 'assets/icons/h_bld_castle2.png',
   stables: 'assets/icons/h_bld_stables.png',
   knight: 'assets/icons/h_unit_knight.png',
   ogre: 'assets/icons/o_unit_ogre.png',
@@ -358,14 +370,21 @@ function createGame() {
     // Conquerable sites (see SITES): garrison state plus up to three of our
     // columns per site — `march` heading out, `strike` fighting there,
     // `returning` heading home. All count toward supply.
-    sites: SITES.map(d => ({
-      ...d, discovered: false, cleared: false,
-      guardsLeft: d.guards.count, guardPool: d.guards.count * d.guards.hp,
-      towersLeft: d.towers, towerHp: SITE_TOWER.hp,
-      strike: null, march: null, returning: null,
-      myStrikeIn: DEFENSE_VOLLEY_EVERY, foeStrikeIn: RAID_VOLLEY_EVERY,
-      lastHitAt: 0, strikeHitAt: 0
-    })),
+    sites: (() => {
+      const pool = [...SITE_POOL];
+      return SITE_SLOTS.map(at => {
+        const d = pool.splice(Math.floor(Math.random() * pool.length), 1)[0];
+        return {
+          ...d, discoverAt: at, discovered: false, cleared: false,
+          guards: { ...d.guards },
+          guardsLeft: d.guards.count, guardPool: d.guards.count * d.guards.hp,
+          towersLeft: d.towers, towerHp: SITE_TOWER.hp,
+          strike: null, march: null, returning: null,
+          myStrikeIn: DEFENSE_VOLLEY_EVERY, foeStrikeIn: RAID_VOLLEY_EVERY,
+          lastHitAt: 0, strikeHitAt: 0
+        };
+      });
+    })(),
     exploreProgress: 0,
     raid: { nextIn: RAID_FIRST_DELAY, interval: RAID_INTERVAL_BASE, wave: 0 },
     raids: [],            // active raiding parties (see spawnRaid)
@@ -1692,6 +1711,10 @@ const COMMANDS = {
 
 function buildMenuCommands() {
   return [
+    // Back/cancel leads the list so it's always the first, findable button.
+    { id: 'build-menu-stop', icon: 'stop', label: 'back', cost: '',
+      enabled: () => true,
+      run: s => { s.buildMenu = false; } },
     ...Object.keys(BUILDINGS).filter(key => BUILDINGS[key].build).map(key => {
       const b = BUILDINGS[key];
       const { available, reason } = gated([
@@ -1708,9 +1731,6 @@ function buildMenuCommands() {
         run: s => startConstruction(s, key)
       };
     }),
-    { id: 'build-menu-stop', icon: 'stop', label: 'stop', cost: '',
-      enabled: () => true,
-      run: s => { s.buildMenu = false; } }
   ];
 }
 
@@ -2384,24 +2404,29 @@ function renderWorld() {
   forecast.className = 'forecast';
   if (unitsOnOrder(game, 'explore') > 0 && !game.over) {
     forecast.appendChild(makeIcon(ICONS.explore, 'war signs'));
-    [[game.raid.wave, `${Math.max(0, game.raid.nextIn)}s`], [game.raid.wave + 1, 'then']].forEach(([wave, tag], gi) => {
-      const group = document.createElement('span');
-      group.className = gi === 1 ? 'forecast-group later' : 'forecast-group';
-      const label = document.createElement('span');
-      label.textContent = tag;
-      group.appendChild(label);
-      Object.keys(RAIDER_TYPES).forEach(key => {
-        const t = RAIDER_TYPES[key];
-        if (wave < t.fromWave) return;
-        const size = Math.floor(t.baseSize + (wave - t.fromWave) * t.sizePerWave);
-        if (size <= 0) return;
-        group.appendChild(makeIcon(ICONS[t.icon], t.label));
-        const n = document.createElement('span');
-        n.textContent = size;
-        group.appendChild(n);
-      });
-      forecast.appendChild(group);
+    // Rumours, not intel: a vague sense of when ('imminent'…'distant') and
+    // roughly how many of each raider type ('few'…'a horde'). No numbers,
+    // and only the next wave — beyond that the scouts hear nothing.
+    const eta = game.raid.nextIn <= 15 ? 'imminent'
+              : game.raid.nextIn <= 45 ? 'soon'
+              : game.raid.nextIn <= 90 ? 'gathering' : 'distant';
+    const group = document.createElement('span');
+    group.className = 'forecast-group';
+    const label = document.createElement('span');
+    label.textContent = eta;
+    group.appendChild(label);
+    const wave = game.raid.wave;
+    Object.keys(RAIDER_TYPES).forEach(key => {
+      const t = RAIDER_TYPES[key];
+      if (wave < t.fromWave) return;
+      const size = Math.floor(t.baseSize + (wave - t.fromWave) * t.sizePerWave);
+      if (size <= 0) return;
+      group.appendChild(makeIcon(ICONS[t.icon], t.label));
+      const n = document.createElement('span');
+      n.textContent = size <= 2 ? 'few' : size <= 5 ? 'some' : size <= 9 ? 'many' : 'a horde';
+      group.appendChild(n);
     });
+    forecast.appendChild(group);
   }
 
   const seen = game.raids.filter(raid => raid.discovered);
@@ -2495,6 +2520,11 @@ function renderOrders() {
   info.textContent = entityInfo(game);
   dom.orders.appendChild(info);
 
+  // One non-wrapping, horizontally scrollable row of command buttons.
+  const strip = document.createElement('div');
+  strip.className = 'command-strip';
+  dom.orders.appendChild(strip);
+
   selectedCommands(game)
     .filter(command => !(command.hidden && command.hidden(game)))
     .forEach((command, index) => {
@@ -2546,7 +2576,7 @@ function renderOrders() {
       button.appendChild(costEl);
     }
 
-    dom.orders.appendChild(button);
+    strip.appendChild(button);
   });
 }
 

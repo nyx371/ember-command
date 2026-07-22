@@ -86,8 +86,9 @@ tile beside the destination group (kind `march`, badge ring = march
 progress, no blinking) and tapping that tile recalls the column. The scouts'
 wilderness tile carries an `exploreRing` — progress from the last discovery
 milestone to the next — and while scouts are out, the far zone shows the
-non-interactive `.forecast` strip: next wave's composition + countdown and
-the wave after (same math as `spawnRaid`). Production chips live in the fixed-height #queue strip under the resource bar (`renderQueueStrip`), never in the world. Wound
+non-interactive `.forecast` strip: a vague read on the next wave only —
+qualitative time ('imminent'…'distant') and size words ('few'…'a horde')
+per raider type, no numbers (same composition math as `spawnRaid`). Production chips live in the fixed-height #queue strip under the resource bar (`renderQueueStrip`), never in the world. Wound
 regen: defenders only (`HEAL_DEFEND_PER_TICK`), paused while a raid is at
 the base; no other order heals. Workers mend very slowly
 (`WORKER_HEAL_PER_TICK` = 1), also paused while a raid is at the base. Raider targeting: patrol
@@ -101,7 +102,9 @@ breakthrough, 'Our town is being razed!' once warriors are gone). Cheat buttons
 can force a raid and spawn footmen.
 
 ### Conquerable sites
-`SITES` defines garrisoned mini-bases in the far field (guards + watch towers
+`SITE_POOL` defines garrisoned mini-bases in the far field; each run
+draws `SITE_SLOTS.length` of them at random onto the discovery-threshold
+ladder (createGame) (guards + watch towers
 per `SITE_TOWER`); instances live on `game.sites` with garrison state and up
 to three of our columns each: `march` (heading out, `SITE_MARCH_TICKS`),
 `strike` (fighting there), `returning` (heading home). Exploration reveals
@@ -151,7 +154,8 @@ One `advanceJobs`, one `cancelJob` (refund + builder release), one
 ### Commands
 Plain objects: `{ id, icon, label, cost, overlay?, enabled(s), available?(s),
 reason?(s), isActive?(s), run(s) }`, resolved per selection by
-`selectedCommands`. Semantics:
+`selectedCommands`. Commands render in one horizontally scrollable `.command-strip` row (no
+wrapping); the build menu's back button leads its list. Semantics:
 - `enabled` — actually runnable (includes affordability).
 - `available` — non-resource prerequisites only; drives **fading**
   (`commandFaded`). A costed command missing only resources stays lit.

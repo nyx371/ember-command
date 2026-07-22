@@ -199,7 +199,7 @@ button { touch-action: manipulation; }
 .world {
   min-height: 0;
   display: grid;
-  grid-template-rows: 28px 1fr 126px;
+  grid-template-rows: 28px 1fr 100px;
 }
 
 .world-head {
@@ -425,15 +425,19 @@ button { touch-action: manipulation; }
 .entity.flash-damage::after { background: rgba(214, 58, 40, 0.45); }
 .entity.flash-spawn::after  { background: rgba(255, 255, 255, 0.30); }
 
-/* Attackers shake subtly as their volley lands (a damage flash on the same
-   tile outranks this — see flashTile). */
-@keyframes tile-shake {
-  0%, 100% { transform: translateX(0); }
-  25% { transform: translateX(-1px); }
-  50% { transform: translateX(1px); }
-  75% { transform: translateX(-1px); }
+/* Attackers lunge subtly as their volley lands: my units nudge upward
+   (toward the enemy at the top of the map), enemies nudge downward (toward
+   my base). Pure transforms — no relayout of neighbours. */
+@keyframes tile-lunge-up {
+  0%, 100% { transform: translateY(0); }
+  30% { transform: translateY(-3px); }
 }
-.entity.flash-attack { animation: tile-shake 0.35s ease-in-out; animation-delay: var(--shake-delay, 0ms); }
+@keyframes tile-lunge-down {
+  0%, 100% { transform: translateY(0); }
+  30% { transform: translateY(3px); }
+}
+.entity.flash-attack { animation: tile-lunge-up 0.35s ease-out; animation-delay: var(--shake-delay, 0ms); }
+.entity.danger.flash-attack { animation-name: tile-lunge-down; }
 
 /* Segmented hp bar along a tile's bottom edge: one segment per unit, drained
    left-to-right; collapses to one continuous bar for hordes (>20). */
@@ -583,13 +587,28 @@ button { touch-action: manipulation; }
 .command-bar {
   min-height: 0;
   padding: 3px;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(52px, 1fr));
+  display: flex;
+  flex-direction: column;
   gap: 3px;
   border-top: 1px solid var(--line);
   background: #090909;
   overflow: hidden;
 }
+
+/* Commands sit in one horizontally scrollable row — never wrapping. */
+.command-strip {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 3px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x;
+  scrollbar-width: none;
+}
+.command-strip::-webkit-scrollbar { display: none; }
+.command-strip > .command { flex: 0 0 auto; width: 62px; }
 
 .count-badge {
   position: absolute;
@@ -611,7 +630,6 @@ button { touch-action: manipulation; }
 .entity.dimmed { opacity: 0.35; }
 
 .command-info {
-  grid-column: 1 / -1;
   padding: 2px 4px 4px;
   font-size: 14px;
   color: var(--muted);
@@ -729,7 +747,7 @@ button { touch-action: manipulation; }
   .zone-base { min-height: calc(var(--tile) * 5); }
   .shell { grid-template-rows: 52px 42px 1fr; gap: 6px; padding-left: 6px; padding-right: 6px; }
   .topbar { padding: 6px; }
-  .world { grid-template-rows: 24px 1fr 108px; }
+  .world { grid-template-rows: 24px 1fr 92px; }
   .world-canvas { gap: 4px; padding: 4px; }
   .entity { min-height: 48px; grid-template-columns: 36px 1fr; padding: 1px; gap: 3px; }
   .entity .icon { width: 36px; height: 36px; }
