@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.34';
-const VERSION_TAG = 'no auto-select, enemies above patrol, staggered raid volleys, new keep art';
+const VERSION = '0.35';
+const VERSION_TAG = 'per-type defend tiles, tower fire shake, full column composition on sites';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -1066,6 +1066,12 @@ function raidTick(state) {
       if (dealt > 0) {
         flashTile(`enemy:raid:${raid.id}`, 'damage');
         flashTile(raid.atBase ? 'army:defend:1' : 'army:patrol:1', 'attack');
+        // Firing towers rattle too.
+        if (raid.atBase) {
+          RAID_TOWER_TARGETS.forEach(k => {
+            if (state.structures[k] > 0) flashTile(`structure:${k}:1`, 'attack');
+          });
+        }
         raid.lastHitAt = performance.now();
       }
       const sizeBefore = raid.size;
@@ -2063,21 +2069,32 @@ function renderWorld() {
   // then move units between orders one per tap. Each order gets its own
   // always-present row (see armySection) so the layout never reflows as
   // pools empty and refill.
-  function armyTile(order) {
+  // Defenders spread out into one tile per unit type (all selecting the same
+  // defend group — its command card is per-type anyway); other orders stay as
+  // one grouped tile with the dominant type's icon. The shared wounds bar
+  // rides on the soaking type (first ARMY key present).
+  function armyTiles(order) {
     const pool = game.army[order];
     const n = poolCount(pool);
-    if (n === 0) return null;   // empty order groups stay hidden
-    // Primary icon is the dominant unit type; the order shows as the corner
-    // badge.
-    const domType = Object.keys(ARMY).reduce((best, k) =>
-      (pool[k] > (best ? pool[best] : 0)) ? k : best, null) || 'footmen';
-    return entityButton({
+    if (n === 0) return [];
+    const types = Object.keys(ARMY).filter(k => pool[k] > 0);
+    if (order === 'defend') {
+      return types.map((k, i) => entityButton({
+        kind: 'army', type: order, id: 1, compact: true,
+        icon: ARMY[k].icon, label: `${order} ${ARMY[k].label}`,
+        jobIcon: orderIcon(order),
+        countLabel: pool[k],
+        hp: i === 0 ? poolHp(pool) : null
+      }));
+    }
+    const domType = types.reduce((best, k) => (pool[k] > pool[best] ? k : best), types[0]);
+    return [entityButton({
       kind: 'army', type: order, id: 1, compact: true,
       icon: ARMY[domType].icon, label: order,
       jobIcon: orderIcon(order),
       countLabel: n,
       hp: poolHp(pool)
-    });
+    })];
   }
 
   // A column mid-march renders as its own tile right beside the group it's
@@ -2101,8 +2118,7 @@ function renderWorld() {
     row.className = 'tile-row';
     row.dataset.scroll = scrollKey;
     orders.forEach(order => {
-      const tile = armyTile(order);
-      if (tile) row.appendChild(tile);
+      armyTiles(order).forEach(tile => row.appendChild(tile));
       game.jobs.filter(j => j.kind === 'transfer' && j.to === order)
         .forEach(j => row.appendChild(marchTile(j)));
     });
@@ -2159,6 +2175,16 @@ function renderWorld() {
     chip.appendChild(count);
     return chip;
   }
+  // Our forces at a site / out exploring: one chip per unit type present,
+  // stacked bottom-left, so mixed columns show every type.
+  function mineChips(counts, blink) {
+    const wrap = document.createElement('span');
+    wrap.className = blink ? 'mine-chips badge-blink' : 'mine-chips';
+    Object.keys(ARMY).forEach(k => {
+      if (counts[k] > 0) wrap.appendChild(siteChip(ARMY[k].icon, counts[k]));
+    });
+    return wrap;
+  }
   // Scouts on Explore live here too: an empty stretch of wilderness they're
   // combing. The vision badge carries a progress ring — how close the
   // accumulated explore points are to the next discovery (units sent to
@@ -2177,11 +2203,7 @@ function renderWorld() {
       hp: poolHp(scoutPool)
     });
     btn.classList.add('site-big');
-    const domType = Object.keys(ARMY).reduce((best, k) =>
-      (scoutPool[k] > (scoutPool[best] || 0) ? k : best), 'footmen');
-    const chip = siteChip(ARMY[domType].icon, scoutsOut);
-    chip.classList.add('mine');
-    btn.appendChild(chip);
+    btn.appendChild(mineChips(scoutPool));
     siteTiles.appendChild(btn);
   }
   game.sites.forEach(site => {
@@ -2205,13 +2227,12 @@ function renderWorld() {
     if (!site.cleared && site.towersLeft > 0) foes.appendChild(siteChip('orctower', site.towersLeft));
     if (foes.children.length) btn.appendChild(foes);
     if (mine > 0) {
-      const col = site.strike || site.march || site.returning;
-      const domType = Object.keys(ARMY).reduce((best, k) =>
-        ((col[k] || 0) > (col[best] || 0) ? k : best), 'footmen');
-      const chip = siteChip(ARMY[domType].icon, mine);
-      chip.classList.add('mine');
-      if (site.march || site.returning) chip.classList.add('badge-blink');
-      btn.appendChild(chip);
+      const byType = {};
+      [site.strike, site.march, site.returning].forEach(col => {
+        if (!col) return;
+        Object.keys(ARMY).forEach(k => { byType[k] = (byType[k] || 0) + (col[k] || 0); });
+      });
+      btn.appendChild(mineChips(byType, !!(site.march || site.returning)));
       const shp = strikeHp(site);
       if (shp) btn.appendChild(hpBarEl(shp, 'mine'));
     }

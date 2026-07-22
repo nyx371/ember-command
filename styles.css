@@ -495,10 +495,17 @@ button { touch-action: manipulation; }
   pointer-events: none;
 }
 .site-chip .icon { width: 16px; height: 16px; object-fit: cover; image-rendering: pixelated; }
-.entity > .site-chip.mine {
+/* Our column at a site / scouts out exploring: one chip per unit type,
+   stacked upward from the bottom-left corner. */
+.entity > .mine-chips {
   position: absolute;
   left: 3px;
   bottom: 10px;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 2px;
+  align-items: flex-start;
+  pointer-events: none;
 }
 /* Reward badge top-left: what clearing the site pays. */
 .entity > .site-chip.reward {
