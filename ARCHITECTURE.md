@@ -39,7 +39,7 @@ timers: `gameTick` (1s, simulation + render) and `updateProgressRings`
 - `UNITS` — per trainable unit: `producer` (structure key), `cost`, `time`,
   optional `requires: [structureKey]`, `done(state)`. Generates train
   commands, auto-attached to their producer's command list.
-- `ARMY` — per unit type (footmen, archers, ballistas): `icon`, `label`, `singular`, `hp`/`dmg` (raid
+- `ARMY` — per unit type (footmen, knights, archers, ballistas): `icon`, `label`, `singular`, `hp`/`dmg` (raid
   combat; first listed type soaks damage first within a pool), `attack`
   (siege dps vs the enemy base). Units live in per-order pools:
   `game.army[order] = { footmen, archers, wounds }` for each of `ORDERS`
@@ -61,7 +61,10 @@ every structure has a repair command, hidden unless damaged, that rides the
 construct-job machinery (`startRepair`, `REPAIR_HP_PER_TICK`, worker returns
 to its node).
 `RAIDER_TYPES` is the enemy roster — one party per active type per wave
-(grunts wave 1+, axethrowers wave 6+; the ramp is gentle — +1 raider and a little hp/dmg per wave); stats and headcount scale per WAVE
+(grunts wave 1+, axethrowers wave 6+, ogres wave 9+, catapults wave 12+;
+the ramp is gentle). `siege: true` parties (catapults) ignore units — at the
+base they shell buildings only (towers first) and towers can't hit them
+(`defenseDamage` drops tower dmg vs siege); only warriors stop them; stats and headcount scale per WAVE
 (`game.raid.wave`), defense damage splits across simultaneous parties, and
 each raider killed pays its `bounty` in plunder gold. `spawnRaid` on the raid
 interval (`game.raid.interval` feeds the countdown ring on the enemy tile);
@@ -169,7 +172,9 @@ idle → most plentiful node's crew. Harvest cycle =
 
 ### Selection
 `game.selected = { kind, type, id }`, kinds `structure | workerGroup | node |
-army | enemy | site` (`march` tiles cancel on tap, never select). A stale
+army | enemy | site` (`march` tiles cancel on tap, never select). Defend renders one tile per unit type — those tiles select per-type
+(`selected.id` = ARMY key, scoping the command card via
+`armyGroupCommands(state, order, onlyType)`). A stale
 selection is left alone: `selectionValid` gates `selectedCommands`/
 `entityInfo`, so a gone target just shows an empty command card — nothing
 auto-selects, including finished buildings. Keep `SELECTION_VALID` in sync
@@ -195,7 +200,14 @@ fourth lookup scheme.
 generates `techCommand`s on their source structures; levels in `game.tech`
 are read by `harvestYield`/`unitDmg`/`unitHp`. Nodes with `discoverAt > 0`
 start hidden; exploration accumulates past the enemy-base find and reveals
-them. Town Hall → Keep is `game.hallTier` (1 = keep): same structure key, so
+them. The endgame is the `ENEMY_TARGETS` chain on `game.enemy.targets`
+(two outposts, then the stronghold): the attack pool grinds the first
+unrazed target (`attackDamage`), takes `target.defense`/tick attrition,
+each razed outpost adds `RAID_OUTPOST_RELIEF` to the raid interval, the
+stronghold self-repairs (`ENEMY_REBUILD`) and its fall wins. The current
+target renders as a `.site-big` danger tile in the sites row. Hall tiers
+(`HALL_TIERS`, `game.hallTier`): Keep gates Stables (`build.requiresTier`),
+Castle needs Stables. Town Hall → Keep is `game.hallTier` (1 = keep): same structure key, so
 loss condition/targeting/training are untouched; `buildingMaxHp` adds the
 tier hp bonus and `supplyCap` the supply perk; tile icon/label swap.
 `game.over = { won, day }` freezes the sim and shows the #gameover

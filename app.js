@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.36';
-const VERSION_TAG = 'knights + castle tier, ogres + catapults, stronghold campaign';
+const VERSION = '0.37';
+const VERSION_TAG = 'design + architecture docs synced for the late-game systems';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
