@@ -85,7 +85,9 @@ icon with the order as a corner badge; a column mid-march renders as its own
 tile beside the destination group (kind `march`, badge ring = march
 progress, no blinking) and tapping that tile recalls the column. The scouts'
 wilderness tile carries an `exploreRing` — progress from the last discovery
-milestone to the next. Production chips live in the fixed-height #queue strip under the resource bar (`renderQueueStrip`), never in the world. Wound
+milestone to the next — and while scouts are out, the far zone shows the
+non-interactive `.forecast` strip: next wave's composition + countdown and
+the wave after (same math as `spawnRaid`). Production chips live in the fixed-height #queue strip under the resource bar (`renderQueueStrip`), never in the world. Wound
 regen: defenders only (`HEAL_DEFEND_PER_TICK`), paused while a raid is at
 the base; no other order heals. Workers mend very slowly
 (`WORKER_HEAL_PER_TICK` = 1), also paused while a raid is at the base. Raider targeting: patrol
@@ -116,7 +118,7 @@ fight resolves. `siteTick` runs the fight on the raid
 cadences — our volley chews guards then towers; the garrison hits the strike
 pool (`damageStrike`) — and `conquerSite` applies the reward ({cache} pays
 out, {nodeId} reveals a `discoverAt: Infinity` node, {units} join the
-survivors). Scout-originated strikes (`site.strikeFrom === 'explore'`)
+survivors, {workers} spawn straight into the workforce). Scout-originated strikes (`site.strikeFrom === 'explore'`)
 return survivors + freed units straight to the explore pool — they resume
 exploring instantly; commanded assaults march home to defend. Expedition units count toward
 supply (`siteUnits` in `supplyUsed`); a wiped strike leaves garrison damage

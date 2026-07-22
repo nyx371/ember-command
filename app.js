@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.37';
-const VERSION_TAG = 'design + architecture docs synced for the late-game systems';
+const VERSION = '0.38';
+const VERSION_TAG = 'war-signs forecast, three new sites with rescues, slower defend regen';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -65,7 +65,7 @@ const REPAIR_HP_PER_TICK = 20;  // how fast one worker patches a building up
 // Regen per tick — only defenders resting between fights heal (never while a
 // raid is at the base, never on patrol or in the field), so pulling wounded
 // units back to defend has a real benefit.
-const HEAL_DEFEND_PER_TICK = 3;
+const HEAL_DEFEND_PER_TICK = 1;
 const WORKER_HEAL_PER_TICK = 1;   // very slow, and only while not under attack
 // Changing orders takes marching time (ticks): 2 + remoteness of both ends.
 // Pulling scouts home mid-raid costs real time — they can't teleport back.
@@ -107,13 +107,22 @@ const NODE_DEFS = [
 const SITES = [
   { key: 'camp',  icon: 'siteTerrain', rewardIcon: 'gold', label: 'raider camp', discoverAt: 260,
     guards: { count: 3, hp: 60, dmg: 7 }, towers: 1,
-    reward: { cache: { gold: 700, lumber: 500 } }, rewardText: 'war chest 700g 500w' },
+    reward: { cache: { gold: 2500, lumber: 1500 } }, rewardText: 'war chest 2500g 1500w' },
   { key: 'mine',  icon: 'siteTerrain', rewardIcon: 'goldSite', label: 'overrun mine', discoverAt: 400,
     guards: { count: 5, hp: 66, dmg: 8 }, towers: 1,
     reward: { nodeId: 'gold-4' }, rewardText: 'rich gold mine' },
   { key: 'stockade', icon: 'siteTerrain', rewardIcon: 'footman', label: 'prison camp', discoverAt: 560,
     guards: { count: 6, hp: 72, dmg: 9 }, towers: 2,
-    reward: { units: { footmen: 3 } }, rewardText: '3 captive footmen' }
+    reward: { units: { footmen: 3 } }, rewardText: '3 captive footmen' },
+  { key: 'loggers', icon: 'siteTerrain', rewardIcon: 'worker', label: 'logging camp', discoverAt: 750,
+    guards: { count: 5, hp: 80, dmg: 9 }, towers: 1,
+    reward: { workers: 3 }, rewardText: '3 captive peasants' },
+  { key: 'hoard', icon: 'siteTerrain', rewardIcon: 'gold', label: 'orc hoard', discoverAt: 950,
+    guards: { count: 8, hp: 80, dmg: 10 }, towers: 2,
+    reward: { cache: { gold: 4000, lumber: 2500 } }, rewardText: 'war hoard 4000g 2500w' },
+  { key: 'armory', icon: 'siteTerrain', rewardIcon: 'knight', label: 'slave pens', discoverAt: 1200,
+    guards: { count: 10, hp: 85, dmg: 10 }, towers: 2,
+    reward: { units: { knights: 2, archers: 2 } }, rewardText: 'captive knights & archers' }
 ];
 
 // Tech upgrades bought at their source building; level effects are read by
@@ -1284,9 +1293,14 @@ function conquerSite(state, site) {
       writeLog(state, `The ${node.label} is ours — send workers.`);
     }
   }
+  if (r.workers) {
+    for (let i = 0; i < r.workers; i += 1) state.workers.push(createWorker());
+    autoAssignWorkers(state);
+    writeLog(state, `${r.workers} rescued peasants head straight to work.`);
+  }
   const freed = r.units || {};
   if (r.units) {
-    writeLog(state, `${Object.values(r.units).reduce((a, b) => a + b, 0)} freed footmen join the survivors.`);
+    writeLog(state, `${Object.values(r.units).reduce((a, b) => a + b, 0)} freed units join the survivors.`);
   }
   // Scouts that stormed the place are already out here — they pocket the
   // loot and go straight back to exploring, no march home, no cooldown.
@@ -2362,6 +2376,34 @@ function renderWorld() {
   });
   sitesRow.appendChild(siteTiles);
 
+  // War signs: while scouts are out, exploration also brings word of what
+  // the enemy is massing — the next wave's composition and countdown, plus
+  // the wave after, fainter. Deliberately non-interactive: a strip of small
+  // muted icons, no tiles, nothing to tap — it must not read as an attack.
+  const forecast = document.createElement('div');
+  forecast.className = 'forecast';
+  if (unitsOnOrder(game, 'explore') > 0 && !game.over) {
+    forecast.appendChild(makeIcon(ICONS.explore, 'war signs'));
+    [[game.raid.wave, `${Math.max(0, game.raid.nextIn)}s`], [game.raid.wave + 1, 'then']].forEach(([wave, tag], gi) => {
+      const group = document.createElement('span');
+      group.className = gi === 1 ? 'forecast-group later' : 'forecast-group';
+      const label = document.createElement('span');
+      label.textContent = tag;
+      group.appendChild(label);
+      Object.keys(RAIDER_TYPES).forEach(key => {
+        const t = RAIDER_TYPES[key];
+        if (wave < t.fromWave) return;
+        const size = Math.floor(t.baseSize + (wave - t.fromWave) * t.sizePerWave);
+        if (size <= 0) return;
+        group.appendChild(makeIcon(ICONS[t.icon], t.label));
+        const n = document.createElement('span');
+        n.textContent = size;
+        group.appendChild(n);
+      });
+      forecast.appendChild(group);
+    });
+  }
+
   const seen = game.raids.filter(raid => raid.discovered);
   const raidZone = raid => raid.atBase ? 'base' : 'near';
 
@@ -2374,7 +2416,7 @@ function renderWorld() {
   // Every zone (and every row inside it) stays mounted when empty so tiles never
   // shift position as pools fill and drain; the whole stack scrolls as one.
   dom.world.append(
-    zone('far', [away, sitesRow, enemyRow('far', seen.filter(r => raidZone(r) === 'far'))]),
+    zone('far', [away, sitesRow, forecast, enemyRow('far', seen.filter(r => raidZone(r) === 'far'))]),
     zone('near', [enemyRow('near', seen.filter(r => raidZone(r) === 'near')), patrol]),
     zone('base', [enemyRow('base', seen.filter(r => raidZone(r) === 'base')), defend, workers, structures])
   );

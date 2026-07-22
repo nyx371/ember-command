@@ -495,6 +495,26 @@ button { touch-action: manipulation; }
   pointer-events: none;
 }
 .site-chip .icon { width: 16px; height: 16px; object-fit: cover; image-rendering: pixelated; }
+/* War-signs forecast: what the scouts hear is massing. Small muted icons in
+   a plain strip — deliberately not tile-like, deliberately untappable. */
+.forecast {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 22px;
+  padding: 1px 4px;
+  opacity: 0.75;
+  pointer-events: none;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+  overflow: hidden;
+}
+.forecast > .icon { width: 16px; height: 16px; }
+.forecast-group { display: flex; align-items: center; gap: 3px; white-space: nowrap; }
+.forecast-group .icon { width: 16px; height: 16px; }
+.forecast-group.later { opacity: 0.55; }
+
 /* Our column at a site / scouts out exploring: one chip per unit type,
    stacked upward from the bottom-left corner. */
 .entity > .mine-chips {
