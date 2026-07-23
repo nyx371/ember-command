@@ -51,7 +51,7 @@
 <main>
 
 <h1>Ember Command</h1>
-<p class="subtitle">game design document — last updated 2026-07-20 · see <code>ARCHITECTURE.md</code> for the code map</p>
+<p class="subtitle">game design document — last updated 2026-07-24 · see <code>ARCHITECTURE.md</code> for the code map</p>
 
 <h2>Concept</h2>
 <p>An abstract real-time strategy game inspired by Warcraft II. <strong>You command at scale, not at the unit level</strong> — standing orders and high-level taps instead of clicking units around a map. It should feel like being a general, not a babysitter.</p>
@@ -67,28 +67,33 @@
   <li><strong>Real WC2 numbers.</strong> Costs and build/train times are the actual Tides of Darkness values.</li>
 </ul>
 
-<h2><img class="icon" src="assets/icons/r_gold.png" alt="">Economy &amp; Workers</h2>
-<p><span class="status done">done</span> — Resource nodes are finite and have a <strong>distance</strong> from the town hall that lengthens each harvest cycle (gather time + round-trip travel). Workers pin to a node until it depletes, then go idle and auto-reassign. Depleted nodes disappear from the UI. Three distant nodes (hill mine, deep woods, mountain mine) start hidden — <strong>scouts on Explore reveal them</strong> after locating the enemy base, so exploration stays valuable and the economy outlives the starting nodes.</p>
-
-<div class="table-wrap"><table>
-  <tr><th>Node</th><th>Capacity</th><th>Distance</th></tr>
-  <tr><td><img class="icon" src="assets/icons/n_bld_goldmine.png" alt="">Gold mine</td><td>48&thinsp;000</td><td>1 (near)</td></tr>
-  <tr><td><img class="icon" src="assets/icons/n_bld_forest.png" alt="">Forest</td><td>25&thinsp;000</td><td>1 (near)</td></tr>
-  <tr><td><img class="icon" src="assets/icons/n_bld_forest.png" alt="">Far forest</td><td>25&thinsp;000</td><td>5 (slow cycles)</td></tr>
-</table></div>
-
-<p>Worker sourcing is priority-ordered, so a tap always does the most sensible thing:</p>
+<h2><img class="icon" src="assets/icons/n_site_terrain.png" alt="">The World — A Stack of Zones</h2>
+<p>Replaces both the fixed three-band map and the separate site/homeland systems (v0.47 rework). The world is a <strong>linear stack of zones</strong>, home at the bottom (index 0), the wilderness reaching upward. Exploring charts the next zone outward: scouts march in, and what they find is rolled but hidden until they arrive — <strong>empty ground is claimed on the spot</strong>, a <strong>garrison must be assaulted</strong> and cleared before the zone is yours. Garrisons grow tougher with depth and with how late in the game you find them. The scripted <strong>orc stronghold sits at depth 8</strong> — always occupied, and razing it wins the game.</p>
 <ul>
-  <li><strong>Harvest tap on a node</strong> pulls: idle worker → same-resource worker from another node → other-resource worker. <strong>Press-and-hold pulls every spare worker at once</strong> — the same gesture moves whole army pools between orders.</li>
-  <li><strong>Construction</strong> (from the Town Hall) pulls: idle worker → a worker from the <em>most plentiful</em> node — and returns it to that node when the build finishes or is cancelled.</li>
+  <li>Each zone <strong>owns its own</strong> resource nodes, structures, workers, and defenders. Tap a whole zone band to select it; its caption shows <code>name · status</code> (uncharted / occupied / owned / home).</li>
+  <li>An uncharted zone offers <strong>explore</strong> sends from the owned zone behind it; an occupied zone offers <strong>assault</strong> sends; an owned zone offers <strong>build</strong>.</li>
+  <li>Zone 1 is always neutral with a gold and a lumber node, so the opening expansion pays off in both resources. Deeper zones roll 1–2 nodes and a 60% garrison chance from the same pool as before (war chests, prison camps, logging camps, shrines, hoards, slave pens…).</li>
+  <li>Clearing a garrison pays its reward — and the <strong>surviving assault column settles as the zone's defenders</strong>. Every razed garrison zone permanently slows the raid schedule.</li>
+  <li>Garrisons are <strong>veiled</strong> — strength unknown until your own troops engage — and <strong>muster reinforcements</strong> while under attack.</li>
 </ul>
 
+<h2><img class="icon" src="assets/icons/r_gold.png" alt="">Economy &amp; Workers</h2>
+<p><span class="status done">done</span> — Workers belong to a zone and pin to a node there until it depletes, then idle and auto-reassign <em>within their zone</em> (preferred resource first, then gold, then wood). Harvest cycles pay for <strong>distance to the nearest depot</strong> — a town hall (any resource) or lumber mill (lumber) — so building a <strong>forward hall or mill</strong> in a remote zone genuinely speeds up its economy. The <strong>move icon</strong> transfers one worker per tap: arm it, then tap a destination zone or a specific resource node to retask (e.g. gold → wood across zones).</p>
+
+<div class="table-wrap"><table>
+  <tr><th>Home node</th><th>Capacity</th><th>Local distance</th></tr>
+  <tr><td><img class="icon" src="assets/icons/n_bld_goldmine.png" alt="">Gold mine</td><td>48&thinsp;000</td><td>1</td></tr>
+  <tr><td><img class="icon" src="assets/icons/n_bld_forest.png" alt="">Forest</td><td>25&thinsp;000</td><td>1</td></tr>
+  <tr><td><img class="icon" src="assets/icons/n_bld_forest.png" alt="">Far forest</td><td>25&thinsp;000</td><td>3</td></tr>
+</table></div>
+<p>Charted zones roll their nodes from a pool (gold/hill/mountain mines, woods, deep woods). <strong>Harvest tap</strong> on a node pulls a spare worker from the same zone (idle → same resource → other resource); press-and-hold pulls every spare. <strong>Construction</strong> pulls an idle worker in the zone, then any idle worker, then one off the richest crewed node anywhere — the builder settles in the zone it built in.</p>
+
 <h2><img class="icon" src="assets/icons/h_bld_townhall.png" alt="">Structures</h2>
-<p><span class="status done">done</span> — Buildings are built by a worker (auto-chosen, see above) via the Town Hall's construct menu. They stack as one tile with a count badge; in-progress builds show as tappable cancel-and-refund chips. Real WC2 build times make construction a genuine commitment.</p>
+<p><span class="status done">done</span> — Buildings are built by a worker (auto-chosen, see above) via the selected <em>zone's</em> Build command — any owned zone can be built up, including forward town halls. They stack as one tile with a count badge; in-progress builds show as tappable cancel-and-refund chips. Real WC2 build times make construction a genuine commitment.</p>
 
 <div class="table-wrap"><table>
   <tr><th>Structure</th><th>Cost</th><th>Time</th><th>Effect</th><th>Status</th></tr>
-  <tr><td><img class="icon" src="assets/icons/h_bld_townhall.png" alt="">Town Hall</td><td>—</td><td>—</td><td>Trains workers, opens build menu, +4 supply</td><td><span class="status done">done</span></td></tr>
+  <tr><td><img class="icon" src="assets/icons/h_bld_townhall.png" alt="">Town Hall</td><td>1000g 600w</td><td>255s</td><td>Trains workers, +4 supply, resource depot; buildable in any owned zone as a forward base (home's hall alone upgrades tiers and is the loss condition)</td><td><span class="status done">done</span></td></tr>
   <tr><td><img class="icon" src="assets/icons/h_bld_farm.png" alt="">Farm</td><td>500g 250w</td><td>100s</td><td>+4 supply, stackable</td><td><span class="status done">done</span></td></tr>
   <tr><td><img class="icon" src="assets/icons/h_bld_barracks.png" alt="">Barracks</td><td>700g 450w</td><td>200s</td><td>Trains footmen/archers; each adds +1 training slot and +5 queue depth</td><td><span class="status done">done</span></td></tr>
   <tr><td><img class="icon" src="assets/icons/h_bld_lumbermill.png" alt="">Lumber Mill</td><td>600g 450w</td><td>150s</td><td>Unlocks archers + towers; lumber-yield upgrades (2 tiers)</td><td><span class="status done">done</span></td></tr>
@@ -99,50 +104,26 @@
   <tr><td><img class="icon" src="assets/icons/h_bld_watchtower.png" alt="">Guard Tower</td><td>500g 150w</td><td>140s</td><td>Tower upgrade (needs Lumber Mill), 8 dmg/volley</td><td><span class="status done">done</span></td></tr>
 </table></div>
 
-<h2><img class="icon" src="assets/icons/h_unit_footman.png" alt="">Units &amp; Orders</h2>
-<p><span class="status done">done</span> — Units train with real WC2 times and costs; supply is reserved while queued (marching units count too). The army renders as <strong>one tile per standing order</strong>; selecting an order group shows one button per <em>unit type in the group × target order</em> (unit icon + order overlay) — tap moves one of that type, hold moves all of them. <strong>Order changes are timed marches</strong>: units leave immediately, spend the march in transit (fighting for neither side, untargetable), and arrive after 2&thinsp;+&thinsp;remoteness ticks (defend↔patrol is quick; attack is far). <strong>Joining the scouts is instant</strong> — units sent to Explore just add to the explorer pool, and more explorers means faster discovery; coming <em>back</em> from explore still takes the march. A marching column shows as its own tile beside the group it's joining — unit icon, destination badge with a progress ring for the switching time — and tapping it recalls the column. You cannot yank scouts home the instant a raid lands. The game starts with <strong>one footman</strong> on defend. Only <strong>defenders resting between fights regenerate (slowly)</strong> — never mid-combat, never on patrol or in the field — a real reason to rotate wounded units home. Workers mend very slowly, and not at all while the town is under attack.</p>
+<h2><img class="icon" src="assets/icons/h_unit_footman.png" alt="">Units &amp; Movement</h2>
+<p><span class="status done">done</span> — Units train with real WC2 times and costs at a barracks/stables <em>in a zone</em>, and join <strong>that zone's defenders</strong>; each zone renders one tile per unit type present (tap selects just that type). <strong>Patrol and Attack are gone as orders</strong>: a stationed unit defends wherever it stands, raids are intercepted by whichever zone they march through, and attacking a garrison is a zone assault. Moving between zones is a <strong>timed march</strong> (cost grows with zones crossed) shown as a march tile with a progress ring — tap to recall; same-route moves merge into one column. Only defenders in a zone no raid is fighting regenerate, slowly; workers mend even slower and never while any raid is engaged.</p>
 
 <div class="table-wrap"><table>
   <tr><th>Unit</th><th>Cost</th><th>Time</th><th>Role</th></tr>
-  <tr><td><img class="icon" src="assets/icons/h_unit_peasant.png" alt="">Worker (Peasant)</td><td>400g</td><td>45s</td><td>Harvest &amp; build — auto-managed</td></tr>
-  <tr><td><img class="icon" src="assets/icons/h_unit_footman.png" alt="">Footman</td><td>600g</td><td>60s</td><td>Melee — power 3</td></tr>
-  <tr><td><img class="icon" src="assets/icons/h_unit_archer.png" alt="">Archer</td><td>500g 50w</td><td>70s</td><td>Ranged — power 2, needs Lumber Mill</td></tr>
-  <tr><td><img class="icon" src="assets/icons/h_unit_ballista.png" alt="">Ballista</td><td>900g 300w</td><td>250s</td><td>Siege — power 25, needs Blacksmith</td></tr>
+  <tr><td><img class="icon" src="assets/icons/h_unit_peasant.png" alt="">Worker (Peasant)</td><td>400g</td><td>45s</td><td>Harvest &amp; build — auto-managed per zone</td></tr>
+  <tr><td><img class="icon" src="assets/icons/h_unit_footman.png" alt="">Footman</td><td>600g</td><td>60s</td><td>Melee — power 7, soaks first</td></tr>
   <tr><td><img class="icon" src="assets/icons/h_unit_knight.png" alt="">Knight</td><td>800g 100w</td><td>90s</td><td>Elite melee — power 10, needs Stables (Keep tier)</td></tr>
-</table></div>
-
-<div class="table-wrap"><table>
-  <tr><th>Order</th><th>Behaviour</th></tr>
-  <tr><td><img class="icon" src="assets/icons/c_hshield1.png" alt=""><strong>Defend</strong></td><td>Holds the base; soaks raids that get through (with towers)</td></tr>
-  <tr><td><img class="icon" src="assets/icons/c_hpatrol.png" alt=""><strong>Patrol</strong></td><td>Perimeter shield; intercepts raids before they hit the base</td></tr>
-  <tr><td><img class="icon" src="assets/icons/c_hmove.png" alt=""><strong>Explore</strong></td><td>Scouts comb the wilds from their own terrain tile; reveals nodes, finds the enemy base (unlocks Attack), and <em>storms garrisoned sites on discovery</em></td></tr>
-  
+  <tr><td><img class="icon" src="assets/icons/h_unit_archer.png" alt="">Archer</td><td>500g 50w</td><td>70s</td><td>Ranged — power 5, needs Lumber Mill</td></tr>
+  <tr><td><img class="icon" src="assets/icons/h_unit_ballista.png" alt="">Ballista</td><td>900g 300w</td><td>250s</td><td>Siege — power 25, needs Blacksmith</td></tr>
 </table></div>
 
 <h2><img class="icon" src="assets/icons/o_unit_grunt.png" alt="">Threat &amp; Victory</h2>
-<p><span class="status done">done</span> — Raiding parties are real grunts with hp, damage, and an attack cooldown, shown as danger tiles at the bottom while active. Combat is <strong>staged by zone</strong>: a raid crosses the near zone (the patrol's layer — patrol fires throughout the approach), then fights the patrol there in a two-way exchange while defenders and towers hold their fire; only once the patrol falls does it break through into the base zone ("Our town is under attack!"), where defenders and towers engage it. Past the patrol they cut down defenders, then the towers shooting at them, then workers, then raze the remaining buildings one by one (town hall last) — building damage <strong>persists after the raid</strong> and each damaged structure offers a <strong>repair command</strong> that pulls a worker (who returns to its node when done) — with the alarm "Our town is being razed!" once your warriors are gone. Scouts (shown on their own wilderness tile in the far field) and the attack force are away from the base: safe from raids, but useless against them until called back. Waves scale by <strong>wave number</strong> — the first raid is always a lone grunt and holds off longer than the normal cadence (RAID_FIRST_DELAY), so the opening is survivable — while the shrinking raid interval accelerates pressure in real time — the ramp is gentle (+1 raider and a little hp/dmg per wave); from wave 6 <strong>axethrowers</strong> join as a second party, from wave 9 <strong>ogres</strong> as heavies, and from wave 12 <strong>catapult parties</strong> — siege engines that <em>ignore units entirely</em> and shell buildings from beyond tower range: towers can't answer them, only your warriors can cut them down. <strong>Waves approach unseen</strong>: only a standing patrol scouts them during the 10-tick approach (toast + tile in the near zone); with no patrol they simply appear at the gates. There is no countdown timer by default — patrol <em>is</em> the early-warning system, and it soaks the first blows. <strong>War signs</strong>: while scouts are out exploring, a small non-interactive strip centered at the bottom of the far field (appearing only once the enemy homeland has been located) gives a <em>vague</em> read on the next wave only — 'imminent/soon/gathering/distant' and 'few/some/many/a horde' per raider type. Rumours, not intel: no numbers, no second wave. Towers shoot back; every raider killed drops <strong>plunder gold</strong>.</p>
-<p><span class="status done">done</span> — <strong>Win/loss is real</strong>: there is no Attack order — the enemy homeland is a chain of <strong>assaultable target cards</strong> (two outposts, then the stronghold), revealed one at a time and taken exactly like conquerable sites: tap the wide card, send warriors from the defend pool. They are far tougher than ordinary sites, their garrison is <em>veiled until your troops engage</em>, and they <strong>muster reinforcements</strong> while under attack. Each razed outpost <em>permanently slows the raid schedule</em>; the stronghold's fall wins the game. Losing the town hall ends it in defeat. A full-screen result shows the day count — tap to restart.</p>
+<p><span class="status done">done</span> — Raiding parties spawn <strong>beyond your deepest owned zone</strong> and march inward zone by zone toward home. Each owned zone they reach fights back with its stationed defenders and towers; raiders answer on an offset cadence, cutting down defenders, then the towers shooting at them, then workers, then razing buildings — building damage <strong>persists until repaired</strong> (repair command appears on damaged buildings; a worker walks over and returns to its node). A zone with nothing left is subdued and the raid marches on; losing <strong>home's town hall</strong> is defeat. Waves ramp gently by wave number (axethrowers from wave 6, <strong>ogres</strong> from 9, <strong>catapults</strong> from 12 — siege engines that ignore units and shell buildings from beyond tower range; only warriors stop them). Every raider killed drops plunder gold; every razed garrison zone permanently stretches the raid interval. <strong>War signs</strong>: a vague non-interactive strip in the frontier band — 'imminent/soon/gathering/distant' and 'few/some/many/a horde' per raider type, no numbers.</p>
+<p><span class="status done">done</span> — <strong>Win/loss is real</strong>: razing the orc stronghold at depth 8 wins; losing home's town hall loses. A full-screen result shows the day count — tap to restart.</p>
 <div class="note"><strong>Global pace lever.</strong> All build/train/upgrade durations are the real WC2 seconds × <code>TIME_SCALE</code> (currently 0.3) — one constant to retune the whole game's tempo.</div>
 <div class="note"><strong>Open — end-game refinements.</strong> Survive-to-day-N and economic-victory variants; what a win/loss does to a future save file.</div>
 
-<h2><img class="icon" src="assets/icons/o_bld_watchtower.png" alt="">Conquerable Sites</h2>
-<p>Replaces WC2's optional map objectives (gold mines to claim, corners worth clearing) with discrete, garrisoned sites — exploration finds them, force takes them. <strong>Each run draws six sites at random</strong> from the nine-strong pool below onto the discovery ladder, so runs differ. Exploration's <strong>first find is always the hill gold mine</strong> — economy before fights — and garrisons <strong>scale with the raid-wave counter at the moment of discovery</strong>, so camps found late are tougher, mirroring attack-wave ramp-up (listed garrisons are the base).</p>
-<p><span class="status done">done</span> — Scouts on Explore reveal <strong>garrisoned sites</strong> in the far field, each a double-size tile of wilderness terrain art with a contextual <strong>reward badge</strong> (what clearing it pays), garrison chips (grunts, watch towers), your assault column's chip, and both sides' hp bars. <strong>Scouts storm a garrisoned site the moment they discover it</strong> — the explore pool becomes the strike force on the spot (resource-node finds don't interrupt scouting), and the victors <strong>resume exploring immediately</strong> after clearing it, loot pocketed, freed units joining them — no march home, no cooldown. You can also tap a discovered site to <strong>send warriors from the defend pool</strong> (tap = one, hold = all — no recall: an assault is a commitment); that column marches out, exchanges volleys with the garrison — guards soak first, then the towers fall — and <strong>survivors march home automatically</strong> when the site is cleared, bringing the reward: a <strong>war chest</strong> (raider camp), a <strong>rich gold mine</strong> that appears as a harvestable node (overrun mine), or <strong>captive footmen</strong> who join the returning column (prison camp). A wiped assault leaves the garrison's damage standing, so a second expedition can finish the job. Units on an expedition count toward supply and are away from the base — they can't help against raids.</p>
-
-<div class="table-wrap"><table>
-  <tr><th>Site</th><th>Garrison</th><th>Reward</th></tr>
-  <tr><td><img class="icon" src="assets/icons/r_gold.png" alt="">Raider camp</td><td>3 grunts, 1 watch tower</td><td>War chest: 2500g 1500w</td></tr>
-  <tr><td><img class="icon" src="assets/icons/n_bld_goldmine.png" alt="">Overrun mine</td><td>5 grunts, 1 watch tower</td><td>Rich gold mine node (30k, dist 3)</td></tr>
-  <tr><td><img class="icon" src="assets/icons/h_unit_footman.png" alt="">Prison camp</td><td>6 grunts, 2 watch towers</td><td>3 captive footmen join you</td></tr>
-  <tr><td><img class="icon" src="assets/icons/h_unit_peasant.png" alt="">Logging camp</td><td>5 grunts, 1 watch tower</td><td>3 captive peasants join the workforce</td></tr>
-  <tr><td><img class="icon" src="assets/icons/r_gold.png" alt="">Orc hoard</td><td>8 grunts, 2 watch towers</td><td>War hoard: 4000g 2500w</td></tr>
-  <tr><td><img class="icon" src="assets/icons/h_unit_knight.png" alt="">Slave pens</td><td>10 grunts, 2 watch towers</td><td>2 captive knights + 2 archers</td></tr>
-  <tr><td><img class="icon" src="assets/icons/r_gold.png" alt="">Orc warband</td><td>4 grunts, no tower</td><td>Plunder: 1500g 800w</td></tr>
-  <tr><td><img class="icon" src="assets/icons/h_unit_peasant.png" alt="">Work pens</td><td>4 grunts, no tower</td><td>2 peasants + 1 footman</td></tr>
-  <tr><td><img class="icon" src="assets/icons/r_gold.png" alt="">Orc shrine</td><td>6 grunts, 1 watch tower</td><td>Looted idol: 3000g</td></tr>
-</table></div>
-
-<div class="note"><strong>Open — sites and raids.</strong> Should uncleared sites feed the raid pressure (outposts as raid sources, per the design review below), and should garrisons repair over time?</div>
+<h2><img class="icon" src="assets/icons/o_bld_watchtower.png" alt="">Garrisons (Occupied Zones)</h2>
+<p>The old standalone "sites" are now the garrisons of occupied zones — same pool, same rewards, absorbed into the zone stack. Units marched in fight the garrison on the raid cadences (guards soak first, then watch towers fall); a wiped assault leaves the damage standing for the next column. Rewards on clearing: war chests and hoards (big gold + lumber caches), freed footmen/knights/archers who <em>join the conquering force</em>, freed peasants who join the zone's workforce, a looted idol — and the zone itself, whose survivors become its defenders.</p>
 
 <h2><img class="icon" src="assets/icons/h_bld_blacksmith.png" alt="">Upgrades</h2>
 <p><span class="status done">done</span> — Tech upgrades follow the guard-tower pattern: one button on the source structure, timed, cancellable with refund, never consuming a worker. <strong>One research at a time per source building</strong> — a second blacksmith unlocks a second parallel slot. Implemented: <strong>lumber harvesting</strong> (Lumber Mill, 2 tiers, +25% yield each), <strong>weapons</strong> (Blacksmith, 2 tiers, +2 dmg per unit), <strong>armor</strong> (Blacksmith, 2 tiers, +10 hp per unit), <strong>ballista engineering</strong> (Blacksmith, 2 tiers, +10 dmg per ballista) — the player's counter-curve to daily raid scaling.</p>
@@ -185,7 +166,7 @@
 <ul>
   <li><span class="status done">done</span> <strong>Castle tier + Stables + Knights.</strong> Hall tier 2 (Castle) gates the Stables; Knights are the tier-2 melee elite (fast, expensive, hp ~90/dmg ~10). The player's late-game power spike, mirroring the wave ramp. Cheapest to build: one BUILDINGS row, one UNITS row, one ARMY row.</li>
   <li><span class="status done">done</span> <strong>Enemy escalation variety: ogres and catapults.</strong> Ogres join waves ~10+ as a heavy third party; catapult parties (~12+) ignore units and shell buildings from range — towers can't answer them, only a sortie can, breaking the tower-turtle equilibrium.</li>
-  <li><span class="status done">done</span> <strong>Stronghold campaign.</strong> Replace the abstract enemy-strength number with a chain of enemy sites: outposts that feed the raid schedule (razing one slows waves), then the stronghold itself as a final multi-stage assault. Attack becomes staged conquest with visible progress; the run ends deliberately instead of fading.</li>
+  <li><span class="status done">done</span> <strong>Stronghold campaign</strong> — evolved into the world-zone stack (v0.47): the road to the stronghold at depth 8 <em>is</em> the campaign, garrison zone by garrison zone.</li>
   <li><span class="status idea">idea</span> <strong>Magic tier: Church + Mage Tower.</strong> Paladins (heal the defend pool between volleys) and Mages (splash volley vs whole raids) as Castle-tier casters — WC2's late-game texture, and a gold sink for the deep economy.</li>
   <li><span class="status idea">idea</span> <strong>A hero.</strong> One named WC2 hero (Lothar sprite is in the icon set) leading whichever posture it joins: small aura, survives at 1 hp, levels over the run.</li>
 </ul>
@@ -193,7 +174,8 @@
 <h2>UI Conventions Established So Far</h2>
 <p>Patterns already built — extend these rather than inventing new ones:</p>
 <ul>
-  <li><strong>Grouped tiles</strong> — anything stackable renders as one compact tile with a <code>count-badge</code>, never one tile per instance.</li>
+  <li><strong>Zone bands</strong> — the world renders one tappable band per zone (caption <code>name · status</code>, inset ring when selected), frontier at the top, home at the bottom; the view opens scrolled to home.</li>
+  <li><strong>Grouped tiles</strong> — anything stackable renders as one compact tile with a <code>count-badge</code> (defenders spread into one tile per unit type per zone).</li>
   <li><strong>Radial progress rings</strong> — canvas conic-gradient rings (<code>radialProgressCanvas</code>), stacked semi-transparent when several timers share a tile, animated smoothly between ticks.</li>
   <li><strong>Job chips</strong> — every in-flight timed job (training, construction, upgrade) is one tappable chip: its own ring, tap to cancel and refund.</li>
   <li><strong>Icon-only commands</strong> — WC2-style command card; cost renders as an overlay strip of icon+number pairs, left-aligned; number-key hotkeys on desktop, hidden on touch.</li>

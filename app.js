@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.47';
-const VERSION_TAG = 'move icon transfers one worker/unit at a time; tap a resource node to retask (gold→wood across zones)';
+const VERSION = '0.48';
+const VERSION_TAG = 'docs re-synced to the world-zone model';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';

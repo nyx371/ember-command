@@ -8,7 +8,7 @@ first; `CLAUDE.md` has working conventions, `design.html` the game design,
 
 | file | role |
 |---|---|
-| `index.html` | Static shell: top bar (resources, menu), world area, command bar, error toast. No templates — all dynamic DOM comes from `app.js`. |
+| `index.html` | Static shell: top bar (resources, menu), production queue strip, world area, command bar, error toast. No templates — all dynamic DOM comes from `app.js`. |
 | `app.js` | Everything: data tables, state, simulation, commands, rendering, input. One file, no modules, no build step. |
 | `styles.css` | All styling. Mobile-first; note the `@media (max-height: 760px)` compact overrides and `@media (hover: none)` touch overrides. |
 | `design.html` | Standalone rendered game-design doc (own inline styles, not linked to the app's CSS). |
@@ -17,10 +17,10 @@ first; `CLAUDE.md` has working conventions, `design.html` the game design,
 
 ## app.js section map (banner comments, in file order)
 
-`Tunables` → `Data tables` → `State` → `Small shared helpers` →
-`Workers & resource nodes` → `Timed jobs` → `Stats` → `Army` → `Raid` →
-`Tick` → `Commands` → `Selection` → `Render helpers` → `Render` → `Input` →
-`Boot`
+`Tunables` → `Data tables` → `State` → `Small shared helpers` → `Zones` →
+`Workers & resource nodes` → `Timed jobs` → `Stats` → `Army` →
+`Raid combat` → `Garrison combat` → `Tick` → `Commands` → `Selection` →
+`Render helpers` → `Render` → `Input` → `Boot`
 
 ## Core concepts
 
@@ -30,230 +30,212 @@ subtrees from it via `replaceChildren()` — no diffing, deliberately. Two
 timers: `gameTick` (1s, simulation + render) and `updateProgressRings`
 (100ms, redraws progress rings only, interpolating via `tickFraction`).
 
-### Data tables drive content
-- `BUILDINGS` — per building: `icon`, `label`, optional `build {cost, time}`
-  (worker-constructable), `supply`, `hp` (raiders must raze it), `dmg` (shoots
-  back at raiders), `blurb` (info line, string or `fn(state)`), `onBuilt`.
-  Generates: `game.structures` keys, structure tiles, the build menu, supply
-  cap, tower damage, info text.
-- `UNITS` — per trainable unit: `producer` (structure key), `cost`, `time`,
-  optional `requires: [structureKey]`, `done(state)`. Generates train
-  commands, auto-attached to their producer's command list.
-- `ARMY` — per unit type (footmen, knights, archers, ballistas): `icon`, `label`, `singular`, `hp`/`dmg` (raid
-  combat; first listed type soaks damage first within a pool), `attack`
-  (siege dps vs the enemy base). Units live in per-order pools:
-  `game.army[order] = { footmen, archers, wounds }` for each of `ORDERS`
-  (defend/patrol/explore — there is no attack order). Army tiles are one per ORDER; selecting one
-  offers per-type move commands — (type present × other order) buttons, unit
-  icon with order overlay; tap moves one, hold moves all of that type
-  (`armyGroupCommands`, built dynamically per render).
+### The world is a linear stack of zones
+`game.zones` — index 0 is home; higher indices reach outward. Each zone owns
+its own `nodes`, `structures`, `structureDamage`, defenders (`zone.army`, one
+pool per zone with per-type counts + shared `wounds`), and — while `status`
+is `'occupied'` — a `garrison` plus our attacking `strike` column. The zone
+accessors (`zoneById`, `zoneByIndex`, `homeZone`, `ownedZones`,
+`deepestOwned`, `chartingZone`, `frontierZone`, `nodeZone`,
+`totalStructures`) are the only sanctioned way to reach zone contents.
 
-**Adding a building or unit = one table entry (+ `ICONS` line if a new
-sprite).** Times/costs are real WC2 values; every duration is multiplied by
-`TIME_SCALE` (via `scaledTime`) when a job starts.
+`makeZone(index, wave)` rolls a new zone: 1–2 nodes from `ZONE_NODE_POOL`
+(zone 1 is always neutral with gold + lumber via `goldAndLumberNodes`), and a
+garrison from `GARRISON_POOL` at `ZONE_OCCUPY_CHANCE` (60%) — except
+`STRONGHOLD_DEPTH` (8), which always holds the scripted `STRONGHOLD`; razing
+it wins. `scaleGuards` toughens garrisons with both depth and the raid-wave
+counter at generation time. `ensureFrontier` keeps exactly one uncharted zone
+past the deepest owned one; its contents are rolled immediately but hidden
+(`discovered: false`) until scouts arrive. Charted empty zones flip straight
+to `owned`; occupied ones must be assaulted.
+
+### Data tables drive content
+- `BUILDINGS` — per building: `icon`, `label`, optional `build {cost, time,
+  requires, requiresTier}` (worker-constructable; `requiresTier` gates on
+  `game.hallTier`), `supply`, `hp`, `dmg` (fires at raids in its zone),
+  `blurb(state, zone)`. The hall itself is buildable (1000g 600w) to plant a
+  **forward base** in any owned zone; only home's hall is the loss condition
+  and only it upgrades tiers.
+- `UNITS` — per trainable unit: `producer`, `cost`, `time`, `requires`,
+  `done(state, zone)`. Trained units join the producing **zone's** defenders;
+  workers join its workforce.
+- `ARMY` — footmen, knights, archers, ballistas: `icon`, `label`,
+  `singular`, `hp`/`dmg` (listed first soaks first within a pool), `attack`.
+- `GARRISON_POOL` / `STRONGHOLD` — garrison templates (guards + watch towers
+  per `SITE_TOWER`, `reward` of {cache}/{units}/{workers}, `rewardText`,
+  `rewardIcon`); `HOME_NODES` / `ZONE_NODE_POOL` — resource-node templates.
+- `TECH` — lumber/weapons/armor/ballista tracks (source building, per-tier
+  icons/costs/times). Tech is global: researched at any copy of the source,
+  applies everywhere. One research at a time per source building
+  (`upgradeSlotFree`) — more blacksmiths = more parallel slots.
+- `HALL_TIERS` — Keep (needs barracks) then Castle (needs stables);
+  `game.hallTier` on home's hall only. Each tier +600 hall hp, +4 supply
+  (`hallTierBonus`, `buildingMaxHp`); Keep gates the Stables via
+  `build.requiresTier`.
+
+**Adding a building/unit/garrison/node = one table entry (+ `ICONS` line).**
+Times/costs are real WC2 values; every duration is multiplied by
+`TIME_SCALE` via `scaledTime` when a job starts.
+
+### Orders
+`ORDERS = ['defend', 'explore']` — patrol and attack are gone. A stationed
+unit defends the zone it stands in; exploring is marching to chart the next
+zone; attacking a garrison is a zone assault. There are no order pools —
+`zone.army` is the defend pool of that zone.
+
+### Economy (per zone)
+A worker belongs to a zone (`worker.zoneId`) and pins to a node there until
+depletion, then idles; `autoAssignWorkers` re-places idle workers **within
+their own zone** (preferred resource `worker.pref` first, then gold, then
+lumber). Harvest cycle = `HARVEST_GATHER[type] + distance ×
+TRAVEL_PER_DISTANCE + depotDistance × HARVEST_DEPOT_TRAVEL` — the depot haul
+is zones-to-nearest hall (gold/lumber) or lumber mill (lumber), so forward
+halls/mills speed up remote harvesting. `spareWorker` (harvest tap: idle →
+same-resource → other-resource, same zone only); `builderWorker(state, zone)`
+(idle in zone → any idle → richest crewed node anywhere; settles in the zone
+it built in). Repair rides the construct machinery (`startRepair`,
+`REPAIR_HP_PER_TICK`); building damage is per zone (`zone.structureDamage`)
+and persists until repaired.
+
+### Moving between zones
+`startTransfer(state, fromId, toId, type, count, mode)` — a timed `transfer`
+job (`transferTicks` = `TRANSFER_BASE_TICKS` + zones crossed ×
+`ZONE_MARCH_PER_STEP`); units leave the source zone's pool immediately,
+count toward supply in transit, merge into same-route columns, and are
+delivered by `arriveColumn`. `mode` ∈ move | explore | assault (sets the
+march-tile overlay icon and arrival behavior). `exploreFrom` marches units
+at the uncharted zone (creating it if needed); arrival reveals it — empty
+ground is claimed, a garrison starts a fight. The **move arm**
+(`game.moveArm`) is the one-at-a-time flow: a Move command arms a source
+(worker crew / idle worker / unit type), then each tap on a destination zone
+(or a specific resource node — which retasks the worker to that resource)
+moves exactly one; tapping elsewhere disarms.
 
 ### Raid combat
-`game.raids` holds live raiding parties (`{ kind, icon, label, size,
-grunt: {hp, dmg}, hpPool, arriveIn, strikeIn, targetType }`). Building
-damage is persistent: raids accumulate it in `game.structureDamage[key]`
-(destroying an instance past its hp); it stays until a worker repairs it —
-every structure has a repair command, hidden unless damaged, that rides the
-construct-job machinery (`startRepair`, `REPAIR_HP_PER_TICK`, worker returns
-to its node).
-`RAIDER_TYPES` is the enemy roster — one party per active type per wave
-(grunts wave 1+, axethrowers wave 6+, ogres wave 9+, catapults wave 12+;
-the ramp is gentle). `siege: true` parties (catapults) ignore units — at the
-base they shell buildings only (towers first) and towers can't hit them
-(`defenseDamage` drops tower dmg vs siege); only warriors stop them; stats and headcount scale per WAVE
-(`game.raid.wave`), defense damage splits across simultaneous parties, and
-each raider killed pays its `bounty` in plunder gold. `spawnRaid` on the raid
-interval (`game.raid.interval` feeds the countdown ring on the enemy tile);
-`raidTick` runs the two sides on offset cadences — my side volleys every
-`DEFENSE_VOLLEY_EVERY` (2) ticks, raiders every `RAID_VOLLEY_EVERY` (3) once
-arrived. Combat is staged by zone (`raid.atBase`): a raid approaches through
-the near zone (patrol fires at it the whole way), then on arrival fights the
-patrol there — two-way, patrol only, no defenders or towers — and only once
-the patrol is wiped (or was never there) does it break through to the base
-zone, where defenders + towers engage it. The breakthrough is sticky: a
-patrol re-formed afterwards is bypassed. `defenseDamage(state, raid)` is
-stage-aware (near: patrol pool; base: defend pool + towers), and my volley
-splits across parties in the same stage. Waves spawn silently and
-undiscovered; a standing patrol spots them instantly at spawn (and any patrol
-raised mid-approach picks them up next tick) — otherwise the raid appears
-only on arrival. Army tiles show the dominant unit type as the primary
-icon with the order as a corner badge; a column mid-march renders as its own
-tile beside the destination group (kind `march`, badge ring = march
-progress, no blinking) and tapping that tile recalls the column. The scouts'
-wilderness tile carries an `exploreRing` — progress from the last discovery
-milestone to the next — and while scouts are out, the far zone shows the
-non-interactive `.forecast` strip: a vague read on the next wave only —
-qualitative time ('imminent'…'distant') and size words ('few'…'a horde')
-per raider type, no numbers (same composition math as `spawnRaid`). Production chips live in the fixed-height #queue strip under the resource bar (`renderQueueStrip`), never in the world. Wound
-regen: defenders only (`HEAL_DEFEND_PER_TICK`), paused while a raid is at
-the base; no other order heals. Workers mend very slowly
-(`WORKER_HEAL_PER_TICK` = 1), also paused while a raid is at the base. Raider targeting: patrol
-pool → defend pool → towers (`RAID_TOWER_TARGETS`) → workers → remaining
-buildings per `RAID_TARGET_ORDER` (hall last). Explore/attack pools are away
-from the base: they neither fight raids nor get targeted. Wounds pools:
-`army[order].wounds`, `game.workerWounds`. Alarms via `flashError`
-('Patrol spotted enemies approaching!' on discovery, 'Our patrol engages the
-raiders!' on arrival with a patrol standing, 'Our town is under attack!' on
-breakthrough, 'Our town is being razed!' once warriors are gone). Cheat buttons
-can force a raid and spawn footmen.
+`RAIDER_TYPES` roster (grunts wave 1+, axethrowers 6+, ogres 9+, catapults
+12+; gentle ramp, per-party offset volley phases via `foeDelay`). Raids
+spawn beyond the **deepest owned zone** and march inward zone by zone
+(`raid.index`, `ZONE_MARCH_PER_STEP` between zones), fighting whichever
+owned zone they reach: that zone's defenders + towers fire
+(`defenseDamage`; siege parties are immune to towers), raiders answer on
+their cadence with targeting defenders → towers → workers → buildings
+(`RAID_TARGET_ORDER`, home hall's fall = defeat; `siege` parties shell
+buildings only). A zone with no defenders, workers, or buildings is
+"subdued" and the raid marches on inward. Killed raiders drop `bounty`
+plunder. Spawn interval shrinks per day but every once-occupied zone we
+cleared (`zone.wasOccupied`) adds `RAID_OUTPOST_RELIEF` back. Defender regen
+is per zone (paused while a raid fights there); workers mend slowly, paused
+while any raid is at a zone.
 
-### Conquerable sites
-`SITE_POOL` defines garrisoned mini-bases in the far field; each run
-draws `SITE_SLOTS.length` of them at random onto the discovery-threshold
-ladder (createGame) (guards + watch towers
-per `SITE_TOWER`); instances live on `game.sites` with garrison state and up
-to three of our columns each: `march` (heading out, `SITE_MARCH_TICKS`),
-`strike` (fighting there), `returning` (heading home). Exploration reveals
-them like distant nodes (thresholds sit after the hill mine's, so the first
-find is always economy), and `discoverSite` scales the garrison with the
-raid-wave counter at discovery — late finds are tougher — and the scouts that find a garrisoned site storm
-it on the spot: the whole explore pool becomes `site.strike` and scouting
-pauses until fresh scouts are sent (node finds don't interrupt). Scouts
-render as their own `.site-big` wilderness tile (vision badge, kind
-`army:explore`) in the sites row, not in the away section. Selecting a site (`kind: 'site'`, keyed by
-`site.key`) offers per-type assault commands pulling from the **defend** pool
-(tap one / hold all); there is no recall — an assault commits until the
-fight resolves. `siteTick` runs the fight on the raid
-cadences — our volley chews guards then towers; the garrison hits the strike
-pool (`damageStrike`) — and `conquerSite` applies the reward ({cache} pays
-out, {nodeId} reveals a `discoverAt: Infinity` node, {units} join the
-survivors, {workers} spawn straight into the workforce). Scout-originated strikes (`site.strikeFrom === 'explore'`)
-return survivors + freed units straight to the explore pool — they resume
-exploring instantly; commanded assaults march home to defend. Expedition units count toward
-supply (`siteUnits` in `supplyUsed`); a wiped strike leaves garrison damage
-standing. Renders in the far zone as one double-size tile (`.site-big`) of shared
-terrain art (`siteTerrain`) with a `rewardIcon` badge top-left,
-garrison chips down the right edge, our column's chip bottom-left (blinking
-while marching/returning), red garrison hp bar plus a green strike bar.
+### Garrison combat (occupied zones)
+Units marched into an occupied zone become `zone.strike` and exchange
+volleys with the garrison on the raid cadences — guards soak first, then
+watch towers fall. Garrisons **reinforce** while under attack
+(`GARRISON_REINFORCE`: +1 guard every 7 ticks up to 10). `conquerZone` on
+clearing: reward pays out ({cache} instantly, {workers} spawn into the
+zone, {units} join), **survivors + freed units settle as the zone's
+defenders**, status flips to `owned`, `wasOccupied` marks it for raid
+relief; the stronghold (`final`) wins the game. A wiped strike leaves
+garrison damage standing. Garrison composition is veiled in the UI until
+our own column engages.
 
 ### Timed jobs (one system)
-`game.jobs` — every in-flight timed thing. Shared shape
-`{ uid, kind, icon, label, duration, remaining, cost, complete }` plus:
-- `kind: 'train'` → `{ producer, supply }`. Per-producer concurrency =
-  building count; queue cap = `QUEUE_MAX ×` building count.
-- `kind: 'construct'` → `{ workerId, returnTo }` (builder released back to
-  its node — or idle — on completion/cancel).
-- `kind: 'upgrade'` → `{ tag, source }`. `tag` blocks duplicates of one
-  track; `source` enforces one research at a time per source building
-  (`upgradeSlotFree` — more blacksmiths = more parallel slots). Never takes
-  a worker.
-- `kind: 'transfer'` → `{ from, to, type, count }` — a timed order-change
-  march (`transferTicks` = base + remoteness of both ends). Units leave the
-  source pool at start, are delivered by `advanceJobs` (no `complete`), count
-  toward supply while marching, and cancelling recalls them to `from`.
-  Same-route moves merge into the marching column. Moves TO 'explore'
-  skip the job entirely — units join the explore pool instantly.
-
-One `advanceJobs`, one `cancelJob` (refund + builder release), one
-`jobProgress`, one `jobChip`/`renderJobQueue`. Don't add parallel job arrays.
+`game.jobs` — shared shape `{ uid, kind, icon, label, duration, remaining,
+cost, complete }` plus:
+- `kind: 'train'` → `{ producer, zoneId, supply }`. Keyed per producer per
+  zone: N barracks in a zone train N at once, queue cap `QUEUE_MAX × N`.
+- `kind: 'construct'` → `{ workerId, zoneId, returnTo, repairKey? }`.
+- `kind: 'upgrade'` → `{ tag, source }` (`tag` blocks duplicate tracks,
+  `source` enforces one research per source building). Never takes a worker.
+- `kind: 'transfer'` → `{ from, to, type, count, mode }` (zone ids).
+One `advanceJobs`, one `cancelJob` (refund + builder release / column
+recall), one `jobProgress`, one `jobChip`. Chips live in the fixed-height
+`#queue` strip under the resource bar (`renderQueueStrip`). Don't add
+parallel job arrays.
 
 ### Commands
-Plain objects: `{ id, icon, label, cost, overlay?, enabled(s), available?(s),
-reason?(s), isActive?(s), run(s) }`, resolved per selection by
-`selectedCommands`. Commands render in one horizontally scrollable `.command-strip` row (no
-wrapping, scrollLeft preserved across renders); the build menu's back
-button leads its list. Semantics:
-- `enabled` — actually runnable (includes affordability).
-- `available` — non-resource prerequisites only; drives **fading**
-  (`commandFaded`). A costed command missing only resources stays lit.
-- `reason` — toast text when a disabled command is tapped. Buttons are never
-  natively `disabled`; `runCommand` routes refusals to `flashError`.
-- `runAll` — optional bulk variant fired by press-and-hold (`HOLD_MS` in the
-  orders-bar pointer handlers); tap still runs `run` once.
-- Build `available`/`reason` from one `gated([[test, 'reason'], …])`
-  checklist so they can't drift.
-- Errors → toast only. Gameplay events → `writeLog` (menu log).
-
-### Workers & nodes
-Workers `{ id, job: idle|gold|lumber|building, nodeId, cooldown }` are pinned
-to a node and harvest it until depletion (then idle). `autoAssignWorkers`
-(every tick + on spawn/train) sends idle workers to the first live gold node,
-else lumber — idle is transient. `spareWorker` (node harvest tap): idle →
-same-resource other node → other resource. `builderWorker` (constructions):
-idle → most plentiful node's crew. Harvest cycle =
-`HARVEST_GATHER[type] + distance × TRAVEL_PER_DISTANCE`.
+Plain objects `{ id, icon, label, cost, overlay?, hidden?, enabled(s),
+available?(s), reason?(s), run(s), runAll?(s) }`, resolved per selection by
+`selectedCommands`; everything acts on `selectedZone(state)` (falls back to
+home). `zoneCommands`: an uncharted zone offers per-type **explore** sends
+from the owned zone behind it; an occupied zone offers per-type **assault**
+sends; an owned zone offers Build (opens the build menu for that zone).
+Structure commands (train/tiers/tower upgrades/tech/repair) come from the
+static `COMMANDS.structure` map. Commands render in one horizontally
+scrollable `.command-strip` row (scrollLeft preserved across renders); the
+build menu's back button leads its list. `gated([[test,'reason'],…])` keeps
+available/reason in sync; errors → toast (`flashError`), events → log.
+Press-and-hold (`HOLD_MS`) fires `runAll`.
 
 ### Selection
-`game.selected = { kind, type, id }`, kinds `structure | workerGroup | node |
-army | enemy | site` (`march` tiles cancel on tap, never select). Defend renders one tile per unit type — those tiles select per-type
-(`selected.id` = ARMY key, scoping the command card via
-`armyGroupCommands(state, order, onlyType)`). A stale
-selection is left alone: `selectionValid` gates `selectedCommands`/
-`entityInfo`, so a gone target just shows an empty command card — nothing
-auto-selects, including finished buildings. Keep `SELECTION_VALID` in sync
-when adding a kind. `selected.id` is compared with `String()` (node ids are
-strings).
+`game.selected = { kind, type, id, zoneId }`, kinds `structure | node |
+army | workerGroup | enemy | zone`. Army tiles are one per unit type per
+zone (`type` = ARMY key, `id` = zoneId). Tapping a zone band (or caption)
+selects the zone — including uncharted ones, so scouts can be sent. A stale
+selection is left alone: `selectionValid` gates `selectedCommands` /
+`entityInfo`, so a gone target just shows an empty command card; nothing
+auto-selects. Keep `SELECTION_VALID` in sync when adding a kind; ids are
+compared with `String()`.
+
+### Render
+`renderWorld` builds one **band per zone**, newest (frontier) at the top,
+home at the bottom; the world view boots scrolled to home. Band classes:
+`zone-field` (uncharted wilderness + the war-signs `.forecast` strip),
+`zone-occupied` (red tint, garrison tile with chips + reward badge),
+`zone-owned` / `zone-home`. Each band has a `zone-caption`
+(`name · status`) and an inset ring when selected. Inside a band: enemy
+raid tiles, defender tiles (one per unit type), node tiles with harvest
+rings, structure tiles, march tiles for columns headed there. The
+war-signs forecast (vague 'imminent…distant' + 'few…a horde per type', no
+numbers) shows only while scouts are marching and the frontier band exists.
 
 ### Tile feedback (flashes + hp bars)
-`flashTile(key, 'damage'|'spawn')` registers a transient flash for a tile key
-(`kind:type:id`); `entityButton` applies the class while fresh (`FLASH_MS`).
-Pass `hp: { total }` (from `poolHp`/`raidHp`, which still compute
-segments/partial for callers) to `entityButton`; `hpBarEl` renders ONE
-combined bar per group (green for own tiles, red under `.danger`).
+`flashTile(key, 'damage'|'spawn'|'attack')` — two independent channels per
+tile (overlay flash vs attack lunge) with per-tile 50–100ms stagger via
+`--flash-delay`/`--shake-delay`; attack lunges are directional (friendly
+tiles nudge up, `.danger` tiles nudge down; pure transforms, no relayout).
+`hpBarEl` renders ONE combined bar per group from `hp.total` (green own,
+red under `.danger`); payloads from `poolHp` / `nodeHp` / `buildingHp` /
+`raidHp` / `garrisonHp` / `strikeHp`, shown only while damaged
+(+`HP_BAR_LINGER_MS`).
 
 ### Progress rings
 `radialProgressCanvas(p, siblings)` draws one ring. The 100ms animator has
-exactly three branches: anything carrying `data-job-uid` (construction chips
-and march-tile badges), `.job-badge[data-node-id]`, and the scouts'
+exactly three branches: anything carrying `data-job-uid` (queue chips and
+march-tile badges), `.job-badge[data-node-id]` (harvest rings), and
 `.job-badge[data-explore-ring]`. Reuse these data attributes — never add a
 fourth lookup scheme.
 
-### Tech, discovery, endgame
-`TECH` (lumber/weapons/armor: source building, per-tier icons/costs/times)
-generates `techCommand`s on their source structures; levels in `game.tech`
-are read by `harvestYield`/`unitDmg`/`unitHp`. Nodes with `discoverAt > 0`
-start hidden; exploration accumulates past the enemy-base find and reveals
-them. The endgame is the `ENEMY_TARGETS` chain on `game.enemy.targets`
-(two outposts, then the stronghold): site-shaped instances fought through
-the normal site machinery (assault from defend, `siteTick`, `conquerSite`).
-They reveal one at a time (`discovered` synced each tick), are `veiled`
-(garrison chips/hp/info hidden until our column engages), and `reinforce`
-musters a fresh guard every N ticks up to a cap while under attack. Each
-razed outpost adds `RAID_OUTPOST_RELIEF` to the raid interval; the
-stronghold (`final`) ends the game on fall. The current target renders as a
-full-width flat `.site-wide` card in the sites row. Hall tiers
-(`HALL_TIERS`, `game.hallTier`): Keep gates Stables (`build.requiresTier`),
-Castle needs Stables. Town Hall → Keep is `game.hallTier` (1 = keep): same structure key, so
-loss condition/targeting/training are untouched; `buildingMaxHp` adds the
-tier hp bonus and `supplyCap` the supply perk; tile icon/label swap.
-`game.over = { won, day }` freezes the sim and shows the #gameover
-overlay (hall destroyed = defeat, enemy base at 0 = victory; tap reloads).
-
 ## Recipes
 
-- **New building**: entry in `BUILDINGS` (+`ICONS`). `build:` puts it in the
-  build menu; `supply`/`hp`/`dmg`/`blurb`/`onBuilt` as needed. Done.
-- **New trainable unit**: entry in `UNITS` (+`ICONS`); if it's an army group,
-  add the `ARMY` entry and have `done` increment `units.<key>.count`.
+- **New building**: entry in `BUILDINGS` (+`ICONS`). `build:` puts it in
+  every owned zone's build menu; `requiresTier` gates on hall tier.
+- **New trainable unit**: entry in `UNITS` (+`ICONS`); if it's an army type,
+  add the `ARMY` entry and have `done` increment `zone.army.<key>`.
+- **New garrison flavor**: entry in `GARRISON_POOL` (rewards: cache/units/
+  workers compose freely).
+- **New resource node flavor**: entry in `ZONE_NODE_POOL` (or `HOME_NODES`).
 - **New upgrade**: a command via `gated(...)` calling `startUpgrade` with a
-  unique `tag`; block duplicates with `pendingUpgrades(s, tag)`. See
-  `towerUpgradeCommand` (guard/cannon tower share it via `towersFree`).
-  Upgrades never take a worker — only construction and repair do.
-- **New resource node**: entry in `NODE_DEFS`. Tiles, harvest, depletion,
-  auto-assign all follow.
-- **New conquerable site**: entry in `SITES` (+`ICONS` if a new sprite);
-  a `nodeId` reward needs its `NODE_DEFS` entry with `discoverAt: Infinity`.
-- **New standing order**: add to `makeOrderCommands` and `orderIcon`; hook
-  behavior in `gameTick`/`raidTick` via `unitsOnOrder`/`homeGroups`.
+  unique `tag` and a `source` building. See `towerUpgradeCommand`.
 
 ## Invariants (don't break)
 
 - Full-rebuild render; no diffing layer, no framework, no build step.
-- Mobile input: `pointerup` selection with a 10px move threshold; zoom guards
-  must keep exempting interactive controls; `touch-action: manipulation`.
-- Error toast is for errors only.
+- Zone contents are reached through the zone accessors, never by walking
+  `state.zones` ad hoc.
+- Mobile input: `pointerup` selection with a 10px move threshold; zoom
+  guards keep exempting interactive controls; `touch-action: manipulation`.
+- Error toast is for errors only; gameplay events go to the menu log.
 - Balance numbers live in the Tunables block / tables, not inline.
-- Cheats (`fastTrain`, `fastHarvest`, +10k) must keep working — they're the
-  manual-testing loop.
+- Cheats (+10k, fast train/harvest, force raid, spawn footman/worker/farm,
+  reveal, kill attackers) must keep working — they're the manual-test loop.
+- Every pushed change bumps `VERSION`/`VERSION_TAG` and both `?v=` strings.
 
 ## Testing
 
-No test files in-repo. For structural changes, a DOM-stubbed smoke test works
-well: stub `document`/`performance`/`setInterval`, `eval` app.js, then drive
-`gameTick`/`runCommand`/`selectEntity` and assert on `game`. (Pattern used
-for the 2026-07 refactor; see REFACTOR_NOTES.md.) The user verifies visually
-— don't spin up headless browsers for routine tweaks.
+No test files in-repo. The DOM-stubbed smoke harness used through v0.41
+(stub `document`/`performance`, `eval` app.js, drive `gameTick`/
+`runCommand`/`selectEntity`) predates the world-zone rework and its
+assertions no longer match the model — rebuild it against zones before
+trusting it. The user verifies visually — don't spin up headless browsers
+for routine tweaks.
