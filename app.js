@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.41';
-const VERSION_TAG = 'homeland targets are assault cards (no attack order), gated war signs';
+const VERSION = '0.47';
+const VERSION_TAG = 'move icon transfers one worker/unit at a time; tap a resource node to retask (gold→wood across zones)';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -15,34 +15,29 @@ const TIME_SCALE = 0.3;         // global multiplier on ALL build/train/upgrade 
 
 const HARVEST_YIELD = 100;
 const HARVEST_GATHER = { gold: 6, lumber: 12 };   // ticks spent gathering at the node itself
-const TRAVEL_PER_DISTANCE = 2;                     // extra ticks per distance unit (round trip to town hall)
+const TRAVEL_PER_DISTANCE = 2;                     // extra ticks per distance unit (local, within the zone)
+// Extra harvest ticks per zone of distance to the nearest resource depot — a
+// hall (for gold or lumber) or a lumber mill (for lumber). Harvesting far from
+// any depot is slow, so building a forward hall/mill in a remote zone pays off.
+const HARVEST_DEPOT_TRAVEL = 3;
 
 const QUEUE_MAX = 5;            // queued units allowed per producing structure
 const SUPPLY_BASE = 4;
 
-const EXPLORE_THRESHOLD = 90;   // explore-unit-ticks to find enemy base
-const RAID_OUTPOST_RELIEF = 25; // raid-interval bonus per razed outpost
-
-// The enemy homeland: a chain of assaultable sites, revealed one at a time —
-// the next only after the previous is razed. They fight like conquerable
-// sites but far tougher, and `reinforce` musters a fresh guard every N ticks
-// (up to cap) while under attack. Their garrison is veiled until you engage.
-// Outposts pay off in a permanently slower raid schedule; the stronghold's
-// fall wins the game.
-const ENEMY_TARGETS = [
-  { key: 'outpost1', icon: 'outpost', label: 'orc outpost', veiled: true,
-    guards: { count: 6, hp: 80, dmg: 9 }, towers: 1,
-    reinforce: { every: 8, cap: 8 },
-    rewardText: 'the raids will thin', rewardIcon: 'patrol' },
-  { key: 'outpost2', icon: 'outpost', label: 'orc war camp', veiled: true,
-    guards: { count: 9, hp: 85, dmg: 9 }, towers: 1,
-    reinforce: { every: 7, cap: 12 },
-    rewardText: 'the raids will thin', rewardIcon: 'patrol' },
-  { key: 'stronghold', icon: 'stronghold', label: 'orc stronghold', veiled: true, final: true,
-    guards: { count: 12, hp: 90, dmg: 8 }, towers: 2,
-    reinforce: { every: 5, cap: 16 },
-    rewardText: 'victory', rewardIcon: 'attack' }
-];
+// ── World zones ──
+// The world is a linear stack of zones, index 0 = home. Exploring charts the
+// next zone outward; a charted zone is empty (claimed as `owned` the moment
+// scouts arrive) or `occupied` by a garrison that must be cleared before it is
+// yours. Garrisons toughen with depth. The scripted stronghold sits at a fixed
+// depth and ends the game when razed.
+const STRONGHOLD_DEPTH = 8;      // zone index of the final orc stronghold
+const ZONE_MARCH_PER_STEP = 6;   // march ticks between adjacent zones
+// Odds a freshly-charted zone (past home) holds a garrison rather than being
+// empty. The stronghold zone is always occupied regardless.
+const ZONE_OCCUPY_CHANCE = 0.6;
+const SITE_TOWER = { hp: 100, dmg: 6 };   // watch-tower stats a garrison uses
+const GARRISON_REINFORCE = { every: 7, cap: 10 };  // occupied zones muster while attacked
+const RAID_OUTPOST_RELIEF = 25; // raid-interval bonus per razed occupied zone
 const RAID_INTERVAL_BASE = 90;  // ticks between raids on day 0
 const RAID_FIRST_DELAY = 150;   // the very first wave holds off a while longer
 const RAID_INTERVAL_SCALE = 5;  // reduce interval by this per day
@@ -65,11 +60,6 @@ const RAIDER_TYPES = {
   ogre:       { icon: 'ogre',       label: 'ogres',       hp: 110, dmg: 12, hpPerWave: 4, dmgPerWave: 0.5, baseSize: 1, sizePerWave: 0.5, fromWave: 9,  bounty: 60 },
   catapult:   { icon: 'catapult',   label: 'catapults',   hp: 110, dmg: 25, hpPerWave: 3, dmgPerWave: 1,   baseSize: 1, sizePerWave: 0.5, fromWave: 12, bounty: 80, siege: true }
 };
-// Conquerable sites: how long the assault column marches each way (same as
-// marching to the far field) and the watch-tower stats their garrisons use.
-const SITE_MARCH_TICKS = 6;
-const SITE_TOWER = { hp: 100, dmg: 6 };
-
 const WORKER_HP = 30;
 const REPAIR_HP_PER_TICK = 20;  // how fast one worker patches a building up
 // Regen per tick — only defenders resting between fights heal (never while a
@@ -77,9 +67,8 @@ const REPAIR_HP_PER_TICK = 20;  // how fast one worker patches a building up
 // units back to defend has a real benefit.
 const HEAL_DEFEND_PER_TICK = 1;
 const WORKER_HEAL_PER_TICK = 1;   // very slow, and only while not under attack
-// Changing orders takes marching time (ticks): 2 + remoteness of both ends.
-// Pulling scouts home mid-raid costs real time — they can't teleport back.
-const ORDER_REMOTENESS = { defend: 0, patrol: 1, explore: 4, attack: 4 };
+// Moving units between zones is a timed march: TRANSFER_BASE_TICKS plus one
+// ZONE_MARCH_PER_STEP per zone of separation (see transferTicks).
 const TRANSFER_BASE_TICKS = 2;
 const HP_BAR_LINGER_MS = 3000;  // keep a combat hp bar visible across volleys
 // Raider targeting: warriors first, then the towers shooting at them, then
@@ -87,65 +76,60 @@ const HP_BAR_LINGER_MS = 3000;  // keep a combat hp bar visible across volleys
 const RAID_TOWER_TARGETS = ['cannontower', 'guardtower', 'tower'];
 const RAID_TARGET_ORDER = ['farm', 'barracks', 'lumbermill', 'blacksmith', 'hall'];
 
-// discoverAt is explore-progress (explorer-ticks); 0 = known from the start.
-// Scouts keep exploring after finding the enemy base and reveal these in turn.
-const NODE_DEFS = [
-  { id: 'gold-1',   type: 'gold',   label: 'gold mine',   icon: 'goldSite',   distance: 1, capacity: 48000, discoverAt: 0 },
-  { id: 'forest-1', type: 'lumber', label: 'forest',      icon: 'lumberSite', distance: 1, capacity: 25000, discoverAt: 0 },
-  { id: 'forest-2', type: 'lumber', label: 'far forest',  icon: 'lumberSite', distance: 5, capacity: 25000, discoverAt: 0 },
-  // The hill mine is deliberately the FIRST thing exploration finds — the
-  // opening scout trip pays off with economy, not a fight.
-  { id: 'gold-2',   type: 'gold',   label: 'hill mine',   icon: 'goldSite',   distance: 4, capacity: 25000, discoverAt: 80 },
-  { id: 'forest-3', type: 'lumber', label: 'deep woods',  icon: 'lumberSite', distance: 6, capacity: 30000, discoverAt: 220 },
-  { id: 'gold-3',   type: 'gold',   label: 'mountain mine', icon: 'goldSite', distance: 9, capacity: 40000, discoverAt: 500 },
-  // Unlocked by clearing the overrun-mine site, never by scouting alone.
-  { id: 'gold-4',   type: 'gold',   label: 'rich gold mine', icon: 'goldSite', distance: 3, capacity: 30000, discoverAt: Infinity }
+// Home zone's fixed resource nodes. Nodes now belong to a zone (not a global
+// list) and never move; `distance` is local travel within the zone (harvest
+// travel also grows with the zone's index — see nodeCooldown).
+const HOME_NODES = [
+  { type: 'gold',   label: 'gold mine', icon: 'goldSite',   distance: 1, capacity: 48000 },
+  { type: 'lumber', label: 'forest',    icon: 'lumberSite', distance: 1, capacity: 25000 },
+  { type: 'lumber', label: 'far forest', icon: 'lumberSite', distance: 3, capacity: 25000 }
 ];
 
-// Conquerable sites — mini-bases in the far field, revealed by exploration
-// like distant nodes. Each shows its garrison (guard units + watch towers);
-// warriors sent from the defend pool must clear it, then the reward unlocks
-// and survivors march home. `reward`: { cache } pays out instantly,
-// { nodeId } reveals that NODE_DEFS entry (give it discoverAt: Infinity so
-// scouts can't find it first), { units } march home with the survivors.
-// All sites share the terrain art (siteTerrain); `rewardIcon` is the
-// contextual badge that tells the player what clearing it pays. Garrisons
-// listed here are the base — they scale up with the raid-wave counter at the
-// moment of discovery (see discoverSite), so late finds are tougher, just
-// like attack waves. Each run draws SITE_SLOTS.length sites at random from
-// the pool (no repeats) and lays them on the discovery ladder in slot order;
-// slots sit AFTER the hill mine (80), so exploration's first find is always
-// economy, never a fight.
-const SITE_SLOTS = [260, 400, 560, 750, 950, 1200];
-const SITE_POOL = [
-  { key: 'camp',  icon: 'siteTerrain', rewardIcon: 'gold', label: 'raider camp',
+// Resource-node templates a charted (non-home) zone can roll. Each new zone
+// gets one or two of these.
+const ZONE_NODE_POOL = [
+  { type: 'gold',   label: 'gold mine',   icon: 'goldSite',   distance: 2, capacity: 30000 },
+  { type: 'gold',   label: 'hill mine',   icon: 'goldSite',   distance: 3, capacity: 26000 },
+  { type: 'gold',   label: 'mountain mine', icon: 'goldSite', distance: 4, capacity: 40000 },
+  { type: 'lumber', label: 'woods',       icon: 'lumberSite', distance: 2, capacity: 28000 },
+  { type: 'lumber', label: 'deep woods',  icon: 'lumberSite', distance: 3, capacity: 30000 }
+];
+
+// Occupied-zone garrisons: the pool a charted zone draws from when it rolls
+// occupied. `reward` pays out on clearing — { cache } gold/lumber instantly,
+// { units } join the conquering force as the zone's new defenders, { workers }
+// spawn into the zone's workforce. Base garrisons scale up with depth (see
+// makeZone). `siteTerrain` art; `rewardIcon` badges what clearing pays.
+const GARRISON_POOL = [
+  { key: 'camp',   rewardIcon: 'gold',   label: 'raider camp',
     guards: { count: 3, hp: 60, dmg: 7 }, towers: 1,
     reward: { cache: { gold: 2500, lumber: 1500 } }, rewardText: 'war chest 2500g 1500w' },
-  { key: 'warband', icon: 'siteTerrain', rewardIcon: 'gold', label: 'orc warband',
+  { key: 'warband', rewardIcon: 'gold',  label: 'orc warband',
     guards: { count: 4, hp: 70, dmg: 8 }, towers: 0,
     reward: { cache: { gold: 1500, lumber: 800 } }, rewardText: 'plunder 1500g 800w' },
-  { key: 'mine',  icon: 'siteTerrain', rewardIcon: 'goldSite', label: 'overrun mine',
-    guards: { count: 5, hp: 66, dmg: 8 }, towers: 1,
-    reward: { nodeId: 'gold-4' }, rewardText: 'rich gold mine' },
-  { key: 'stockade', icon: 'siteTerrain', rewardIcon: 'footman', label: 'prison camp',
+  { key: 'stockade', rewardIcon: 'footman', label: 'prison camp',
     guards: { count: 6, hp: 72, dmg: 9 }, towers: 2,
-    reward: { units: { footmen: 3 } }, rewardText: '3 captive footmen' },
-  { key: 'loggers', icon: 'siteTerrain', rewardIcon: 'worker', label: 'logging camp',
+    reward: { units: { footmen: 3 } }, rewardText: '3 freed footmen join you' },
+  { key: 'loggers', rewardIcon: 'worker', label: 'logging camp',
     guards: { count: 5, hp: 80, dmg: 9 }, towers: 1,
-    reward: { workers: 3 }, rewardText: '3 captive peasants' },
-  { key: 'pens', icon: 'siteTerrain', rewardIcon: 'worker', label: 'work pens',
-    guards: { count: 4, hp: 75, dmg: 9 }, towers: 0,
-    reward: { workers: 2, units: { footmen: 1 } }, rewardText: 'captive peasants & footman' },
-  { key: 'shrine', icon: 'siteTerrain', rewardIcon: 'gold', label: 'orc shrine',
+    reward: { workers: 3 }, rewardText: '3 freed peasants' },
+  { key: 'shrine', rewardIcon: 'gold',    label: 'orc shrine',
     guards: { count: 6, hp: 75, dmg: 9 }, towers: 1,
     reward: { cache: { gold: 3000 } }, rewardText: 'looted idol 3000g' },
-  { key: 'hoard', icon: 'siteTerrain', rewardIcon: 'gold', label: 'orc hoard',
+  { key: 'hoard',  rewardIcon: 'gold',    label: 'orc hoard',
     guards: { count: 8, hp: 80, dmg: 10 }, towers: 2,
     reward: { cache: { gold: 4000, lumber: 2500 } }, rewardText: 'war hoard 4000g 2500w' },
-  { key: 'armory', icon: 'siteTerrain', rewardIcon: 'knight', label: 'slave pens',
-    guards: { count: 10, hp: 85, dmg: 10 }, towers: 2,
-    reward: { units: { knights: 2, archers: 2 } }, rewardText: 'captive knights & archers' }
+  { key: 'armory', rewardIcon: 'knight',  label: 'slave pens',
+    guards: { count: 8, hp: 85, dmg: 10 }, towers: 2,
+    reward: { units: { knights: 2, archers: 2 } }, rewardText: 'freed knights & archers join you' }
 ];
+// The scripted final zone at STRONGHOLD_DEPTH — always occupied, always the
+// same, and razing it wins the game.
+const STRONGHOLD = {
+  key: 'stronghold', rewardIcon: 'attack', label: 'orc stronghold', final: true,
+  guards: { count: 12, hp: 90, dmg: 8 }, towers: 2,
+  reward: {}, rewardText: 'victory'
+};
 
 // Tech upgrades bought at their source building; level effects are read by
 // harvestYield / unitDmg / unitHp.
@@ -181,7 +165,11 @@ const BUILDINGS = {
   hall: {
     icon: 'hall', label: 'town hall',
     supply: 4, hp: 1200,
-    blurb: s => `${cap(hallTierName(s))} · ${productionMeta(s, 'hall') || 'ready'} · +${Math.round(incomePerTick(s, 'gold'))}g +${Math.round(incomePerTick(s, 'lumber'))}w /s`
+    // Buildable in any owned zone to plant a forward base (trains workers there,
+    // adds supply). Only home's hall (zone 0) is the loss condition, and only it
+    // upgrades to keep/castle.
+    build: { cost: { gold: 1000, lumber: 600 }, time: 255 },
+    blurb: (s, z) => `${cap(z && z.index === 0 ? hallTierName(s) : 'town hall')} · ${productionMeta(s, 'hall', z ? z.id : 0) || 'ready'} · +${Math.round(incomePerTick(s, 'gold'))}g +${Math.round(incomePerTick(s, 'lumber'))}w /s`
   },
   farm: {
     icon: 'farm', label: 'farm',
@@ -192,7 +180,7 @@ const BUILDINGS = {
   barracks: {
     icon: 'barracks', label: 'barracks', hp: 800,
     build: { cost: { gold: 700, lumber: 450 }, time: 200 },
-    blurb: s => `Barracks · ${productionMeta(s, 'barracks') || 'ready'}`
+    blurb: (s, z) => `Barracks · ${productionMeta(s, 'barracks', z.id) || 'ready'}`
   },
   lumbermill: {
     icon: 'lumbermill', label: 'lumber mill', hp: 600,
@@ -227,12 +215,14 @@ const BUILDINGS = {
 };
 
 // Trainable units. `producer` is the structure that trains them; `requires`
-// are extra tech prerequisites; `done` receives state on completion.
+// are extra tech prerequisites; `done(state, zone)` runs on completion in the
+// zone whose producer trained it. Army units join that zone's defenders;
+// workers join that zone's workforce.
 const UNITS = {
   worker: {
     icon: 'worker', label: 'worker', producer: 'hall', time: 45, cost: { gold: 400 },
-    done: s => {
-      const w = createWorker();
+    done: (s, zone) => {
+      const w = createWorker('idle', null, 0, zone.id);
       s.workers.push(w);
       autoAssignWorkers(s);
       if (w.nodeId) flashTile(`node:${w.job}:${w.nodeId}`, 'spawn');
@@ -241,27 +231,27 @@ const UNITS = {
   },
   footman: {
     icon: 'footman', label: 'footman', producer: 'barracks', time: 60, cost: { gold: 600 },
-    done: s => { s.army.defend.footmen += 1; flashTile('army:defend:1', 'spawn'); writeLog(s, 'Footman ready.'); }
+    done: (s, zone) => { zone.army.footmen += 1; flashTile(`army:defend:${zone.id}`, 'spawn'); writeLog(s, 'Footman ready.'); }
   },
   archer: {
     icon: 'archer', label: 'archer', producer: 'barracks', time: 70, cost: { gold: 500, lumber: 50 },
     requires: ['lumbermill'],
-    done: s => { s.army.defend.archers += 1; flashTile('army:defend:1', 'spawn'); writeLog(s, 'Archer ready.'); }
+    done: (s, zone) => { zone.army.archers += 1; flashTile(`army:defend:${zone.id}`, 'spawn'); writeLog(s, 'Archer ready.'); }
   },
   ballista: {
     icon: 'ballista', label: 'ballista', producer: 'barracks', time: 250, cost: { gold: 900, lumber: 300 },
     requires: ['blacksmith'],
-    done: s => { s.army.defend.ballistas += 1; flashTile('army:defend:1', 'spawn'); writeLog(s, 'Ballista ready.'); }
+    done: (s, zone) => { zone.army.ballistas += 1; flashTile(`army:defend:${zone.id}`, 'spawn'); writeLog(s, 'Ballista ready.'); }
   },
   knight: {
     icon: 'knight', label: 'knight', producer: 'stables', time: 90, cost: { gold: 800, lumber: 100 },
-    done: s => { s.army.defend.knights += 1; flashTile('army:defend:1', 'spawn'); writeLog(s, 'Knight ready.'); }
+    done: (s, zone) => { zone.army.knights += 1; flashTile(`army:defend:${zone.id}`, 'spawn'); writeLog(s, 'Knight ready.'); }
   }
 };
 
-// Army unit types. `hp`/`dmg` drive raid combat (listed first = soaks damage
-// first within a pool); `attack` is siege dps against the enemy base. Units
-// live in per-order pools on `game.army` (see ORDERS).
+// Army unit types. `hp`/`dmg` drive combat (listed first = soaks damage first
+// within a pool); `attack` is siege dps. Units live in a per-zone defend pool
+// (zone.army) plus transient marching columns (see transfers/assaults).
 const ARMY = {
   footmen:   { icon: 'footman',  label: 'footmen',   singular: 'footman',  hp: 60,  dmg: 7,  attack: 0.10 },
   knights:   { icon: 'knight',   label: 'knights',   singular: 'knight',   hp: 90,  dmg: 10, attack: 0.15 },
@@ -269,10 +259,12 @@ const ARMY = {
   ballistas: { icon: 'ballista', label: 'ballistas', singular: 'ballista', hp: 110, dmg: 25, attack: 0.50 }
 };
 
-// Standing orders an army unit can hold. Units live in one pool per order and
-// are moved between pools one at a time (workers-row style). Attacking the
-// enemy homeland is not an order — it's a site assault (tap the target card).
-const ORDERS = ['defend', 'patrol', 'explore'];
+// Standing "orders" left in the model: a unit either holds a zone (defend) or
+// is out charting the frontier (explore). Patrol is gone — in the world-zone
+// model a stationed unit simply defends wherever it stands, and raids are
+// intercepted by whichever zone they march through. Attacking a garrison is a
+// site/zone assault, not an order.
+const ORDERS = ['defend', 'explore'];
 
 const GUARD_TOWER = { cost: { gold: 500, lumber: 150 }, time: 140 };
 const CANNON_TOWER = { cost: { gold: 1000, lumber: 300 }, time: 190 };
@@ -283,10 +275,10 @@ const CANNON_TOWER = { cost: { gold: 1000, lumber: 300 }, time: 190 };
 const HALL_TIERS = [
   { key: 'keep',   label: 'keep',   icon: 'keep',
     cost: { gold: 2000, lumber: 1000 }, time: 200, hpBonus: 600, supply: 4,
-    requires: s => s.structures.barracks > 0, reqLabel: 'Need a barracks' },
+    requires: s => totalStructures(s, 'barracks') > 0, reqLabel: 'Need a barracks' },
   { key: 'castle', label: 'castle', icon: 'castle',
     cost: { gold: 2500, lumber: 1200 }, time: 200, hpBonus: 600, supply: 4,
-    requires: s => s.structures.stables > 0, reqLabel: 'Need stables' }
+    requires: s => totalStructures(s, 'stables') > 0, reqLabel: 'Need stables' }
 ];
 
 const ICONS = {
@@ -312,6 +304,7 @@ const ICONS = {
   defend: 'assets/icons/c_hshield1.png',
   patrol: 'assets/icons/c_hpatrol.png',
   explore: 'assets/icons/c_cast_vision.png',
+  move: 'assets/icons/c_hmove.png',
   build: 'assets/icons/c_build.png',
   harvest: 'assets/icons/c_harvest.png',
   axethrower: 'assets/icons/o_unit_axethrower.png',
@@ -349,64 +342,115 @@ function nextId() {
   return idCounter;
 }
 
+function emptyStructures() {
+  return Object.fromEntries(Object.keys(BUILDINGS).map(k => [k, 0]));
+}
+
+function emptyDamage() {
+  return Object.fromEntries(Object.keys(BUILDINGS).map(k => [k, 0]));
+}
+
+// A per-zone defend pool: counts per ARMY type + a shared wounds pool.
+function emptyArmy() {
+  return { ...Object.fromEntries(Object.keys(ARMY).map(k => [k, 0])), wounds: 0, lastHitAt: 0 };
+}
+
+function makeNode(def, zoneId) {
+  return { ...def, id: `n${nextId()}`, zoneId, remaining: def.capacity };
+}
+
+// Scale a garrison template up with the zone's depth — deeper zones are
+// tougher, echoing how raid waves ramp.
+// Garrisons toughen both with depth (index) and with how far into the game we
+// are when they're generated (wave) — the deeper and later you push, the harder
+// the ground you find.
+function scaleGuards(def, index, wave) {
+  return {
+    count: def.guards.count + Math.floor(index * 0.6 + wave * 0.3),
+    hp: def.guards.hp + index * 5 + wave * 3,
+    dmg: def.guards.dmg + index * 0.4 + wave * 0.2
+  };
+}
+
+function makeGarrison(def, index, wave) {
+  const guards = scaleGuards(def, index, wave);
+  return {
+    key: def.key, label: def.label, rewardIcon: def.rewardIcon, rewardText: def.rewardText,
+    reward: def.reward || {}, final: !!def.final,
+    guards, guardsLeft: guards.count, guardPool: guards.count * guards.hp,
+    towers: def.towers, towersLeft: def.towers, towerHp: SITE_TOWER.hp,
+    veiled: true, reinforce: GARRISON_REINFORCE, reinforceIn: 0,
+    myStrikeIn: DEFENSE_VOLLEY_EVERY, foeStrikeIn: RAID_VOLLEY_EVERY,
+    lastHitAt: 0, strikeHitAt: 0
+  };
+}
+
+// A gold and a lumber node, guaranteed — used for the first zone so the opening
+// expansion always pays off in both resources.
+function goldAndLumberNodes() {
+  return [ZONE_NODE_POOL.find(n => n.type === 'gold'), ZONE_NODE_POOL.find(n => n.type === 'lumber')];
+}
+
+// Generate the zone at a given index: its resource nodes and (maybe) a garrison,
+// scaled by depth and the current raid `wave`. The first zone (index 1) is
+// always neutral with wood + gold; the stronghold is fixed at STRONGHOLD_DEPTH;
+// other zones roll occupied at ZONE_OCCUPY_CHANCE. `discovered` stays false
+// until scouts arrive (renderWorld reveals it then).
+function makeZone(index, wave = 0) {
+  const id = nextId();
+  let nodeDefs;
+  let garrison = null;
+  if (index === 1) {
+    nodeDefs = goldAndLumberNodes();   // first find: neutral, both resources
+  } else {
+    const pool = [...ZONE_NODE_POOL];
+    const nodeCount = 1 + (Math.random() < 0.6 ? 1 : 0);
+    nodeDefs = [];
+    for (let i = 0; i < nodeCount && pool.length; i += 1) {
+      nodeDefs.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+    }
+    if (index === STRONGHOLD_DEPTH) garrison = makeGarrison(STRONGHOLD, index, wave);
+    else if (Math.random() < ZONE_OCCUPY_CHANCE) {
+      garrison = makeGarrison(GARRISON_POOL[Math.floor(Math.random() * GARRISON_POOL.length)], index, wave);
+    }
+  }
+  return {
+    id, index, discovered: false, status: garrison ? 'occupied' : 'owned',
+    name: garrison ? garrison.label : `zone ${index}`,
+    nodes: nodeDefs.map(d => makeNode(d, id)),
+    structures: emptyStructures(), structureDamage: emptyDamage(),
+    army: emptyArmy(),
+    garrison, strike: null   // strike = our assault column fighting the garrison
+  };
+}
+
 function createGame() {
+  const home = {
+    id: 0, index: 0, discovered: true, status: 'owned', name: 'home',
+    nodes: [], structures: emptyStructures(), structureDamage: emptyDamage(),
+    army: emptyArmy(), garrison: null, strike: null
+  };
+  home.nodes = HOME_NODES.map(d => makeNode(d, home.id));
+  home.structures.hall = 1;
+  home.structures.farm = 1;
+  home.army.footmen = 1;   // one veteran footman guards home from the start
   return {
     tick: 0,
-    selected: { kind: 'structure', type: 'hall', id: 1 },
+    selected: { kind: 'structure', type: 'hall', id: home.id, zoneId: home.id },
     resources: { gold: 400, lumber: 100, oil: 0 },
-    // One unified list of timed jobs: kind ∈ train|construct|upgrade. All share
-    // { uid, icon, label, duration, remaining, cost, complete }; train jobs add
-    // { producer, supply }, construct jobs add { workerId, returnTo }, upgrade
-    // jobs add { tag }.
+    // The world is a linear stack of zones, index 0 = home. Each zone owns its
+    // nodes / structures / defenders; `frontierAt` is the deepest charted index.
+    zones: [home],
+    frontierAt: 0,
     jobs: [],
     buildMenu: false,
+    // When set, the next zone tapped in the world is a move destination for the
+    // armed group: { kind:'workers'|'army', fromZoneId, resource?, nodeId?, type? }.
+    moveArm: null,
     workers: [],
-    nodes: NODE_DEFS.map(d => ({ ...d, remaining: d.capacity, discovered: d.discoverAt === 0 })),
     tech: Object.fromEntries(Object.keys(TECH).map(k => [k, 0])),
     over: null,   // { won, day } once the game ends
-    // One pool per standing order; each holds counts per ARMY type plus a
-    // shared wounds pool for raid damage.
-    // One veteran footman guards the town from the start.
-    army: Object.fromEntries(ORDERS.map(o =>
-      [o, { ...Object.fromEntries(Object.keys(ARMY).map(k => [k, o === 'defend' && k === 'footmen' ? 1 : 0])), wounds: 0 }])),
-    structures: Object.fromEntries(Object.keys(BUILDINGS).map(k => [k, (k === 'hall' || k === 'farm') ? 1 : 0])),
-    hallTier: 0,   // 0 = town hall, 1 = keep
-    // Accumulated raid damage on the front instance of each building type —
-    // persists after the raid dies, until repaired (or the building falls).
-    structureDamage: Object.fromEntries(Object.keys(BUILDINGS).map(k => [k, 0])),
-    enemy: {
-      known: false,
-      // Site-shaped instances so the whole site machinery (assault, combat,
-      // conquest) applies unchanged; `discovered` is synced each tick.
-      targets: ENEMY_TARGETS.map(t => ({
-        ...t, discovered: false, cleared: false,
-        guards: { ...t.guards },
-        guardsLeft: t.guards.count, guardPool: t.guards.count * t.guards.hp,
-        towersLeft: t.towers, towerHp: SITE_TOWER.hp,
-        strike: null, march: null, returning: null,
-        myStrikeIn: DEFENSE_VOLLEY_EVERY, foeStrikeIn: RAID_VOLLEY_EVERY,
-        reinforceIn: 0, lastHitAt: 0, strikeHitAt: 0
-      }))
-    },
-    // Conquerable sites (see SITES): garrison state plus up to three of our
-    // columns per site — `march` heading out, `strike` fighting there,
-    // `returning` heading home. All count toward supply.
-    sites: (() => {
-      const pool = [...SITE_POOL];
-      return SITE_SLOTS.map(at => {
-        const d = pool.splice(Math.floor(Math.random() * pool.length), 1)[0];
-        return {
-          ...d, discoverAt: at, discovered: false, cleared: false,
-          guards: { ...d.guards },
-          guardsLeft: d.guards.count, guardPool: d.guards.count * d.guards.hp,
-          towersLeft: d.towers, towerHp: SITE_TOWER.hp,
-          strike: null, march: null, returning: null,
-          myStrikeIn: DEFENSE_VOLLEY_EVERY, foeStrikeIn: RAID_VOLLEY_EVERY,
-          lastHitAt: 0, strikeHitAt: 0
-        };
-      });
-    })(),
-    exploreProgress: 0,
+    hallTier: 0,   // 0 = town hall, 1 = keep (home's hall)
     raid: { nextIn: RAID_FIRST_DELAY, interval: RAID_INTERVAL_BASE, wave: 0 },
     raids: [],            // active raiding parties (see spawnRaid)
     workerWounds: 0,      // damage accumulated toward the next worker death
@@ -415,8 +459,8 @@ function createGame() {
   };
 }
 
-function createWorker(job = 'idle', nodeId = null, cooldown = 0) {
-  return { id: nextId(), job, nodeId, cooldown };
+function createWorker(job = 'idle', nodeId = null, cooldown = 0, zoneId = 0) {
+  return { id: nextId(), job, nodeId, cooldown, zoneId };
 }
 
 installZoomGuards();
@@ -483,48 +527,131 @@ function gated(checks) {
   };
 }
 
+// ── Zones ──────────────────────────────────────────────────────────────────
+// The world is a linear stack. Each zone owns its nodes, structures, and
+// defenders. These accessors are the single way the rest of the code reaches
+// zone contents; nothing else should walk `state.zones` directly.
+
+function zoneById(state, id) {
+  return state.zones.find(z => String(z.id) === String(id)) || null;
+}
+
+function zoneByIndex(state, index) {
+  return state.zones.find(z => z.index === index) || null;
+}
+
+function homeZone(state) {
+  return state.zones[0];
+}
+
+function ownedZones(state) {
+  return state.zones.filter(z => z.discovered && z.status === 'owned');
+}
+
+// Deepest charted (discovered) zone.
+function frontierZone(state) {
+  return state.zones.filter(z => z.discovered).reduce((a, b) => (b.index > a.index ? b : a), state.zones[0]);
+}
+
+// Deepest zone we actually own — the springboard we explore and assault from.
+function deepestOwned(state) {
+  return ownedZones(state).reduce((a, b) => (b.index > a.index ? b : a), state.zones[0]);
+}
+
+// The next, still-uncharted zone (if any). Exploration always aims here.
+function chartingZone(state) {
+  return state.zones.find(z => !z.discovered) || null;
+}
+
+// Keep exactly one uncharted zone sitting just past the deepest owned zone,
+// ready to be scouted — unless an occupied zone already blocks the way, or we
+// have reached the stronghold. Its contents (empty vs garrison) are decided now
+// but stay hidden until scouts arrive.
+function ensureFrontier(state) {
+  const m = deepestOwned(state).index;
+  if (m >= STRONGHOLD_DEPTH) return;
+  if (!zoneByIndex(state, m + 1)) state.zones.push(makeZone(m + 1, state.raid.wave));
+}
+
+// Every resource node across every zone, and the zone a node lives in.
+function allNodes(state) {
+  return state.zones.flatMap(z => z.nodes);
+}
+
+function nodeZone(state, nodeId) {
+  return state.zones.find(z => z.nodes.some(n => String(n.id) === String(nodeId))) || null;
+}
+
+// Count of a building across all zones (supply, tech prerequisites, etc.).
+function totalStructures(state, key) {
+  return state.zones.reduce((n, z) => n + (z.structures[key] || 0), 0);
+}
+
 // ── Workers & resource nodes ───────────────────────────────────────────────
-// The whole worker lifecycle lives here. A worker is pinned to a specific node
-// (worker.nodeId) and harvests it until it depletes, then goes idle;
-// autoAssignWorkers re-places idle workers (gold first, then lumber) every
-// tick, on unit completion, and on spawn. Builders remember their node and
-// return to it via releaseBuilder.
+// A worker belongs to a zone (worker.zoneId) and is pinned to a node in that
+// zone (worker.nodeId) until it depletes, then goes idle; autoAssignWorkers
+// re-places idle workers onto a live node IN THEIR OWN ZONE (gold first).
+// Builders travel to the zone they're constructing in and settle there.
 
 function workerCount(state, job) {
   return state.workers.filter(w => w.job === job).length;
 }
 
 function nodeById(state, id) {
-  return state.nodes.find(n => n.id === id);
+  return allNodes(state).find(n => String(n.id) === String(id));
 }
 
-// Harvest cycle length: gather time at the node plus round-trip travel that
-// scales with how far the node sits from the town hall.
-function nodeCooldown(node) {
-  return HARVEST_GATHER[node.type] + node.distance * TRAVEL_PER_DISTANCE;
+// A zone is a depot for a resource if it can receive it: any hall takes gold or
+// lumber; a lumber mill also takes lumber.
+function isDepot(zone, type) {
+  return zone.structures.hall > 0 || (type === 'lumber' && zone.structures.lumbermill > 0);
+}
+
+// Zones of distance from `zone` to the nearest owned depot for `type` (0 if the
+// zone has its own). Home always has a hall, so a depot always exists.
+function depotDistance(state, zone, type) {
+  if (isDepot(zone, type)) return 0;
+  const depots = state.zones.filter(z => z.discovered && z.status === 'owned' && isDepot(z, type));
+  if (!depots.length) return zone.index;
+  return Math.min(...depots.map(z => Math.abs(z.index - zone.index)));
+}
+
+// Harvest cycle length: gather time at the node, plus local travel within the
+// zone, plus a haul to the nearest depot (a hall, or a lumber mill for lumber).
+function nodeCooldown(state, node) {
+  const zone = nodeZone(state, node.id);
+  const haul = zone ? depotDistance(state, zone, node.type) * HARVEST_DEPOT_TRAVEL : 0;
+  return HARVEST_GATHER[node.type] + node.distance * TRAVEL_PER_DISTANCE + haul;
 }
 
 function workersAtNode(state, node) {
-  return state.workers.filter(w => w.nodeId === node.id);
+  return state.workers.filter(w => String(w.nodeId) === String(node.id));
 }
 
-// First live node of a resource type (array order), used for auto-assignment.
-function firstNodeOfType(state, type) {
-  return state.nodes.find(n => n.type === type && n.discovered && n.remaining > 0) || null;
+// Live nodes in a zone (discovered/owned zones only carry harvestable nodes).
+function liveNodesInZone(zone) {
+  return zone.status === 'owned' ? zone.nodes.filter(n => n.remaining > 0) : [];
 }
 
-// A worker to spare when assigning to `node`: an idle one first, then one from
-// another node of the SAME resource, then one from a different resource.
-function spareWorker(state, node) {
-  return state.workers.find(w => w.job === 'idle')
-      || state.workers.find(w => w.job === node.type && w.nodeId !== node.id)
-      || state.workers.find(w => (w.job === 'gold' || w.job === 'lumber') && w.job !== node.type);
+// First live node of a resource type in a zone (array order).
+function firstNodeOfType(zone, type) {
+  return liveNodesInZone(zone).find(n => n.type === type) || null;
 }
 
-function assignWorker(worker, node) {
+// A worker in `zone` to spare for `node`: idle first, then one from another
+// node of the SAME resource, then one from a different resource — all within
+// the same zone (workers don't teleport between zones to harvest).
+function spareWorker(state, zone, node) {
+  const here = state.workers.filter(w => String(w.zoneId) === String(zone.id));
+  return here.find(w => w.job === 'idle')
+      || here.find(w => w.job === node.type && String(w.nodeId) !== String(node.id))
+      || here.find(w => (w.job === 'gold' || w.job === 'lumber') && w.job !== node.type);
+}
+
+function assignWorker(state, worker, node) {
   worker.job = node.type;
   worker.nodeId = node.id;
-  worker.cooldown = nodeCooldown(node);
+  worker.cooldown = nodeCooldown(state, node);
 }
 
 function idleWorker(worker) {
@@ -533,23 +660,33 @@ function idleWorker(worker) {
   worker.cooldown = 0;
 }
 
+function workersInZone(state, zone) {
+  return state.workers.filter(w => String(w.zoneId) === String(zone.id));
+}
+
+function idleInZone(state, zone) {
+  return workersInZone(state, zone).filter(w => w.job === 'idle').length;
+}
+
 function sendWorkerToNode(state, node) {
   if (node.remaining <= 0) return;
-  const worker = spareWorker(state, node);
+  const zone = nodeZone(state, node.id);
+  const worker = zone && spareWorker(state, zone, node);
   if (!worker) return;
-  assignWorker(worker, node);
+  assignWorker(state, worker, node);
   flashTile(`node:${node.type}:${node.id}`, 'spawn');
   writeLog(state, `Worker → ${node.label}.`);
 }
 
-// Long-press variant: pull every spare worker to this node. spareWorker stops
-// matching once everyone is already here, which terminates the loop.
+// Long-press variant: pull every spare worker in the zone to this node.
 function sendAllWorkersToNode(state, node) {
   if (node.remaining <= 0) return;
+  const zone = nodeZone(state, node.id);
+  if (!zone) return;
   let moved = 0;
   let worker;
-  while (moved < 200 && (worker = spareWorker(state, node))) {
-    assignWorker(worker, node);
+  while (moved < 200 && (worker = spareWorker(state, zone, node))) {
+    assignWorker(state, worker, node);
     moved += 1;
   }
   if (moved > 0) {
@@ -558,36 +695,72 @@ function sendAllWorkersToNode(state, node) {
   }
 }
 
-// Idle workers don't sit around: they mine gold, or cut wood if no gold is
-// left. Keeps the economy running without manual assignment.
+// Idle workers don't sit around: each harvests in its own zone — its preferred
+// resource first (what it hauled before being moved), then gold, then wood.
+// Keeps every zone's economy running hands-free.
 function autoAssignWorkers(state) {
   state.workers.forEach(w => {
     if (w.job !== 'idle') return;
-    const node = firstNodeOfType(state, 'gold') || firstNodeOfType(state, 'lumber');
-    if (node) assignWorker(w, node);
+    const zone = zoneById(state, w.zoneId);
+    if (!zone) return;
+    const node = (w.pref && firstNodeOfType(zone, w.pref))
+      || firstNodeOfType(zone, 'gold') || firstNodeOfType(zone, 'lumber');
+    if (node) assignWorker(state, w, node);
   });
 }
 
-// Builder to dispatch for a construction: an idle worker first, otherwise one
-// pulled off the most plentiful live node (the crew we can most afford to
-// shrink). Null when nobody can be spared.
-function builderWorker(state) {
+// Resolve an armed move against a tapped destination — ONE worker/unit per tap.
+// `destNode` (optional) targets a specific resource: a worker sent onto a node
+// harvests THAT resource; sent to a zone with no node it keeps its own resource.
+// Returns true if something moved (the move stays armed for more one-at-a-time
+// taps), false if the source is empty.
+function executeMoveOne(state, arm, destZone, destNode) {
+  if (arm.kind === 'army') {
+    const from = zoneById(state, arm.fromZoneId);
+    if (!from || String(from.id) === String(destZone.id) || from.army[arm.type] <= 0) return false;
+    startTransfer(state, from.id, destZone.id, arm.type, 1, 'move');
+    return true;
+  }
+  // Workers: pick one from the source node's crew, or one idle in the zone.
+  const worker = arm.nodeId != null
+    ? state.workers.find(w => String(w.nodeId) === String(arm.nodeId))
+    : state.workers.find(w => String(w.zoneId) === String(arm.fromZoneId) && w.job === 'idle');
+  if (!worker) return false;
+  if (String(destZone.id) === String(arm.fromZoneId) && !destNode) return false;   // no-op
+  worker.zoneId = destZone.id; worker.nodeId = null; worker.cooldown = 0; worker.job = 'idle';
+  if (destNode) {
+    worker.pref = destNode.type;
+    if (destNode.remaining > 0) assignWorker(state, worker, destNode);
+  } else if (arm.resource) {
+    worker.pref = arm.resource;   // keep hauling the same kind
+  }
+  autoAssignWorkers(state);
+  writeLog(state, `Worker → ${destZone.name}${destNode ? ` (${destNode.type})` : ''}.`);
+  flashTile(`army:defend:${destZone.id}`, 'spawn');
+  return true;
+}
+
+// Builder to dispatch for a construction in `zone`: an idle worker already in
+// the zone first, then any idle worker (they travel over), then one pulled off
+// the most plentiful live node anywhere. Null when nobody can be spared.
+function builderWorker(state, zone) {
+  const inZone = zone && workersInZone(state, zone).find(w => w.job === 'idle');
+  if (inZone) return inZone;
   const idle = state.workers.find(w => w.job === 'idle');
   if (idle) return idle;
-  const richest = state.nodes
-    .filter(n => n.discovered && n.remaining > 0 && workersAtNode(state, n).length > 0)
+  const richest = allNodes(state)
+    .filter(n => n.remaining > 0 && workersAtNode(state, n).length > 0)
     .sort((a, b) => b.remaining - a.remaining)[0];
   return richest ? workersAtNode(state, richest)[0] : null;
 }
 
-// Builder released from a finished/cancelled construction: back to its node if
-// it still has resources, otherwise idle (auto-assign re-routes it next tick).
-function releaseBuilder(state, workerId, returnTo) {
+// Builder released from a finished/cancelled construction: it settles in the
+// zone it worked in and goes idle (auto-assign routes it to a local node).
+function releaseBuilder(state, workerId, zoneId) {
   const worker = state.workers.find(w => w.id === workerId);
   if (!worker) return;
-  const node = returnTo ? nodeById(state, returnTo) : null;
-  if (node && node.remaining > 0) assignWorker(worker, node);
-  else idleWorker(worker);
+  if (zoneId != null) worker.zoneId = zoneId;
+  idleWorker(worker);
 }
 
 function harvestTick(state) {
@@ -604,7 +777,7 @@ function harvestTick(state) {
     const gained = Math.min(harvestYield(state, worker.job), node.remaining);
     node.remaining -= gained;
     state.resources[worker.job] += gained;
-    worker.cooldown = nodeCooldown(node);
+    worker.cooldown = nodeCooldown(state, node);
     if (node.remaining <= 0) writeLog(state, `${node.label} depleted.`);
   });
 }
@@ -612,22 +785,24 @@ function harvestTick(state) {
 // ── Timed jobs (train / construct / upgrade) ───────────────────────────────
 // One subsystem for everything with a duration, a cost, and a cancel+refund.
 
-function trainJobs(state, producer) {
-  return state.jobs.filter(j => j.kind === 'train' && j.producer === producer);
+// Training happens at a producing building IN A ZONE, so train jobs are keyed
+// by producer + zoneId: N barracks in a zone train N units at once and hold
+// QUEUE_MAX × N in queue there.
+function trainJobs(state, producer, zoneId) {
+  return state.jobs.filter(j => j.kind === 'train' && j.producer === producer && String(j.zoneId) === String(zoneId));
 }
 
-function queueLength(state, producer) {
-  return trainJobs(state, producer).length;
+function queueLength(state, producer, zoneId) {
+  return trainJobs(state, producer, zoneId).length;
 }
 
-// Concurrency and queue depth both scale with building count: N barracks train
-// N units at once and hold QUEUE_MAX × N in queue.
-function producerCapacity(state, producer) {
-  return state.structures[producer] || 1;
+function producerCapacity(state, producer, zoneId) {
+  const zone = zoneById(state, zoneId);
+  return (zone && zone.structures[producer]) || 1;
 }
 
-function queueMax(state, producer) {
-  return QUEUE_MAX * producerCapacity(state, producer);
+function queueMax(state, producer, zoneId) {
+  return QUEUE_MAX * producerCapacity(state, producer, zoneId);
 }
 
 function supplyReserved(state) {
@@ -638,40 +813,43 @@ function pendingUpgrades(state, tag) {
   return state.jobs.filter(j => j.kind === 'upgrade' && j.tag === tag).length;
 }
 
-function trainUnit(state, key) {
+function trainUnit(state, key, zoneId) {
   const u = UNITS[key];
-  if (queueLength(state, u.producer) >= queueMax(state, u.producer) || !canAfford(state, u.cost)) return;
+  const zone = zoneById(state, zoneId);
+  if (!zone) return;
+  if (queueLength(state, u.producer, zoneId) >= queueMax(state, u.producer, zoneId) || !canAfford(state, u.cost)) return;
   spend(state, u.cost);
   const time = scaledTime(u.time);
   state.jobs.push({
-    uid: nextId(), kind: 'train', producer: u.producer, supply: 1,
+    uid: nextId(), kind: 'train', producer: u.producer, zoneId: zone.id, supply: 1,
     icon: u.icon, label: u.label, duration: time, remaining: time,
-    cost: u.cost, complete: u.done
+    cost: u.cost, complete: s => u.done(s, zoneById(s, zone.id) || homeZone(s))
   });
-  const depth = queueLength(state, u.producer);
+  const depth = queueLength(state, u.producer, zoneId);
   writeLog(state, depth > 1 ? `${u.label}: queued (${depth}).` : `${u.label}: started.`);
 }
 
-function startConstruction(state, key) {
+function startConstruction(state, key, zoneId) {
   const b = BUILDINGS[key];
-  if (!canAfford(state, b.build.cost)) return;
-  const worker = builderWorker(state);
+  const zone = zoneById(state, zoneId);
+  if (!zone || !canAfford(state, b.build.cost)) return;
+  const worker = builderWorker(state, zone);
   if (!worker) return;
   spend(state, b.build.cost);
-  const returnTo = worker.nodeId;
   worker.job = 'building';
   worker.nodeId = null;
   worker.cooldown = 0;
   const time = scaledTime(b.build.time);
   state.jobs.push({
-    uid: nextId(), kind: 'construct', workerId: worker.id, returnTo,
+    uid: nextId(), kind: 'construct', workerId: worker.id, zoneId: zone.id,
     icon: b.icon, label: b.label, duration: time, remaining: time,
     cost: b.build.cost,
     complete: s => {
-      s.structures[key] += 1;
-      flashTile(`structure:${key}:1`, 'spawn');
+      const z = zoneById(s, zone.id) || homeZone(s);
+      z.structures[key] += 1;
+      flashTile(`structure:${key}:${z.id}`, 'spawn');
       writeLog(s, `${cap(b.label)} complete.`);
-      if (b.onBuilt) b.onBuilt(s);
+      if (b.onBuilt) b.onBuilt(s, z);
     }
   });
   state.buildMenu = false;
@@ -679,26 +857,29 @@ function startConstruction(state, key) {
 }
 
 // Repair rides the construct-job machinery: a worker is pulled the same way,
-// walks over, patches the accumulated damage off, and returns to its node.
-function pendingRepair(state, key) {
-  return state.jobs.some(j => j.kind === 'construct' && j.repairKey === key);
+// walks over, patches the accumulated damage off a zone's building, and
+// settles there.
+function pendingRepair(state, key, zoneId) {
+  return state.jobs.some(j => j.kind === 'construct' && j.repairKey === key && String(j.zoneId) === String(zoneId));
 }
 
-function startRepair(state, key) {
-  const worker = builderWorker(state);
+function startRepair(state, key, zoneId) {
+  const zone = zoneById(state, zoneId);
+  if (!zone) return;
+  const worker = builderWorker(state, zone);
   if (!worker) return;
-  const returnTo = worker.nodeId;
   worker.job = 'building';
   worker.nodeId = null;
   worker.cooldown = 0;
-  const time = Math.max(1, Math.ceil(state.structureDamage[key] / REPAIR_HP_PER_TICK));
+  const time = Math.max(1, Math.ceil(zone.structureDamage[key] / REPAIR_HP_PER_TICK));
   state.jobs.push({
-    uid: nextId(), kind: 'construct', workerId: worker.id, returnTo, repairKey: key,
+    uid: nextId(), kind: 'construct', workerId: worker.id, zoneId: zone.id, repairKey: key,
     icon: 'repair', label: `repair ${BUILDINGS[key].label}`, duration: time, remaining: time,
     cost: {},
     complete: s => {
-      s.structureDamage[key] = 0;
-      flashTile(`structure:${key}:1`, 'spawn');
+      const z = zoneById(s, zone.id) || homeZone(s);
+      z.structureDamage[key] = 0;
+      flashTile(`structure:${key}:${z.id}`, 'spawn');
       writeLog(s, `${cap(BUILDINGS[key].label)} repaired.`);
     }
   });
@@ -717,11 +898,40 @@ function startUpgrade(state, spec) {
   writeLog(state, `${spec.label}: upgrading.`);
 }
 
-// One research at a time per source building — a second blacksmith (etc.)
-// unlocks a second parallel upgrade slot.
+// One research at a time per source building (counted across all zones) — a
+// second blacksmith (etc.) unlocks a second parallel upgrade slot.
 function upgradeSlotFree(state, source) {
   return state.jobs.filter(j => j.kind === 'upgrade' && j.source === source).length
-       < state.structures[source];
+       < totalStructures(state, source);
+}
+
+// Deliver a marching column into a zone: an owned zone takes them as defenders
+// (claiming a freshly-charted empty zone); an occupied zone takes them as the
+// assault strike force. Reveals the zone if scouts are only now arriving.
+function arriveColumn(state, zone, type, count, wounds = 0) {
+  if (!zone.discovered) {
+    zone.discovered = true;
+    state.frontierAt = Math.max(state.frontierAt, zone.index);
+    flashTile(`zone:head:${zone.id}`, 'spawn');
+    writeLog(state, zone.garrison
+      ? `Scouts reach ${zone.name} — and it's held by a garrison!`
+      : `Scouts chart ${zone.name} — the ground is ours.`);
+    if (zone.garrison) flashError('Enemy garrison discovered!');
+  }
+  if (zone.garrison && zone.status === 'occupied') {
+    const strike = zone.strike || emptyArmy();
+    strike[type] = (strike[type] || 0) + count;
+    strike.wounds = (strike.wounds || 0) + wounds;
+    zone.strike = strike;
+    flashTile(`zone:head:${zone.id}`, 'spawn');
+    writeLog(state, `${count} ${count === 1 ? ARMY[type].singular : ARMY[type].label} storm ${zone.name}!`);
+  } else {
+    zone.army[type] += count;
+    zone.army.wounds += wounds;
+    zone.status = 'owned';
+    flashTile(`army:defend:${zone.id}`, 'spawn');
+    writeLog(state, `${count} ${count === 1 ? ARMY[type].singular : ARMY[type].label} arrive at ${zone.name}.`);
+  }
 }
 
 function cancelJob(state, uid) {
@@ -729,20 +939,21 @@ function cancelJob(state, uid) {
   if (!job) return;
   state.jobs = state.jobs.filter(j => j !== job);
   refund(state, job.cost);
-  if (job.kind === 'construct') releaseBuilder(state, job.workerId, job.returnTo);
+  if (job.kind === 'construct') releaseBuilder(state, job.workerId, job.zoneId);
   if (job.kind === 'transfer') {
-    state.army[job.from][job.type] += job.count;
+    const from = zoneById(state, job.from);
+    if (from) from.army[job.type] += job.count;   // recall to where they set out
     writeLog(state, `${job.label}: recalled.`);
     return;
   }
   writeLog(state, `${job.label}: cancelled, refunded.`);
 }
 
-// Progress 0..1 for any job. Train jobs beyond the producer's concurrency cap
-// are still queued and report 0.
+// Progress 0..1 for any job. Train jobs beyond the producer's per-zone
+// concurrency cap are still queued and report 0.
 function jobProgress(state, job) {
   if (job.kind === 'train'
-      && !trainJobs(state, job.producer).slice(0, producerCapacity(state, job.producer)).includes(job)) {
+      && !trainJobs(state, job.producer, job.zoneId).slice(0, producerCapacity(state, job.producer, job.zoneId)).includes(job)) {
     return 0;
   }
   const step = state.cheats.fastTrain ? CHEAT_SPEED : 1;
@@ -754,20 +965,20 @@ function advanceJobs(state) {
   const advancedPerProducer = {};
   state.jobs.forEach(job => {
     if (job.kind === 'train') {
-      const advanced = advancedPerProducer[job.producer] || 0;
-      if (advanced >= producerCapacity(state, job.producer)) return;
-      advancedPerProducer[job.producer] = advanced + 1;
+      const gkey = `${job.producer}:${job.zoneId}`;
+      const advanced = advancedPerProducer[gkey] || 0;
+      if (advanced >= producerCapacity(state, job.producer, job.zoneId)) return;
+      advancedPerProducer[gkey] = advanced + 1;
     }
     job.remaining -= step;
   });
   const done = state.jobs.filter(j => j.remaining <= 0);
   state.jobs = state.jobs.filter(j => j.remaining > 0);
   done.forEach(job => {
-    if (job.kind === 'construct') releaseBuilder(state, job.workerId, job.returnTo);
+    if (job.kind === 'construct') releaseBuilder(state, job.workerId, job.zoneId);
     if (job.kind === 'transfer') {
-      state.army[job.to][job.type] += job.count;
-      flashTile(`army:${job.to}:1`, 'spawn');
-      writeLog(state, `${job.count} ${job.count === 1 ? ARMY[job.type].singular : ARMY[job.type].label} arrived at ${job.to}.`);
+      const to = zoneById(state, job.to);
+      if (to) arriveColumn(state, to, job.type, job.count);
       return;
     }
     job.complete(state);
@@ -777,11 +988,9 @@ function advanceJobs(state) {
 // ── Stats ──────────────────────────────────────────────────────────────────
 
 function supplyUsed(state) {
-  return state.workers.length
-       + ORDERS.reduce((sum, o) => sum + poolCount(state.army[o]), 0)
-       + state.jobs.filter(j => j.kind === 'transfer').reduce((sum, j) => sum + j.count, 0)
-       + state.sites.reduce((sum, s) => sum + siteUnits(s), 0)
-       + state.enemy.targets.reduce((sum, t) => sum + siteUnits(t), 0);
+  const stationed = state.zones.reduce((sum, z) => sum + poolCount(z.army) + strikeCount(z.strike), 0);
+  const marching = state.jobs.filter(j => j.kind === 'transfer').reduce((sum, j) => sum + j.count, 0);
+  return state.workers.length + stationed + marching;
 }
 
 function hallTierBonus(state, field) {
@@ -790,7 +999,7 @@ function hallTierBonus(state, field) {
 
 function supplyCap(state) {
   return SUPPLY_BASE + Object.keys(BUILDINGS)
-    .reduce((sum, k) => sum + (BUILDINGS[k].supply || 0) * state.structures[k], 0)
+    .reduce((sum, k) => sum + (BUILDINGS[k].supply || 0) * totalStructures(state, k), 0)
     + hallTierBonus(state, 'supply');
 }
 
@@ -834,12 +1043,12 @@ function unitHp(state, type) {
   return ARMY[type].hp + state.tech.armor * ARMOR_HP_PER_LEVEL;
 }
 
-// Rough income estimate per tick for the hall's info line.
+// Rough income estimate per tick for the hall's info line (all zones).
 function incomePerTick(state, resource) {
   return state.workers.reduce((sum, w) => {
     if (w.job !== resource) return sum;
     const node = nodeById(state, w.nodeId);
-    return node ? sum + harvestYield(state, resource) / nodeCooldown(node) : sum;
+    return node ? sum + harvestYield(state, resource) / nodeCooldown(state, node) : sum;
   }, 0);
 }
 
@@ -849,8 +1058,17 @@ function harvestYield(state, resource) {
     : HARVEST_YIELD;
 }
 
-function unitsOnOrder(state, order) {
-  return poolCount(state.army[order]);
+// Total stationed defenders across every zone.
+function totalDefenders(state) {
+  return state.zones.reduce((sum, z) => sum + poolCount(z.army), 0);
+}
+
+// Units currently marching out to chart the next (undiscovered) zone.
+function exploringCount(state) {
+  const z = chartingZone(state);
+  if (!z) return 0;
+  return state.jobs.filter(j => j.kind === 'transfer' && String(j.to) === String(z.id))
+    .reduce((s, j) => s + j.count, 0);
 }
 
 // Segmented-hp payloads for entityButton: one segment per unit, the last one
@@ -880,7 +1098,7 @@ function nodeHp(state, node) {
   if (count === 0) return null;
   if (state.workerWounds === 0 && !recentlyHit(state.workerLastHitAt)) return null;
   const victim = state.workers.filter(w => w.job !== 'building').pop();
-  if (!victim || victim.nodeId !== node.id) return null;
+  if (!victim || String(victim.nodeId) !== String(node.id)) return null;
   return {
     segments: count,
     partial: 1 - state.workerWounds / WORKER_HP,
@@ -888,12 +1106,12 @@ function nodeHp(state, node) {
   };
 }
 
-// Structure tiles: bar whenever the type carries unrepaired damage.
-function buildingHp(state, key) {
-  const dmg = state.structureDamage[key];
+// Structure tiles: bar whenever a zone's building carries unrepaired damage.
+function buildingHp(state, zone, key) {
+  const dmg = zone.structureDamage[key];
   if (!dmg || dmg <= 0) return null;
   const full = buildingMaxHp(state, key);
-  const segments = state.structures[key];
+  const segments = zone.structures[key];
   if (segments <= 0) return null;
   return {
     segments,
@@ -912,29 +1130,29 @@ function raidHp(raid) {
   };
 }
 
-// Site garrison bar: one segment per remaining guard or tower, only while
-// damaged (or just hit). Guards soak before towers, so the draining segment
-// is whichever of the two is currently being chewed.
-function siteHp(site) {
-  const full = site.guards.count * site.guards.hp + site.towers * SITE_TOWER.hp;
-  const left = site.guardPool
-    + (site.towersLeft > 0 ? (site.towersLeft - 1) * SITE_TOWER.hp + site.towerHp : 0);
-  if (left >= full && !recentlyHit(site.lastHitAt)) return null;
-  const segments = site.guardsLeft + site.towersLeft;
+// Garrison bar for an occupied zone: one segment per remaining guard or tower,
+// only while damaged (or just hit). Guards soak before towers.
+function garrisonHp(g) {
+  const full = g.guards.count * g.guards.hp + g.towers * SITE_TOWER.hp;
+  const left = g.guardPool
+    + (g.towersLeft > 0 ? (g.towersLeft - 1) * SITE_TOWER.hp + g.towerHp : 0);
+  if (left >= full && !recentlyHit(g.lastHitAt)) return null;
+  const segments = g.guardsLeft + g.towersLeft;
   if (segments === 0) return null;
-  const partial = site.guardsLeft > 0
-    ? (site.guardPool - (site.guardsLeft - 1) * site.guards.hp) / site.guards.hp
-    : site.towerHp / SITE_TOWER.hp;
+  const partial = g.guardsLeft > 0
+    ? (g.guardPool - (g.guardsLeft - 1) * g.guards.hp) / g.guards.hp
+    : g.towerHp / SITE_TOWER.hp;
   return { segments, partial, total: left / full };
 }
 
-// The strike force's own bar — only the fighting column takes damage.
-function strikeHp(site) {
-  const col = site.strike;
+// A zone's assault column bar — only the fighting strike force takes damage.
+function strikeHp(zone) {
+  const col = zone.strike;
   if (!col) return null;
   const count = strikeCount(col);
   if (count === 0) return null;
-  if (!col.wounds && !recentlyHit(site.strikeHitAt)) return null;
+  const hitAt = zone.garrison ? zone.garrison.strikeHitAt : 0;
+  if (!col.wounds && !recentlyHit(hitAt)) return null;
   const type = Object.keys(ARMY).find(k => col[k] > 0);
   const maxHp = Object.keys(ARMY).reduce((sum, k) => sum + (col[k] || 0) * ARMY[k].hp, 0);
   return {
@@ -944,73 +1162,61 @@ function strikeHp(site) {
   };
 }
 
-// Ring on the scouts' wilderness tile: how far the accumulated explore points
-// have come from the last discovery milestone toward the next one (enemy
-// base, hidden node, or garrisoned site). Null once everything is found.
-// Interpolates within the tick — each tick adds one point per explorer — so
-// the 100ms animator can spin it fluidly, faster with more scouts.
-function exploreRing(state) {
-  const all = [
-    EXPLORE_THRESHOLD,
-    ...state.nodes.filter(n => Number.isFinite(n.discoverAt)).map(n => n.discoverAt),
-    ...state.sites.map(s => s.discoverAt)
-  ];
-  const ahead = all.filter(t => t > state.exploreProgress);
-  if (!ahead.length) return null;
-  const next = Math.min(...ahead);
-  const prev = Math.max(0, ...all.filter(t => t <= state.exploreProgress));
-  const p = state.exploreProgress + tickFraction(poolCount(state.army.explore));
-  return Math.min(1, (p - prev) / (next - prev));
+// Marching between zones is a timed 'transfer' job: units leave the source
+// zone's defenders immediately, spend the march in transit (untargetable), and
+// are delivered by arriveColumn on arrival. Tapping the chip recalls them.
+// Consecutive moves on the same route join the same column. Cost grows with the
+// number of zones crossed.
+function transferTicks(state, fromId, toId) {
+  const a = zoneById(state, fromId), b = zoneById(state, toId);
+  const steps = (a && b) ? Math.abs(a.index - b.index) : 1;
+  return TRANSFER_BASE_TICKS + Math.max(1, steps) * ZONE_MARCH_PER_STEP;
 }
 
-function enemyTarget(state) {
-  return state.enemy.targets.find(t => !t.cleared) || null;
-}
-
-// Changing orders is a timed march (a 'transfer' job): units leave the source
-// pool immediately, spend the march in transit (not fighting, not targetable),
-// and join the target pool on arrival. Tapping the chip recalls them to where
-// they came from. Consecutive moves on the same route join the same column.
-function transferTicks(from, to) {
-  return TRANSFER_BASE_TICKS + ORDER_REMOTENESS[from] + ORDER_REMOTENESS[to];
-}
-
-function startTransfer(state, from, to, type, count) {
-  const pool = state.army[from];
-  const moved = Math.min(count, pool[type]);
+function startTransfer(state, fromId, toId, type, count, mode = 'move') {
+  const from = zoneById(state, fromId);
+  const to = zoneById(state, toId);
+  if (!from || !to) return;
+  const moved = Math.min(count, from.army[type]);
   if (moved <= 0) return;
-  pool[type] -= moved;
-  if (poolCount(pool) === 0) pool.wounds = 0;
-  // Joining the scouts is instant — the unit just adds to the explorer pool
-  // and progress speeds up. (Coming back from explore still takes a march.)
-  if (to === 'explore') {
-    state.army.explore[type] += moved;
-    flashTile('army:explore:1', 'spawn');
-    writeLog(state, `${moved} ${moved === 1 ? ARMY[type].singular : ARMY[type].label} joined the scouts.`);
-    return;
-  }
-  const marching = state.jobs.find(j => j.kind === 'transfer' && j.from === from && j.to === to && j.type === type);
+  from.army[type] -= moved;
+  if (poolCount(from.army) === 0) from.army.wounds = 0;
+  const marching = state.jobs.find(j => j.kind === 'transfer'
+    && String(j.from) === String(fromId) && String(j.to) === String(toId) && j.type === type);
   if (marching) {
     marching.count += moved;   // join the column already under way
   } else {
-    const time = transferTicks(from, to);
-    // No complete() — advanceJobs delivers transfers itself so late joiners
-    // (merged counts) all arrive together.
+    const time = transferTicks(state, fromId, toId);
+    const verb = mode === 'assault' ? 'assault' : mode === 'explore' ? 'explore' : 'move';
     state.jobs.push({
-      uid: nextId(), kind: 'transfer', from, to, type, count: moved,
-      icon: ARMY[type].icon, overlay: orderIcon(to), label: `${ARMY[type].label} → ${to}`,
+      uid: nextId(), kind: 'transfer', from: fromId, to: toId, type, count: moved, mode,
+      icon: ARMY[type].icon, overlay: mode === 'assault' ? 'attack' : mode === 'explore' ? 'explore' : 'defend',
+      label: `${ARMY[type].label} → ${to.name}`,
       duration: time, remaining: time, cost: {}
     });
   }
-  writeLog(state, `${moved} ${moved === 1 ? ARMY[type].singular : ARMY[type].label} marching to ${to}.`);
+  const dest = mode === 'explore' ? 'to chart new ground' : `to ${to.name}`;
+  writeLog(state, `${moved} ${moved === 1 ? ARMY[type].singular : ARMY[type].label} marching ${dest}.`);
 }
 
-function moveUnit(state, from, to, type) {
-  startTransfer(state, from, to, type, 1);
+function moveUnit(state, fromId, toId, type, mode) {
+  startTransfer(state, fromId, toId, type, 1, mode);
 }
 
-function moveAllUnits(state, from, to, type) {
-  startTransfer(state, from, to, type, state.army[from][type]);
+function moveAllUnits(state, fromId, toId, type, mode) {
+  const from = zoneById(state, fromId);
+  startTransfer(state, fromId, toId, type, from ? from.army[type] : 0, mode);
+}
+
+// Send units out from `fromId` to chart the next zone (fromId's index + 1).
+// Creates the zone if needed (content hidden until arrival) and marches there.
+function exploreFrom(state, fromId, type, count) {
+  const from = zoneById(state, fromId);
+  if (!from) return;
+  let target = zoneByIndex(state, from.index + 1);
+  if (!target) { target = makeZone(from.index + 1, state.raid.wave); state.zones.push(target); }
+  if (target.discovered) return;   // already charted
+  startTransfer(state, fromId, target.id, type, count, 'explore');
 }
 
 // ── Raid combat ────────────────────────────────────────────────────────────
@@ -1019,52 +1225,52 @@ function moveAllUnits(state, from, to, type) {
 // buildings. Units on attack/explore are away from the base and neither fight
 // raiders nor get targeted.
 
-// Damage my side deals per volley. Only defend and patrol pools fight raids —
-// scouts and the attack force are away from the base. A raid fights the patrol
-// at the perimeter (near zone); only once it breaks through to the base do
-// defenders and towers open fire.
+// Damage a pool of ARMY units deals per volley.
 function poolDamage(state, pool) {
   return Object.keys(ARMY).reduce((sum, k) => sum + pool[k] * unitDmg(state, k), 0);
 }
 
-function defenseDamage(state, raid) {
-  if (!raid.atBase) return poolDamage(state, state.army.patrol);
-  // Siege parties sit beyond tower range — only warriors can reach them.
+// My side's fire at a raid standing in `zone`: that zone's defenders plus its
+// towers. Siege parties sit beyond tower range (towers deal 0 vs them).
+function defenseDamage(state, zone, raid) {
+  if (!raid.atZone) return 0;
   const towerDmg = raid.siege ? 0
-    : Object.keys(BUILDINGS).reduce((sum, k) => sum + (BUILDINGS[k].dmg || 0) * state.structures[k], 0);
-  return poolDamage(state, state.army.defend) + towerDmg;
+    : Object.keys(BUILDINGS).reduce((sum, k) => sum + (BUILDINGS[k].dmg || 0) * zone.structures[k], 0);
+  return poolDamage(state, zone.army) + towerDmg;
 }
 
-// Damage flows into the pool's wounds; every full hp's worth kills one unit
-// (footmen soak before archers).
-function damagePool(state, order, dmg) {
-  const pool = state.army[order];
-  flashTile(`army:${order}:1`, 'damage');
+// Damage flows into a zone's defenders' wounds; every full hp's worth kills one
+// unit (footmen soak before archers).
+function damagePool(state, zone, dmg) {
+  const pool = zone.army;
+  flashTile(`army:defend:${zone.id}`, 'damage');
   pool.lastHitAt = performance.now();
   pool.wounds += dmg;
   let type = Object.keys(ARMY).find(k => pool[k] > 0);
   while (type && pool.wounds >= unitHp(state, type)) {
     pool.wounds -= unitHp(state, type);
     pool[type] -= 1;
-    writeLog(state, `A ${ARMY[type].singular} has fallen.`);
+    writeLog(state, `A ${ARMY[type].singular} has fallen at ${zone.name}.`);
     type = Object.keys(ARMY).find(k => pool[k] > 0);
   }
   if (!type) pool.wounds = 0;
 }
 
-function damageWorkers(state, dmg) {
+function workersInZoneLive(state, zone) {
+  return state.workers.filter(w => String(w.zoneId) === String(zone.id));
+}
+
+function damageWorkers(state, zone, dmg) {
   state.workerLastHitAt = performance.now();
   state.workerWounds += dmg;
-  // The crew being hit is wherever the next victim works — flash its node red
-  // on every strike, not just on a death.
-  const target = state.workers.filter(w => w.job !== 'building').pop()
-              || state.workers[state.workers.length - 1];
+  const here = () => workersInZoneLive(state, zone).filter(w => w.job !== 'building');
+  const target = here().pop();
   if (target && target.nodeId) flashTile(`node:${target.job}:${target.nodeId}`, 'damage');
-  while (state.workerWounds >= WORKER_HP && state.workers.length > 0) {
+  while (state.workerWounds >= WORKER_HP && workersInZoneLive(state, zone).length > 0) {
     state.workerWounds -= WORKER_HP;
     // Builders die last; a dead builder takes its construction down with it.
-    const victim = state.workers.filter(w => w.job !== 'building').pop()
-                || state.workers[state.workers.length - 1];
+    const victim = here().pop() || workersInZoneLive(state, zone).pop();
+    if (!victim) break;
     if (victim.job === 'building') {
       state.jobs = state.jobs.filter(j => !(j.kind === 'construct' && j.workerId === victim.id));
       writeLog(state, 'A builder was slain — construction abandoned.');
@@ -1077,22 +1283,21 @@ function damageWorkers(state, dmg) {
   if (state.workers.length === 0) state.workerWounds = 0;
 }
 
-// Raiders razing buildings: damage accumulates on the building type
-// (persisting until repaired), destroying one instance when it exceeds its
-// hp; the raid then picks its next target from the given priority list.
-function damageBuildings(state, raid, dmg, order) {
-  if (!raid.targetType || !order.includes(raid.targetType) || state.structures[raid.targetType] <= 0) {
-    raid.targetType = order.find(k => state.structures[k] > 0) || null;
+// Raiders razing a zone's buildings: damage accumulates on the building type
+// (persisting until repaired), destroying one instance when it exceeds its hp.
+function damageBuildings(state, zone, raid, dmg, order) {
+  if (!raid.targetType || !order.includes(raid.targetType) || zone.structures[raid.targetType] <= 0) {
+    raid.targetType = order.find(k => zone.structures[k] > 0) || null;
   }
-  if (!raid.targetType) return;   // nothing left standing
+  if (!raid.targetType) return;   // nothing left standing here
   const key = raid.targetType;
-  flashTile(`structure:${key}:1`, 'damage');
-  state.structureDamage[key] += dmg;
-  if (state.structureDamage[key] >= buildingMaxHp(state, key)) {
-    state.structures[key] -= 1;
-    state.structureDamage[key] = 0;
-    writeLog(state, `${cap(BUILDINGS[key].label)} destroyed by raiders!`);
-    if (key === 'hall') {
+  flashTile(`structure:${key}:${zone.id}`, 'damage');
+  zone.structureDamage[key] += dmg;
+  if (zone.structureDamage[key] >= buildingMaxHp(state, key)) {
+    zone.structures[key] -= 1;
+    zone.structureDamage[key] = 0;
+    writeLog(state, `${cap(BUILDINGS[key].label)} at ${zone.name} destroyed by raiders!`);
+    if (key === 'hall' && zone.index === 0) {
       flashError('The town hall has fallen!');
       state.over = { won: false, day: currentDay(state) + 1 };
     }
@@ -1100,9 +1305,11 @@ function damageBuildings(state, raid, dmg, order) {
   }
 }
 
+// Raiders enter beyond the deepest owned zone and march inward toward home.
 function spawnRaid(state) {
   const wave = state.raid.wave;
   state.raid.wave += 1;
+  const startIndex = Math.max(...ownedZones(state).map(z => z.index), 0);
   let total = 0;
   let party = 0;
   Object.keys(RAIDER_TYPES).forEach(key => {
@@ -1111,80 +1318,73 @@ function spawnRaid(state) {
     const size = Math.floor(t.baseSize + (wave - t.fromWave) * t.sizePerWave);
     if (size <= 0) return;
     const grunt = { hp: t.hp + wave * t.hpPerWave, dmg: t.dmg + wave * t.dmgPerWave };
-    // Each party's first strike is offset by its index, so simultaneous
-    // parties volley on staggered ticks rather than all at once.
     const foeDelay = RAID_VOLLEY_EVERY + party;
     state.raids.push({
       id: nextId(), kind: key, icon: t.icon, label: t.label, siege: !!t.siege,
-      size, grunt, hpPool: size * grunt.hp, discovered: false,
-      arriveIn: RAID_ARRIVE_TICKS, atBase: false,
+      size, grunt, hpPool: size * grunt.hp, discovered: true,
+      index: startIndex, arriveIn: RAID_ARRIVE_TICKS, atZone: false,
       myStrikeIn: DEFENSE_VOLLEY_EVERY, foeStrikeIn: foeDelay, foeDelay,
       targetType: null
     });
     total += size;
     party += 1;
   });
-  // A standing patrol spots the wave the moment it sets out; otherwise it
-  // approaches unseen until a patrol picks it up (or it arrives).
-  if (unitsOnOrder(state, 'patrol') > 0) {
-    state.raids.forEach(r => {
-      if (!r.discovered && r.arriveIn >= RAID_ARRIVE_TICKS) r.discovered = true;
-    });
-    writeLog(state, `Patrol spotted ${total} raiders approaching!`);
-    flashError('Patrol spotted enemies approaching!');
+  if (total > 0) {
+    writeLog(state, `${total} raiders are marching in from the frontier!`);
+    flashError('Raiders approaching the frontier!');
   }
+}
+
+// A zone is subdued once it has no defenders, no workers, and no buildings —
+// the raid then marches on to the next zone inward.
+function zoneSubdued(state, zone) {
+  return poolCount(zone.army) === 0
+    && workersInZoneLive(state, zone).length === 0
+    && Object.keys(BUILDINGS).every(k => zone.structures[k] === 0);
+}
+
+// Snap a raid's target to the next owned, charted zone at or inward of its
+// current index (raiders skip empty wilderness and enemy-held zones).
+function raidTargetZone(state, raid) {
+  while (raid.index >= 0) {
+    const z = zoneByIndex(state, raid.index);
+    if (z && z.discovered && z.status === 'owned') return z;
+    raid.index -= 1;
+    raid.atZone = false;
+    raid.arriveIn = ZONE_MARCH_PER_STEP;
+  }
+  return homeZone(state);
 }
 
 function raidTick(state) {
   state.raids.forEach(raid => {
+    const zone = raidTargetZone(state, raid);
     if (raid.arriveIn > 0) {
-      // A standing patrol scouts the approach — without one, raiders appear
-      // out of nowhere when they reach the perimeter.
-      if (!raid.discovered && unitsOnOrder(state, 'patrol') > 0) {
-        raid.discovered = true;
-        writeLog(state, `Patrol spotted ${raid.size} ${raid.label} approaching!`);
-        flashError('Patrol spotted enemies approaching!');
-      }
       raid.arriveIn -= 1;
       if (raid.arriveIn <= 0) {
-        raid.discovered = true;
-        if (unitsOnOrder(state, 'patrol') > 0) {
-          writeLog(state, `${raid.size} ${raid.label} clash with our patrol!`);
-          flashError('Our patrol engages the raiders!');
-        }
+        raid.atZone = true;
+        raid.razing = false;
+        writeLog(state, `${raid.size} ${raid.label} reach ${zone.name}!`);
+        flashError(zone.index === 0 ? 'Our town is under attack!' : `${cap(zone.name)} is under attack!`);
       }
     }
-    // A raid is held at the perimeter as long as the patrol stands; only once
-    // the patrol is defeated (or was never there) does it advance on the town.
-    if (raid.arriveIn <= 0 && !raid.atBase && unitsOnOrder(state, 'patrol') === 0) {
-      raid.atBase = true;
-      writeLog(state, `${raid.size} ${raid.label} attack the town!`);
-      flashError('Our town is under attack!');
-    }
-    const arrived = raid.arriveIn <= 0;
-    // My side volleys on its own cadence: the patrol fires while the raid is
-    // out in the field, defenders + towers once it reaches the base. Damage
-    // splits across the parties fighting in the same place.
+    // My volley: this zone's defenders + towers fire once the raid arrives.
     raid.myStrikeIn -= 1;
     if (raid.myStrikeIn <= 0) {
       raid.myStrikeIn = DEFENSE_VOLLEY_EVERY;
-      const peers = state.raids.filter(r => !!r.atBase === !!raid.atBase).length;
-      const dealt = defenseDamage(state, raid) / peers;
+      const peers = state.raids.filter(r => r.index === raid.index && !!r.atZone === !!raid.atZone).length || 1;
+      const dealt = defenseDamage(state, zone, raid) / peers;
       if (dealt > 0) {
         flashTile(`enemy:raid:${raid.id}`, 'damage');
-        flashTile(raid.atBase ? 'army:defend:1' : 'army:patrol:1', 'attack');
-        // Firing towers rattle too.
-        if (raid.atBase) {
-          RAID_TOWER_TARGETS.forEach(k => {
-            if (state.structures[k] > 0) flashTile(`structure:${k}:1`, 'attack');
-          });
-        }
+        flashTile(`army:defend:${zone.id}`, 'attack');
+        RAID_TOWER_TARGETS.forEach(k => {
+          if (zone.structures[k] > 0) flashTile(`structure:${k}:${zone.id}`, 'attack');
+        });
         raid.lastHitAt = performance.now();
       }
       const sizeBefore = raid.size;
       raid.hpPool -= dealt;
       raid.size = Math.max(0, Math.ceil(raid.hpPool / raid.grunt.hp));
-      // Every raider killed drops plunder — defending pays.
       const kills = sizeBefore - raid.size;
       if (kills > 0) {
         const loot = kills * RAIDER_TYPES[raid.kind].bounty;
@@ -1192,251 +1392,164 @@ function raidTick(state) {
         state.resources.gold += loot;
       }
       if (raid.size <= 0) {
-        writeLog(state, `Raid repelled! Plundered ${raid.plunder || 0} gold.`);
+        writeLog(state, `Raid repelled at ${zone.name}! Plundered ${raid.plunder || 0} gold.`);
         return;
       }
     }
-
-    // Raiders strike back on a slower, offset cadence, and only once arrived:
-    // the patrol while held at the perimeter, then defenders at the base;
-    // scouts and the attack force are away and untouchable. Out of warriors
-    // -> towers, workers, buildings.
-    if (!arrived) {
-      // Hold each party at its own staggered phase until it arrives, so the
-      // first volleys land on different ticks.
+    if (raid.arriveIn > 0) {   // still marching to this zone
       raid.foeStrikeIn = raid.foeDelay || RAID_VOLLEY_EVERY;
       return;
     }
+    // Arrived: if the zone is already subdued, march on inward.
+    if (zoneSubdued(state, zone) && zone.index > 0) {
+      raid.index -= 1;
+      raid.atZone = false;
+      raid.arriveIn = ZONE_MARCH_PER_STEP;
+      return;
+    }
+    // Raiders strike back on their offset cadence.
     raid.foeStrikeIn -= 1;
     if (raid.foeStrikeIn > 0) return;
     raid.foeStrikeIn = RAID_VOLLEY_EVERY;
     const dmg = raid.size * raid.grunt.dmg;
     flashTile(`enemy:raid:${raid.id}`, 'attack');
-    if (!raid.atBase) {
-      damagePool(state, 'patrol', dmg);
-      return;
-    }
-    const towersStanding = RAID_TOWER_TARGETS.some(k => state.structures[k] > 0);
-    // Catapults shell buildings and nothing else — towers first (they
-    // outrange them), then the rest. Warriors are simply ignored.
+    const towersStanding = RAID_TOWER_TARGETS.some(k => zone.structures[k] > 0);
     if (raid.siege) {
-      if (!raid.razing) {
-        raid.razing = true;
-        flashError('Catapults are shelling the town!');
-      }
-      damageBuildings(state, raid, dmg, towersStanding ? RAID_TOWER_TARGETS : RAID_TARGET_ORDER);
+      damageBuildings(state, zone, raid, dmg, towersStanding ? RAID_TOWER_TARGETS : RAID_TARGET_ORDER);
       return;
     }
-    if (unitsOnOrder(state, 'defend') > 0) damagePool(state, 'defend', dmg);
-    else {
-      if (!raid.razing) {
-        raid.razing = true;
-        flashError('Our town is being razed!');
-      }
-      if (towersStanding) damageBuildings(state, raid, dmg, RAID_TOWER_TARGETS);
-      else if (state.workers.length > 0) damageWorkers(state, dmg);
-      else damageBuildings(state, raid, dmg, RAID_TARGET_ORDER);
-    }
+    if (poolCount(zone.army) > 0) damagePool(state, zone, dmg);
+    else if (towersStanding) damageBuildings(state, zone, raid, dmg, RAID_TOWER_TARGETS);
+    else if (workersInZoneLive(state, zone).length > 0) damageWorkers(state, zone, dmg);
+    else damageBuildings(state, zone, raid, dmg, RAID_TARGET_ORDER);
   });
   state.raids = state.raids.filter(r => r.size > 0);
 }
 
-// ── Conquerable sites ──────────────────────────────────────────────────────
-// Mini-bases in the far field. Warriors sent from the defend pool march out
-// (SITE_MARCH_TICKS each way), exchange volleys with the garrison on the raid
-// cadences — guards soak first, then the watch towers are razed — and the
-// survivors march home automatically once the site is cleared, bringing the
-// reward with them. A wiped strike leaves the garrison's damage standing, so
-// a second expedition finishes the job.
-
-function siteByKey(state, key) {
-  return state.sites.find(s => s.key === key)
-      || state.enemy.targets.find(t => t.key === key);
-}
-
-// Sites toughen the later they're found: at the moment of discovery the
-// garrison scales with the raid-wave counter, mirroring how attack waves
-// ramp (more guards, harder guards).
-function discoverSite(state, site) {
-  const wave = state.raid.wave;
-  site.guards = {
-    count: site.guards.count + Math.floor(wave / 2),
-    hp: site.guards.hp + wave * 4,
-    dmg: site.guards.dmg + wave * 0.5
-  };
-  site.guardsLeft = site.guards.count;
-  site.guardPool = site.guards.count * site.guards.hp;
-  site.discovered = true;
-  flashTile(`site:${site.key}:1`, 'spawn');
-}
+// ── Garrison combat (occupied zones) ───────────────────────────────────────
+// An occupied zone holds a garrison (guards + watch towers). Units marched in
+// become the zone's `strike` column and exchange volleys with the garrison on
+// the raid cadences — guards soak first, then towers fall. Clearing it flips
+// the zone to `owned`: the surviving strike force settles as its defenders and
+// the reward pays out. A wiped strike leaves the garrison's damage standing,
+// so a second column finishes the job. The garrison musters reinforcements
+// while under attack.
 
 function strikeCount(col) {
   return col ? Object.keys(ARMY).reduce((n, k) => n + (col[k] || 0), 0) : 0;
 }
 
-function siteUnits(site) {
-  return strikeCount(site.strike) + strikeCount(site.march) + strikeCount(site.returning);
-}
-
-function sendToSite(state, site, type, count) {
-  const moved = Math.min(count, state.army.defend[type]);
-  if (moved <= 0) return;
-  state.army.defend[type] -= moved;
-  if (poolCount(state.army.defend) === 0) state.army.defend.wounds = 0;
-  if (site.march) site.march[type] = (site.march[type] || 0) + moved;   // join the column under way
-  else site.march = { [type]: moved, arriveIn: SITE_MARCH_TICKS };
-  writeLog(state, `${moved} ${moved === 1 ? ARMY[type].singular : ARMY[type].label} marching on the ${site.label}.`);
-}
-
-function damageStrike(state, site, dmg) {
-  const strike = site.strike;
+// Damage the garrison deals back into our strike column.
+function damageStrike(state, zone, dmg) {
+  const g = zone.garrison;
+  const strike = zone.strike;
   strike.wounds = (strike.wounds || 0) + dmg;
-  site.strikeHitAt = performance.now();
-  flashTile(`site:${site.key}:1`, 'damage');
+  g.strikeHitAt = performance.now();
+  flashTile(`zone:head:${zone.id}`, 'damage');
   let type = Object.keys(ARMY).find(k => strike[k] > 0);
   while (type && strike.wounds >= unitHp(state, type)) {
     strike.wounds -= unitHp(state, type);
     strike[type] -= 1;
-    writeLog(state, `A ${ARMY[type].singular} has fallen at the ${site.label}.`);
+    writeLog(state, `A ${ARMY[type].singular} has fallen at ${zone.name}.`);
     type = Object.keys(ARMY).find(k => strike[k] > 0);
   }
   if (!type) {
-    site.strike = null;
-    writeLog(state, `Our assault on the ${site.label} was wiped out!`);
-    flashError(`Our warriors fell at the ${site.label}!`);
+    zone.strike = null;
+    writeLog(state, `Our assault on ${zone.name} was wiped out!`);
+    flashError(`Our warriors fell at ${zone.name}!`);
   }
 }
 
-function conquerSite(state, site) {
-  site.cleared = true;
-  writeLog(state, `${cap(site.label)} cleared!`);
-  flashError(`${cap(site.label)} cleared — ${site.rewardText}!`);
-  const survivors = site.strike;
-  site.strike = null;
-  // Homeland targets: outposts thin the raids (see the interval calc), the
-  // stronghold's fall ends the game.
-  if (site.final) {
+// The garrison falls: the zone becomes ours. Survivors settle as defenders,
+// the reward pays out, and the stronghold's fall wins the game.
+function conquerZone(state, zone) {
+  const g = zone.garrison;
+  const survivors = zone.strike || emptyArmy();
+  writeLog(state, `${cap(zone.name)} cleared!`);
+  flashError(`${cap(zone.name)} taken — ${g.rewardText}!`);
+  if (g.final) {
     writeLog(state, 'The orc stronghold lies in ruins! Victory!');
     state.over = { won: true, day: currentDay(state) + 1 };
-  } else if (site.veiled) {
-    writeLog(state, `${cap(site.label)} razed — the raids will thin out.`);
   }
-  const r = site.reward || {};
+  const r = g.reward || {};
   if (r.cache) {
     refund(state, r.cache);
     writeLog(state, `Plundered: ${Object.keys(r.cache).map(k => `${r.cache[k]} ${k}`).join(', ')}.`);
   }
-  if (r.nodeId) {
-    const node = nodeById(state, r.nodeId);
-    if (node) {
-      node.discovered = true;
-      flashTile(`node:${node.type}:${node.id}`, 'spawn');
-      writeLog(state, `The ${node.label} is ours — send workers.`);
-    }
-  }
-  if (r.workers) {
-    for (let i = 0; i < r.workers; i += 1) state.workers.push(createWorker());
-    autoAssignWorkers(state);
-    writeLog(state, `${r.workers} rescued peasants head straight to work.`);
-  }
   const freed = r.units || {};
-  if (r.units) {
-    writeLog(state, `${Object.values(r.units).reduce((a, b) => a + b, 0)} freed units join the survivors.`);
+  if (r.workers) {
+    for (let i = 0; i < r.workers; i += 1) state.workers.push(createWorker('idle', null, 0, zone.id));
+    autoAssignWorkers(state);
+    writeLog(state, `${r.workers} freed peasants join ${zone.name}.`);
   }
-  // Scouts that stormed the place are already out here — they pocket the
-  // loot and go straight back to exploring, no march home, no cooldown.
-  // Commanded assaults from the defend pool march home as before.
-  if (site.strikeFrom === 'explore') {
-    Object.keys(ARMY).forEach(k => {
-      state.army.explore[k] += (survivors[k] || 0) + (freed[k] || 0);
-    });
-    state.army.explore.wounds += survivors.wounds || 0;
-    flashTile('army:explore:1', 'spawn');
-    writeLog(state, 'The scouts resume exploring.');
-    return;
-  }
-  const back = site.returning || { wounds: 0 };
-  back.returnIn = SITE_MARCH_TICKS;
-  Object.keys(ARMY).forEach(k => { back[k] = (back[k] || 0) + (survivors[k] || 0) + (freed[k] || 0); });
-  back.wounds = (back.wounds || 0) + (survivors.wounds || 0);
-  site.returning = back;
+  // Survivors + freed units become the zone's garrison-in-reverse: its
+  // defenders. The zone flips to owned.
+  const army = zone.army;
+  Object.keys(ARMY).forEach(k => { army[k] += (survivors[k] || 0) + (freed[k] || 0); });
+  army.wounds += survivors.wounds || 0;
+  zone.strike = null;
+  zone.garrison = null;
+  zone.status = 'owned';
+  zone.wasOccupied = true;   // razed strongholds thin future raids
+  zone.name = `zone ${zone.index}`;
+  flashTile(`army:defend:${zone.id}`, 'spawn');
 }
 
-function siteTick(state) {
-  [...state.sites, ...state.enemy.targets].forEach(site => {
-    // Homeland targets muster reinforcements while under attack — a fresh
-    // guard every `reinforce.every` ticks, up to the cap.
-    if (site.reinforce && site.strike && !site.cleared) {
-      site.reinforceIn -= 1;
-      if (site.reinforceIn <= 0) {
-        site.reinforceIn = site.reinforce.every;
-        if (site.guardsLeft < site.reinforce.cap) {
-          site.guardsLeft += 1;
-          site.guardPool += site.guards.hp;
-          flashTile(`site:${site.key}:1`, 'spawn');
-          writeLog(state, `Reinforcements muster at the ${site.label}.`);
+function garrisonTick(state) {
+  state.zones.forEach(zone => {
+    const g = zone.garrison;
+    if (!g || zone.status !== 'occupied') return;
+    // Muster reinforcements while our strike force is fighting.
+    if (zone.strike && g.reinforce) {
+      g.reinforceIn -= 1;
+      if (g.reinforceIn <= 0) {
+        g.reinforceIn = g.reinforce.every;
+        if (g.guardsLeft < g.reinforce.cap) {
+          g.guardsLeft += 1;
+          g.guardPool += g.guards.hp;
+          flashTile(`zone:head:${zone.id}`, 'spawn');
+          writeLog(state, `Reinforcements muster at ${zone.name}.`);
         }
       }
     }
-    if (site.march) {
-      site.march.arriveIn -= 1;
-      if (site.march.arriveIn <= 0) {
-        const strike = site.strike || { wounds: 0 };
-        Object.keys(ARMY).forEach(k => { strike[k] = (strike[k] || 0) + (site.march[k] || 0); });
-        site.strike = strike;
-        site.strikeFrom = 'defend';   // commanded assaults march home afterwards
-        site.march = null;
-        writeLog(state, `Our warriors storm the ${site.label}!`);
-      }
-    }
-    if (site.returning) {
-      site.returning.returnIn -= 1;
-      if (site.returning.returnIn <= 0) {
-        Object.keys(ARMY).forEach(k => { state.army.defend[k] += site.returning[k] || 0; });
-        state.army.defend.wounds += site.returning.wounds || 0;
-        flashTile('army:defend:1', 'spawn');
-        writeLog(state, `The expedition from the ${site.label} has returned.`);
-        site.returning = null;
-      }
-    }
-    if (!site.strike || site.cleared) return;
-    // Our volley: guards soak everything first, then towers fall one by one.
-    site.myStrikeIn -= 1;
-    if (site.myStrikeIn <= 0) {
-      site.myStrikeIn = DEFENSE_VOLLEY_EVERY;
-      let dealt = Object.keys(ARMY).reduce((sum, k) => sum + (site.strike[k] || 0) * unitDmg(state, k), 0);
+    if (!zone.strike) return;
+    // Our volley: guards soak first, then towers fall one by one.
+    g.myStrikeIn -= 1;
+    if (g.myStrikeIn <= 0) {
+      g.myStrikeIn = DEFENSE_VOLLEY_EVERY;
+      let dealt = Object.keys(ARMY).reduce((sum, k) => sum + (zone.strike[k] || 0) * unitDmg(state, k), 0);
       if (dealt > 0) {
-        flashTile(`site:${site.key}:1`, 'damage');
-        site.lastHitAt = performance.now();
+        flashTile(`zone:head:${zone.id}`, 'damage');
+        g.lastHitAt = performance.now();
       }
-      if (site.guardsLeft > 0) {
-        site.guardPool = Math.max(0, site.guardPool - dealt);
-        site.guardsLeft = Math.ceil(site.guardPool / site.guards.hp);
+      if (g.guardsLeft > 0) {
+        g.guardPool = Math.max(0, g.guardPool - dealt);
+        g.guardsLeft = Math.ceil(g.guardPool / g.guards.hp);
       } else {
-        while (dealt > 0 && site.towersLeft > 0) {
-          const hit = Math.min(dealt, site.towerHp);
-          site.towerHp -= hit;
+        while (dealt > 0 && g.towersLeft > 0) {
+          const hit = Math.min(dealt, g.towerHp);
+          g.towerHp -= hit;
           dealt -= hit;
-          if (site.towerHp <= 0) {
-            site.towersLeft -= 1;
-            site.towerHp = SITE_TOWER.hp;
-            writeLog(state, `Watch tower at the ${site.label} destroyed.`);
+          if (g.towerHp <= 0) {
+            g.towersLeft -= 1;
+            g.towerHp = SITE_TOWER.hp;
+            writeLog(state, `Watch tower at ${zone.name} destroyed.`);
           }
         }
       }
-      if (site.guardsLeft <= 0 && site.towersLeft <= 0) {
-        conquerSite(state, site);
+      if (g.guardsLeft <= 0 && g.towersLeft <= 0) {
+        conquerZone(state, zone);
         return;
       }
     }
     // The garrison strikes back on the raiders' cadence.
-    site.foeStrikeIn -= 1;
-    if (site.foeStrikeIn > 0) return;
-    site.foeStrikeIn = RAID_VOLLEY_EVERY;
-    const dmg = site.guardsLeft * site.guards.dmg + site.towersLeft * SITE_TOWER.dmg;
+    g.foeStrikeIn -= 1;
+    if (g.foeStrikeIn > 0) return;
+    g.foeStrikeIn = RAID_VOLLEY_EVERY;
+    const dmg = g.guardsLeft * g.guards.dmg + g.towersLeft * SITE_TOWER.dmg;
     if (dmg > 0) {
-      flashTile(`site:${site.key}:1`, 'attack');
-      damageStrike(state, site, dmg);
+      flashTile(`zone:head:${zone.id}`, 'attack');
+      damageStrike(state, zone, dmg);
     }
   });
 }
@@ -1455,73 +1568,28 @@ function gameTick() {
   autoAssignWorkers(game);
   harvestTick(game);
 
-  // Survivors patch up between fights — defenders only, and never while a
-  // raid is inside the base fighting them. Workers mend very slowly, and not
-  // at all while the town is under attack.
-  if (!game.raids.some(r => r.atBase)) {
-    game.army.defend.wounds = Math.max(0, game.army.defend.wounds - HEAL_DEFEND_PER_TICK);
-    game.workerWounds = Math.max(0, game.workerWounds - WORKER_HEAL_PER_TICK);
-  }
-
-  // Exploration — accumulates per exploring unit. Finds the enemy base first,
-  // then keeps revealing distant resource nodes at their discoverAt thresholds.
-  const explorers = unitsOnOrder(game, 'explore');
-  if (explorers > 0) {
-    game.exploreProgress += explorers;
-    if (!game.enemy.known && game.exploreProgress >= EXPLORE_THRESHOLD) {
-      game.enemy.known = true;
-      writeLog(game, 'Enemy homeland located! Attack order unlocked.');
-    }
-    game.nodes.forEach(n => {
-      if (!n.discovered && game.exploreProgress >= n.discoverAt) {
-        n.discovered = true;
-        flashTile(`node:${n.type}:${n.id}`, 'spawn');
-        writeLog(game, `Scouts discovered a ${n.label}!`);
-      }
-    });
-    game.sites.forEach(site => {
-      if (!site.discovered && game.exploreProgress >= site.discoverAt) {
-        discoverSite(game, site);
-        // The scouts that found a garrisoned site storm it on the spot: the
-        // whole explore pool becomes the strike force (survivors march home
-        // to defend after the fight, like any assault). Exploration pauses
-        // until fresh scouts are sent.
-        flashError('Enemy camp discovered!');
-        const scouts = game.army.explore;
-        if (!site.cleared && poolCount(scouts) > 0) {
-          const strike = site.strike || { wounds: 0 };
-          Object.keys(ARMY).forEach(k => { strike[k] = (strike[k] || 0) + scouts[k]; scouts[k] = 0; });
-          strike.wounds = (strike.wounds || 0) + scouts.wounds;
-          scouts.wounds = 0;
-          site.strike = strike;
-          site.strikeFrom = 'explore';   // victors resume exploring on the spot
-          writeLog(game, `Scouts found a ${site.label} — and storm it!`);
-        } else {
-          writeLog(game, `Scouts found a ${site.label} — ${site.guards.count} grunts and ${site.towers} watch tower${site.towers === 1 ? '' : 's'} guard it.`);
-        }
-      }
-    });
-  }
-
-  // Homeland visibility: targets reveal one at a time once the enemy is
-  // found — the next only after the previous falls. Their combat runs
-  // through siteTick like any other site.
-  game.enemy.targets.reduce((open, t) => {
-    t.discovered = game.enemy.known && open;
-    return open && t.cleared;
-  }, true);
+  // Survivors patch up between fights — a zone's defenders heal only while no
+  // raid is fighting there. Workers mend very slowly, and not at all while any
+  // raid has reached a zone.
+  const underAttack = game.raids.some(r => r.atZone);
+  game.zones.forEach(z => {
+    const raidHere = game.raids.some(r => r.atZone && r.index === z.index);
+    if (!raidHere) z.army.wounds = Math.max(0, z.army.wounds - HEAL_DEFEND_PER_TICK);
+  });
+  if (!underAttack) game.workerWounds = Math.max(0, game.workerWounds - WORKER_HEAL_PER_TICK);
 
   // Raids — spawn on a shrinking interval, then fight tick by tick. Every
-  // razed outpost permanently stretches the interval back out.
+  // occupied zone we've razed permanently stretches the interval back out.
   game.raid.nextIn -= 1;
   if (game.raid.nextIn <= 0) {
     spawnRaid(game);
-    const relief = game.enemy.targets.filter(t => t.cleared && !t.final).length * RAID_OUTPOST_RELIEF;
+    const relief = game.zones.filter(z => z.index > 0 && z.discovered && z.status === 'owned'
+      && !z.garrison && z.wasOccupied).length * RAID_OUTPOST_RELIEF;
     game.raid.interval = Math.max(RAID_INTERVAL_MIN, RAID_INTERVAL_BASE - currentDay(game) * RAID_INTERVAL_SCALE) + relief;
     game.raid.nextIn = game.raid.interval;
   }
   raidTick(game);
-  siteTick(game);
+  garrisonTick(game);
 
   advanceJobs(game);
   clampGame(game);
@@ -1529,14 +1597,21 @@ function gameTick() {
 }
 
 // ── Commands ───────────────────────────────────────────────────────────────
+// Commands resolve against the currently selected zone (structures, training,
+// building, and army moves all act in a zone).
+
+function selectedZone(state) {
+  return zoneById(state, state.selected.zoneId) || homeZone(state);
+}
 
 function trainCommand(key) {
   const u = UNITS[key];
+  const zn = s => selectedZone(s);
   const checks = [
-    [s => s.structures[u.producer] > 0, `Need a ${BUILDINGS[u.producer].label}`],
-    ...(u.requires || []).map(req => [s => s.structures[req] > 0, `Need a ${BUILDINGS[req].label}`]),
+    [s => zn(s).structures[u.producer] > 0, `Need a ${BUILDINGS[u.producer].label}`],
+    ...(u.requires || []).map(req => [s => totalStructures(s, req) > 0, `Need a ${BUILDINGS[req].label}`]),
     [s => supplyFree(s), 'Supply capped — build a farm'],
-    [s => queueLength(s, u.producer) < queueMax(s, u.producer), 'Queue full']
+    [s => queueLength(s, u.producer, zn(s).id) < queueMax(s, u.producer, zn(s).id), 'Queue full']
   ];
   const { available, reason } = gated(checks);
   return {
@@ -1544,12 +1619,12 @@ function trainCommand(key) {
     cost: [...costIcons(u.cost), { icon: 'supply', n: 1 }],
     available, reason,
     enabled: s => available(s) && canAfford(s, u.cost),
-    run: s => trainUnit(s, key)
+    run: s => trainUnit(s, key, selectedZone(s).id)
   };
 }
 
-// One command per tech track, attached to its source building. Shows the next
-// tier's icon/cost; fades out when maxed or already researching.
+// One command per tech track, attached to its source building. Tech is global
+// (researched at any copy of the source, applies army-wide).
 function techCommand(key) {
   const t = TECH[key];
   const level = s => s.tech[key];
@@ -1568,12 +1643,13 @@ function techCommand(key) {
     enabled: s => available(s) && canAfford(s, t.costs[Math.min(level(s), t.max - 1)]),
     run: s => {
       const tier = level(s);
+      const zid = selectedZone(s).id;
       startUpgrade(s, {
         tag: key, source: t.source, icon: t.icons[tier], label: `${t.label} ${tier + 1}`,
         time: t.times[tier], cost: t.costs[tier],
         complete: st => {
           st.tech[key] += 1;
-          flashTile(`structure:${t.source}:1`, 'spawn');
+          flashTile(`structure:${t.source}:${zid}`, 'spawn');
           writeLog(st, `${cap(t.label)} upgraded to tier ${st.tech[key]}.`);
         }
       });
@@ -1581,16 +1657,17 @@ function techCommand(key) {
   };
 }
 
-// Both tower upgrades draw from the same pool of plain towers, so each
+// Both tower upgrades draw from the selected zone's plain towers, so each
 // counts the other's in-flight upgrades when checking for a free one.
 function towersFree(s) {
-  return s.structures.tower > pendingUpgrades(s, 'guardtower') + pendingUpgrades(s, 'cannontower');
+  const z = selectedZone(s);
+  return z.structures.tower > pendingUpgrades(s, 'guardtower') + pendingUpgrades(s, 'cannontower');
 }
 
 function towerUpgradeCommand(key, spec, requires, reqLabel) {
   const b = BUILDINGS[key];
   const { available, reason } = gated([
-    [s => s.structures[requires] > 0, reqLabel],
+    [s => totalStructures(s, requires) > 0, reqLabel],
     [towersFree, 'No tower free to upgrade']
   ]);
   return {
@@ -1598,16 +1675,20 @@ function towerUpgradeCommand(key, spec, requires, reqLabel) {
     cost: costIcons(spec.cost),
     available, reason,
     enabled: s => available(s) && canAfford(s, spec.cost),
-    run: s => startUpgrade(s, {
-      tag: key, source: 'tower', icon: key, label: b.label,
-      time: spec.time, cost: spec.cost,
-      complete: st => {
-        st.structures.tower -= 1;
-        st.structures[key] += 1;
-        flashTile(`structure:${key}:1`, 'spawn');
-        writeLog(st, `${cap(b.label)} ready.`);
-      }
-    })
+    run: s => {
+      const zid = selectedZone(s).id;
+      startUpgrade(s, {
+        tag: key, source: 'tower', icon: key, label: b.label,
+        time: spec.time, cost: spec.cost,
+        complete: st => {
+          const z = zoneById(st, zid) || homeZone(st);
+          z.structures.tower -= 1;
+          z.structures[key] += 1;
+          flashTile(`structure:${key}:${z.id}`, 'spawn');
+          writeLog(st, `${cap(b.label)} ready.`);
+        }
+      });
+    }
   };
 }
 
@@ -1616,6 +1697,7 @@ function guardTowerCommand() {
 }
 
 // One command per hall tier — each shows only while it's the next step up.
+// The hall is home's, so tiers upgrade home.
 function hallTierCommand(tierIndex) {
   const t = HALL_TIERS[tierIndex];
   const { available, reason } = gated([
@@ -1633,7 +1715,7 @@ function hallTierCommand(tierIndex) {
       time: t.time, cost: t.cost,
       complete: st => {
         st.hallTier = tierIndex + 1;
-        flashTile('structure:hall:1', 'spawn');
+        flashTile(`structure:hall:${homeZone(st).id}`, 'spawn');
         writeLog(st, `Our hall now stands as a ${t.label}.`);
       }
     })
@@ -1644,52 +1726,50 @@ function cannonTowerCommand() {
   return towerUpgradeCommand('cannontower', CANNON_TOWER, 'blacksmith', 'Need a blacksmith');
 }
 
-// Commands for a selected order group: one button per (unit type present ×
-// other order) — the unit's icon with the target order overlaid in the
-// corner. Tap moves one of that type, hold moves all of them. Only types
-// actually in the group produce buttons, so the card stays small.
-function armyGroupCommands(state, order, onlyType) {
-  const pool = state.army[order];
-  const commands = [];
-  Object.keys(ARMY).forEach(type => {
-    if (pool[type] <= 0) return;
-    if (onlyType && type !== onlyType) return;
-    ORDERS.filter(o => o !== order).forEach(o => {
-      commands.push({
-        id: `move-${order}-${type}-${o}`,
-        icon: ARMY[type].icon, overlay: orderIcon(o),
-        label: `send ${ARMY[type].singular} to ${o}`, cost: '',
-        enabled: s => s.army[order][type] > 0,
-        reason: () => 'None left in this group',
-        run: s => moveUnit(s, order, o, type),
-        runAll: s => moveAllUnits(s, order, o, type)
-      });
-    });
-  });
-  return commands;
-}
-
-// Commands for a selected site: one assault button per army type (pulled from
-// the defend pool — tap sends one, hold sends all of that type). No recall —
-// an assault is a commitment; the column comes home when the fight is done.
-// Mirrors armyGroupCommands' shape.
-function siteCommands(state, site) {
-  return Object.keys(ARMY).map(type => ({
-    id: `assault-${site.key}-${type}`,
-    icon: ARMY[type].icon, overlay: 'attack',
-    label: `send ${ARMY[type].singular} to assault`, cost: '',
-    hidden: () => site.cleared,
-    enabled: s => !site.cleared && s.army.defend[type] > 0,
-    reason: s => site.cleared ? 'Already cleared'
-               : `No ${ARMY[type].label} resting on defend`,
-    run: s => sendToSite(s, site, type, 1),
-    runAll: s => sendToSite(s, site, type, s.army.defend[type])
+// One command per unit type present in `src` that sends units of that type from
+// src into `zone` with the given mode/overlay. Tap sends one, hold sends all.
+// Used for both exploring the uncharted zone ahead and assaulting a garrison —
+// in both cases the units come from the previous (inner) owned zone.
+function sendFromCommands(state, zone, src, mode, overlay, verb, send) {
+  return Object.keys(ARMY).filter(type => src.army[type] > 0).map(type => ({
+    id: `${mode}-${zone.id}-${type}`,
+    icon: ARMY[type].icon, overlay,
+    label: `${verb} — ${ARMY[type].singular} from ${src.name}`, cost: '',
+    enabled: s => (zoneById(s, src.id) || src).army[type] > 0,
+    reason: () => `No ${ARMY[type].label} in ${src.name}`,
+    run: s => send(s, src.id, zone.id, type, 1),
+    runAll: s => send(s, src.id, zone.id, type, (zoneById(s, src.id) || src).army[type])
   }));
 }
 
-// Static command sets, derived from the data tables. Train commands attach to
-// their producer automatically; extra per-structure commands (the hall's build
-// menu, tower upgrades) are appended after.
+// Commands for a selected zone:
+//  • uncharted (undiscovered) → explore buttons, pulling from the zone behind it;
+//  • occupied → assault buttons, pulling from the zone behind it;
+//  • owned → just Build (for now).
+function zoneCommands(state, zone) {
+  const src = zoneByIndex(state, zone.index - 1);
+  if (!zone.discovered) {
+    if (!src || src.status !== 'owned') return [];
+    return sendFromCommands(state, zone, src, 'explore', 'explore', 'explore',
+      (s, fromId, _toId, type, n) => exploreFrom(s, fromId, type, n));
+  }
+  if (zone.status === 'occupied') {
+    if (!src || src.status !== 'owned') return [];
+    return sendFromCommands(state, zone, src, 'assault', 'attack', 'assault',
+      (s, fromId, toId, type, n) => startTransfer(s, fromId, toId, type, n, 'assault'));
+  }
+  // Owned zone: just Build. Moving defenders is done by selecting a defender
+  // group (a unit tile) and using its Move command.
+  return [{
+    id: 'zone-build', icon: 'build', label: `build in ${zone.name}`, cost: '',
+    enabled: s => builderWorker(s, zoneById(s, zone.id)) != null,
+    reason: () => 'No worker available',
+    run: s => { s.buildMenu = true; }
+  }];
+}
+
+// Static per-structure command sets. Train commands attach to their producer;
+// tower upgrades, hall tiers, tech, build-menu opener, and repair are appended.
 const COMMANDS = {
   structure: (() => {
     const byStructure = {};
@@ -1697,12 +1777,9 @@ const COMMANDS = {
       const producer = UNITS[key].producer;
       (byStructure[producer] = byStructure[producer] || []).push(trainCommand(key));
     });
-    (byStructure.hall = byStructure.hall || []).push({
-      id: 'open-build', icon: 'build', label: 'construct building', cost: '',
-      enabled: s => builderWorker(s) != null,
-      reason: () => 'No worker available',
-      run: s => { s.buildMenu = true; }
-    }, ...HALL_TIERS.map((t, i) => hallTierCommand(i)));
+    // Building is done by selecting a zone and tapping Build, so the hall only
+    // trains workers and raises its own tier.
+    (byStructure.hall = byStructure.hall || []).push(...HALL_TIERS.map((t, i) => hallTierCommand(i)));
     (byStructure.tower = byStructure.tower || []).push(guardTowerCommand(), cannonTowerCommand());
     Object.keys(TECH).forEach(key => {
       const source = TECH[key].source;
@@ -1713,10 +1790,10 @@ const COMMANDS = {
       const b = BUILDINGS[key];
       (byStructure[key] = byStructure[key] || []).push({
         id: `repair-${key}`, icon: 'repair', label: `repair ${b.label}`, cost: '',
-        hidden: s => !(s.structureDamage[key] > 0) || pendingRepair(s, key),
-        enabled: s => s.structureDamage[key] > 0 && !pendingRepair(s, key) && builderWorker(s) != null,
+        hidden: s => !(selectedZone(s).structureDamage[key] > 0) || pendingRepair(s, key, selectedZone(s).id),
+        enabled: s => selectedZone(s).structureDamage[key] > 0 && !pendingRepair(s, key, selectedZone(s).id) && builderWorker(s, selectedZone(s)) != null,
         reason: () => 'No worker available',
-        run: s => startRepair(s, key)
+        run: s => startRepair(s, key, selectedZone(s).id)
       });
     });
     return byStructure;
@@ -1724,7 +1801,8 @@ const COMMANDS = {
   workerGroup: []
 };
 
-function buildMenuCommands() {
+function buildMenuCommands(state) {
+  const zone = selectedZone(state);
   return [
     // Back/cancel leads the list so it's always the first, findable button.
     { id: 'build-menu-stop', icon: 'stop', label: 'back', cost: '',
@@ -1732,52 +1810,80 @@ function buildMenuCommands() {
       run: s => { s.buildMenu = false; } },
     ...Object.keys(BUILDINGS).filter(key => BUILDINGS[key].build).map(key => {
       const b = BUILDINGS[key];
+      // Only home may raise a hall tier chain / stables gating uses home tier;
+      // buildings otherwise go up in whatever zone is selected.
       const { available, reason } = gated([
-        ...(b.build.requires || []).map(req => [s => s.structures[req] > 0, `Need a ${BUILDINGS[req].label}`]),
+        ...(b.build.requires || []).map(req => [s => totalStructures(s, req) > 0, `Need a ${BUILDINGS[req].label}`]),
         ...(b.build.requiresTier
           ? [[s => s.hallTier >= b.build.requiresTier, `Need a ${HALL_TIERS[b.build.requiresTier - 1].label}`]]
           : []),
-        [s => builderWorker(s) != null, 'No worker available']
+        [s => builderWorker(s, selectedZone(s)) != null, 'No worker available']
       ]);
       return {
-        id: `build-${key}`, icon: b.icon, label: `build ${b.label}`, cost: costIcons(b.build.cost),
+        id: `build-${key}`, icon: b.icon, label: `build ${b.label} in ${zone.name}`, cost: costIcons(b.build.cost),
         available, reason,
         enabled: s => available(s) && canAfford(s, b.build.cost),
-        run: s => startConstruction(s, key)
+        run: s => startConstruction(s, key, selectedZone(s).id)
       };
     }),
   ];
 }
 
 function nodeCommands(state, node) {
+  const zone = nodeZone(state, node.id);
   return [
     { id: 'node-assign', icon: 'harvest', overlay: node.type, label: `harvest ${node.type}`, cost: '',
-      enabled: s => node.remaining > 0 && spareWorker(s, node) != null,
-      reason: s => node.remaining <= 0 ? `${node.label} depleted` : 'No spare workers',
+      enabled: s => node.remaining > 0 && zone && spareWorker(s, zone, node) != null,
+      reason: s => node.remaining <= 0 ? `${node.label} depleted` : 'No spare workers here',
       run: s => sendWorkerToNode(s, node),
-      runAll: s => sendAllWorkersToNode(s, node) }
+      runAll: s => sendAllWorkersToNode(s, node) },
+    // Move one of this crew: tap Move, then tap a zone (or a specific resource
+    // node in a zone to switch what they harvest). One worker per tap.
+    { id: 'node-move', icon: 'move', overlay: node.icon, label: 'move a worker — then tap a zone or resource', cost: '',
+      enabled: s => workersAtNode(s, node).length > 0,
+      reason: () => 'No crew here',
+      run: s => { s.moveArm = { kind: 'workers', fromZoneId: zone ? zone.id : node.zoneId, resource: node.type, nodeId: node.id }; } }
+  ];
+}
+
+// A selected worker group (the idle-workers tile) can be sent to another zone.
+function workerGroupCommands(state) {
+  return [
+    { id: 'idle-move', icon: 'move', overlay: 'worker', label: 'move an idle worker — then tap a zone or resource', cost: '',
+      enabled: s => idleInZone(s, selectedZone(s)) > 0,
+      reason: () => 'No idle workers here',
+      run: s => { s.moveArm = { kind: 'workers', fromZoneId: selectedZone(s).id, resource: null }; } }
+  ];
+}
+
+// A selected army group (a zone's defenders of one type) can march to another
+// owned zone: tap Move, then tap the destination. One unit per tap.
+function armyGroupCommands(state) {
+  const type = state.selected.type;
+  if (!ARMY[type]) return [];
+  return [
+    { id: 'army-move', icon: 'move', overlay: ARMY[type].icon, label: `move a ${ARMY[type].singular} — then tap a zone`, cost: '',
+      enabled: s => { const z = zoneById(s, s.selected.id); return !!z && z.army[type] > 0; },
+      reason: () => 'None here',
+      run: s => { s.moveArm = { kind: 'army', fromZoneId: s.selected.id, type }; } }
   ];
 }
 
 function selectedCommands(state) {
-  // Build menu is modal over whatever is selected; the builder is chosen at
-  // dispatch time by builderWorker (idle first, then richest node's crew).
-  if (state.buildMenu) return buildMenuCommands();
+  // Build menu is modal over whatever is selected; it builds into the selected
+  // zone (the builder is chosen at dispatch by builderWorker).
+  if (state.buildMenu) return buildMenuCommands(state);
   if (!selectionValid(state)) return [];   // stale selection -> empty card
   if (state.selected.kind === 'structure') return COMMANDS.structure[state.selected.type] || [];
-  if (state.selected.kind === 'workerGroup') return COMMANDS.workerGroup;
+  if (state.selected.kind === 'workerGroup') return workerGroupCommands(state);
   if (state.selected.kind === 'node') {
     const node = nodeById(state, state.selected.id);
     return node ? nodeCommands(state, node) : [];
   }
-  if (state.selected.kind === 'army') {
-    // A per-type tile (defend) scopes the card to that type's moves.
-    const only = ARMY[state.selected.id] ? state.selected.id : null;
-    return armyGroupCommands(state, state.selected.type, only);
-  }
-  if (state.selected.kind === 'site') {
-    const site = siteByKey(state, state.selected.type);
-    return site ? siteCommands(state, site) : [];
+  if (state.selected.kind === 'army') return armyGroupCommands(state);
+  if (state.selected.kind === 'zone') {
+    const zone = zoneById(state, state.selected.id);
+    return zone ? zoneCommands(state, zone) : [];
   }
   return [];
 }
@@ -1863,8 +1969,8 @@ function flashError(message) {
 
 // ── Selection ──────────────────────────────────────────────────────────────
 
-function selectEntity(kind, type, id) {
-  game.selected = { kind, type, id };
+function selectEntity(kind, type, id, zoneId) {
+  game.selected = { kind, type, id, zoneId: zoneId != null ? zoneId : game.selected.zoneId };
   game.buildMenu = false;
   render();
 }
@@ -1873,20 +1979,20 @@ function selectEntity(kind, type, id) {
 // structure consumed by an upgrade, emptied army group) — a stale selection
 // simply shows an empty command bar until the player taps something else.
 const SELECTION_VALID = {
-  structure: (s, sel) => sel.type === 'hall' || s.structures[sel.type] > 0,
+  structure: (s, sel) => {
+    const z = zoneById(s, sel.zoneId);
+    return !!z && (sel.type === 'hall' ? z.structures.hall > 0 : z.structures[sel.type] > 0);
+  },
   node: (s, sel) => { const n = nodeById(s, sel.id); return !!n && n.remaining > 0; },
+  // Army tiles are one per unit type present in a zone (id = zoneId, type = ARMY key).
   army: (s, sel) => {
-    if (!ORDERS.includes(sel.type)) return false;
-    if (ARMY[sel.id]) return s.army[sel.type][sel.id] > 0;   // per-type tile
-    return unitsOnOrder(s, sel.type) > 0 || s.jobs.some(j => j.kind === 'transfer' && j.to === sel.type);
+    const z = zoneById(s, sel.id);
+    return !!z && !!ARMY[sel.type] && z.army[sel.type] > 0;
   },
   workerGroup: () => true,
   enemy: () => true,
-  // A cleared site stays selectable while our columns are still out there.
-  site: (s, sel) => {
-    const site = siteByKey(s, sel.type);
-    return !!site && site.discovered && (!site.cleared || siteUnits(site) > 0);
-  }
+  // Zones stay selectable while uncharted too (so you can send scouts ahead).
+  zone: (s, sel) => !!zoneById(s, sel.id)
 };
 
 function selectionValid(state) {
@@ -1983,7 +2089,7 @@ function fmtQty(n) {
 // Per-worker harvest progress for a node — shared by the initial render and
 // the ring animator so the math can't drift between them.
 function nodeProgressBars(state, node) {
-  const cd = nodeCooldown(node);
+  const cd = nodeCooldown(state, node);
   const step = state.cheats.fastHarvest ? CHEAT_SPEED : 1;
   return workersAtNode(state, node)
     .map(w => Math.min(1, ((cd - w.cooldown) + tickFraction(step)) / cd));
@@ -2003,13 +2109,18 @@ function hpBarEl(hp, extraClass) {
   return bar;
 }
 
-function entityButton({ kind, type, id, icon, label, count, meta, danger, compact, jobIcon, badgeBlink, progressBars, nodeId, jobUid, exploreBadge, countLabel, countIcon, hp, dimmed }) {
+function entityButton({ kind, type, id, zoneId, icon, label, count, meta, danger, compact, jobIcon, badgeBlink, progressBars, nodeId, jobUid, exploreBadge, countLabel, countIcon, hp, dimmed }) {
   const button = document.createElement('button');
   const classes = ['entity'];
   if (danger)  classes.push('danger');
   if (compact) classes.push('compact');
   if (dimmed)  classes.push('dimmed');
-  const flash = tileFlash(`${kind}:${type}:${id}`);
+  // Combat flashes for a zone's contents are keyed by zone id: structures as
+  // structure:<key>:<zoneId>, all defender tiles share army:defend:<zoneId>.
+  const flashKey = kind === 'army' && zoneId != null ? `army:defend:${zoneId}`
+    : kind === 'structure' && zoneId != null ? `structure:${type}:${zoneId}`
+    : `${kind}:${type}:${id}`;
+  const flash = tileFlash(flashKey);
   if (flash && flash.overlay) {
     classes.push(flash.overlay.kind === 'damage' ? 'flash-damage' : 'flash-spawn');
   }
@@ -2021,12 +2132,14 @@ function entityButton({ kind, type, id, icon, label, count, meta, danger, compac
   if (flash && flash.attack && flash.attack.delay) {
     button.style.setProperty('--shake-delay', `${flash.attack.delay}ms`);
   }
-  if (game.selected.kind === kind && game.selected.type === type && String(game.selected.id) === String(id)) {
+  const zoneMatch = zoneId == null || String(game.selected.zoneId) === String(zoneId);
+  if (game.selected.kind === kind && game.selected.type === type && String(game.selected.id) === String(id) && zoneMatch) {
     button.classList.add('selected');
   }
   button.dataset.kind = kind;
   button.dataset.type = type;
   button.dataset.id = id;
+  if (zoneId != null) button.dataset.zone = zoneId;
   button.title = label;
   button.setAttribute('aria-label', label);
 
@@ -2164,264 +2277,208 @@ function renderQueueStrip() {
   if (scrollLeft) dom.queue.scrollLeft = scrollLeft;
 }
 
-function renderWorld() {
-  dom.world.replaceChildren();
+// Small chip: an icon plus a count (garrison guards, our columns, etc.).
+function tileChip(icon, n) {
+  const chip = document.createElement('span');
+  chip.className = 'site-chip';
+  chip.appendChild(makeIcon(ICONS[icon], icon));
+  const count = document.createElement('span');
+  count.textContent = n;
+  chip.appendChild(count);
+  return chip;
+}
 
-  const structures = document.createElement('section');
-  structures.className = 'world-group structures';
-
-  // Building tiles scroll horizontally instead of wrapping (like the nodes row).
-  const structTiles = document.createElement('div');
-  structTiles.className = 'tile-row';
-  structTiles.dataset.scroll = 'structures';
-  structTiles.appendChild(entityButton({
-    kind: 'structure', type: 'hall', id: 1, compact: true,
-    icon: hallTierIcon(game), label: hallTierName(game),
-    hp: buildingHp(game, 'hall')
-  }));
-  Object.keys(BUILDINGS).forEach(key => {
-    if (key === 'hall' || game.structures[key] <= 0) return;
-    structTiles.appendChild(entityButton({
-      kind: 'structure', type: key, id: 1, compact: true,
-      icon: BUILDINGS[key].icon, label: BUILDINGS[key].label,
-      countLabel: game.structures[key],
-      hp: buildingHp(game, key)
-    }));
+// One chip per unit type present in a column, stacked bottom-left.
+function armyChips(counts, blink) {
+  const wrap = document.createElement('span');
+  wrap.className = blink ? 'mine-chips badge-blink' : 'mine-chips';
+  Object.keys(ARMY).forEach(k => {
+    if (counts[k] > 0) wrap.appendChild(tileChip(ARMY[k].icon, counts[k]));
   });
-  structures.appendChild(structTiles);
+  return wrap;
+}
 
-  // A horizontally scrollable row (see .world-group.workers) of the live
-  // resource nodes — each shows its worker count and a harvest ring per worker;
-  // the amount remaining is in the command card. Depleted nodes are hidden. The
-  // idle-workers tile only appears when there's nothing left to harvest.
-  const workers = document.createElement('section');
-  workers.className = 'world-group workers';
-  workers.dataset.scroll = 'workers';
+// A column mid-march to a zone: unit icon, destination badge with the march
+// progress ring. Tapping it recalls the column to where it set out.
+function marchTile(job) {
+  const to = zoneById(game, job.to);
+  return entityButton({
+    kind: 'march', type: job.mode || 'move', id: job.uid, compact: true,
+    icon: ARMY[job.type].icon, label: `${job.count} marching to ${to ? to.name : 'the frontier'} — tap to recall`,
+    jobIcon: job.mode === 'assault' ? 'attack' : job.mode === 'explore' ? 'explore' : 'defend',
+    jobUid: job.uid, progressBars: [jobProgress(game, job)], countLabel: job.count
+  });
+}
 
-  const liveNodes = game.nodes.filter(n => n.discovered && n.remaining > 0);
+// The defenders of an owned zone: one tile per unit type present (each its own
+// selection, id = zoneId, type = ARMY key). The shared wounds bar rides on the
+// first type present.
+function zoneArmyTiles(zone) {
+  const pool = zone.army;
+  const types = Object.keys(ARMY).filter(k => pool[k] > 0);
+  return types.map((k, i) => entityButton({
+    kind: 'army', type: k, id: zone.id, zoneId: zone.id, compact: true,
+    icon: ARMY[k].icon, label: `${ARMY[k].label} at ${zone.name}`,
+    jobIcon: 'defend', countLabel: pool[k],
+    hp: i === 0 ? poolHp(pool) : null
+  }));
+}
 
-  if (liveNodes.length === 0) {
-    const idleCount = workerCount(game, 'idle');
-    workers.appendChild(entityButton({
-      kind: 'workerGroup', type: 'idle', id: 1,
-      icon: 'worker', label: 'idle workers', compact: true,
-      countLabel: idleCount > 0 ? idleCount : null, dimmed: idleCount === 0
+// The garrison header tile of an occupied zone — the whole fight on one big
+// tile: reward badge, garrison chips (guards then towers), our strike chips,
+// and the two hp bars. Veiled until we engage.
+function garrisonTile(zone) {
+  const g = zone.garrison;
+  const engaged = !!zone.strike;
+  const known = !g.veiled || engaged;
+  const btn = entityButton({
+    kind: 'zone', type: 'head', id: zone.id, zoneId: zone.id, compact: true,
+    icon: 'siteTerrain', label: zone.name, danger: true,
+    hp: known ? garrisonHp(g) : null
+  });
+  btn.classList.add('site-big');
+  const reward = document.createElement('span');
+  reward.className = 'site-chip reward';
+  reward.appendChild(makeIcon(ICONS[g.rewardIcon], g.rewardText));
+  btn.appendChild(reward);
+  if (known) {
+    const foes = document.createElement('span');
+    foes.className = 'site-chips';
+    if (g.guardsLeft > 0) foes.appendChild(tileChip('enemy', g.guardsLeft));
+    if (g.towersLeft > 0) foes.appendChild(tileChip('orctower', g.towersLeft));
+    if (foes.children.length) btn.appendChild(foes);
+  }
+  if (zone.strike) {
+    btn.appendChild(armyChips(zone.strike));
+    const shp = strikeHp(zone);
+    if (shp) btn.appendChild(hpBarEl(shp, 'mine'));
+  }
+  return btn;
+}
+
+function tileRow(scrollKey, tiles) {
+  const section = document.createElement('section');
+  section.className = 'world-group';
+  const row = document.createElement('div');
+  row.className = 'tile-row';
+  row.dataset.scroll = scrollKey;
+  tiles.forEach(t => t && row.appendChild(t));
+  section.appendChild(row);
+  return section;
+}
+
+// Raids currently at (or marching on) a given zone index.
+function raidTilesAt(index) {
+  return game.raids.filter(r => r.discovered && r.index === index).map(raid =>
+    entityButton({
+      kind: 'enemy', type: 'raid', id: raid.id, compact: true,
+      icon: raid.icon, label: raid.label, danger: true,
+      countLabel: raid.size, hp: raidHp(raid)
     }));
+}
+
+// Marching columns whose destination is this zone.
+function marchTilesTo(zoneId) {
+  return game.jobs.filter(j => j.kind === 'transfer' && String(j.to) === String(zoneId)).map(marchTile);
+}
+
+// Render one zone as a stacked, tappable band (tapping empty band area selects
+// the whole zone; tapping a tile selects that tile).
+function renderZoneBand(zone) {
+  const cls = zone.status === 'occupied' ? 'occupied' : (zone.index === 0 ? 'home' : 'owned');
+  const rows = [];
+  const raids = raidTilesAt(zone.index);
+  const marches = marchTilesTo(zone.id);
+
+  if (zone.status === 'occupied') {
+    rows.push(zoneCaption(zone));
+    rows.push(tileRow(`z${zone.id}-head`, [garrisonTile(zone), ...marches]));
+    if (raids.length) rows.push(tileRow(`z${zone.id}-raids`, raids));
+    return zoneBand(cls, zone.id, rows);
   }
 
+  // Owned zone: a caption naming it, then defenders (+ inbound columns),
+  // workers/nodes and buildings. No header tile — tap the band to select it.
+  rows.push(zoneCaption(zone));
+  if (raids.length) rows.push(tileRow(`z${zone.id}-raids`, raids));
+  rows.push(tileRow(`z${zone.id}-army`, [...zoneArmyTiles(zone), ...marches]));
+
+  // Live resource nodes with their crews (idle-workers tile when none live).
+  const liveNodes = zone.nodes.filter(n => n.remaining > 0);
+  const nodeTiles = [];
+  if (liveNodes.length === 0) {
+    const idle = workersInZone(game, zone).filter(w => w.job === 'idle').length;
+    nodeTiles.push(entityButton({
+      kind: 'workerGroup', type: 'idle', id: zone.id, zoneId: zone.id,
+      icon: 'worker', label: 'idle workers', compact: true,
+      countLabel: idle > 0 ? idle : null, dimmed: idle === 0
+    }));
+  }
   liveNodes.forEach(node => {
     const crew = workersAtNode(game, node).length;
-    workers.appendChild(entityButton({
-      kind: 'node', type: node.type, id: node.id,
-      icon: node.icon, label: `${node.label} (dist ${node.distance})`, compact: true,
+    nodeTiles.push(entityButton({
+      kind: 'node', type: node.type, id: node.id, zoneId: zone.id,
+      icon: node.icon, label: node.label, compact: true,
       progressBars: nodeProgressBars(game, node), nodeId: node.id,
       countLabel: crew > 0 ? crew : null, countIcon: crew > 0 ? 'worker' : null,
       hp: nodeHp(game, node)
     }));
   });
+  rows.push(tileRow(`z${zone.id}-nodes`, nodeTiles));
 
-  // My army: one tile per standing order, workers-row style — tap to select,
-  // then move units between orders one per tap. Each order gets its own
-  // always-present row (see armySection) so the layout never reflows as
-  // pools empty and refill.
-  // Defenders spread out into one tile per unit type (all selecting the same
-  // defend group — its command card is per-type anyway); other orders stay as
-  // one grouped tile with the dominant type's icon. The shared wounds bar
-  // rides on the soaking type (first ARMY key present).
-  function armyTiles(order) {
-    const pool = game.army[order];
-    const n = poolCount(pool);
-    if (n === 0) return [];
-    const types = Object.keys(ARMY).filter(k => pool[k] > 0);
-    if (order === 'defend') {
-      // Each type tile is its own selection (id = type key), so tapping the
-      // footmen never highlights the archers.
-      return types.map((k, i) => entityButton({
-        kind: 'army', type: order, id: k, compact: true,
-        icon: ARMY[k].icon, label: `${order} ${ARMY[k].label}`,
-        jobIcon: orderIcon(order),
-        countLabel: pool[k],
-        hp: i === 0 ? poolHp(pool) : null
-      }));
-    }
-    const domType = types.reduce((best, k) => (pool[k] > pool[best] ? k : best), types[0]);
-    return [entityButton({
-      kind: 'army', type: order, id: 1, compact: true,
-      icon: ARMY[domType].icon, label: order,
-      jobIcon: orderIcon(order),
-      countLabel: n,
-      hp: poolHp(pool)
-    })];
-  }
-
-  // A column mid-march renders as its own tile right beside the group it's
-  // joining: unit icon, destination-order badge with a progress ring for the
-  // switching time, no blinking. Tapping it recalls the column to where it
-  // came from.
-  function marchTile(job) {
-    return entityButton({
-      kind: 'march', type: job.to, id: job.uid, compact: true,
-      icon: ARMY[job.type].icon, label: `${job.count} marching to ${job.to} — tap to recall`,
-      jobIcon: orderIcon(job.to), jobUid: job.uid,
-      progressBars: [jobProgress(game, job)],
-      countLabel: job.count
-    });
-  }
-
-  function armySection(cls, orders, scrollKey) {
-    const section = document.createElement('section');
-    section.className = `world-group ${cls}`;
-    const row = document.createElement('div');
-    row.className = 'tile-row';
-    row.dataset.scroll = scrollKey;
-    orders.forEach(order => {
-      armyTiles(order).forEach(tile => row.appendChild(tile));
-      game.jobs.filter(j => j.kind === 'transfer' && j.to === order)
-        .forEach(j => row.appendChild(marchTile(j)));
-    });
-    section.appendChild(row);
-    return section;
-  }
-
-  const patrol = armySection('patrol', ['patrol'], 'patrol');
-  const defend = armySection('defend', ['defend'], 'defend');
-
-  // Enemy raiders share the near zone with the patrol — they approach through
-  // it, fight the patrol there, and only drop into the base zone once the
-  // patrol is defeated. Each zone has its own enemy row so a column visibly
-  // moves down the map when it breaks through.
-  function enemyRow(zoneKey, raids) {
-    const enemies = document.createElement('section');
-    enemies.className = 'world-group enemies';
-    const raidTiles = document.createElement('div');
-    raidTiles.className = 'tile-row';
-    raidTiles.dataset.scroll = `enemies-${zoneKey}`;
-    raids.forEach(raid => {
-      raidTiles.appendChild(entityButton({
-        kind: 'enemy', type: 'raid', id: raid.id, compact: true,
-        icon: raid.icon, label: raid.label, danger: true,
-        countLabel: raid.size,
-        hp: raidHp(raid)
-      }));
-    });
-    enemies.appendChild(raidTiles);
-    return enemies;
-  }
-
-  // Conquerable sites out in the far field: one double-size tile per site
-  // carrying the whole fight — the garrison as chips down the right edge
-  // (grunts, then watch towers), our assault column as a chip bottom-left
-  // (blinking while marching or returning), the garrison's red hp bar along
-  // the bottom and the strike force's green one just above it.
-  const sitesRow = document.createElement('section');
-  sitesRow.className = 'world-group sites';
-  const siteTiles = document.createElement('div');
-  siteTiles.className = 'tile-row';
-  siteTiles.dataset.scroll = 'sites';
-  function siteChip(icon, n) {
-    const chip = document.createElement('span');
-    chip.className = 'site-chip';
-    chip.appendChild(makeIcon(ICONS[icon], icon));
-    const count = document.createElement('span');
-    count.textContent = n;
-    chip.appendChild(count);
-    return chip;
-  }
-  // Our forces at a site / out exploring: one chip per unit type present,
-  // stacked bottom-left, so mixed columns show every type.
-  function mineChips(counts, blink) {
-    const wrap = document.createElement('span');
-    wrap.className = blink ? 'mine-chips badge-blink' : 'mine-chips';
-    Object.keys(ARMY).forEach(k => {
-      if (counts[k] > 0) wrap.appendChild(siteChip(ARMY[k].icon, counts[k]));
-    });
-    return wrap;
-  }
-  // Scouts on Explore live here too: an empty stretch of wilderness they're
-  // combing. The vision badge carries a progress ring — how close the
-  // accumulated explore points are to the next discovery (units sent to
-  // explore join instantly, so more scouts just spin it faster). They storm
-  // garrisoned sites themselves on discovery, so this tile empties into a
-  // site tile when something turns up. Tapping it selects the explore pool.
-  const scoutPool = game.army.explore;
-  const scoutsOut = poolCount(scoutPool);
-  if (scoutsOut > 0) {
-    const ring = exploreRing(game);
-    const btn = entityButton({
-      kind: 'army', type: 'explore', id: 1, compact: true,
-      icon: 'siteTerrain', label: 'exploring',
-      jobIcon: 'explore', exploreBadge: true,
-      progressBars: ring != null ? [ring] : undefined,
-      hp: poolHp(scoutPool)
-    });
-    btn.classList.add('site-big');
-    btn.appendChild(mineChips(scoutPool));
-    siteTiles.appendChild(btn);
-  }
-  // The enemy homeland: once found, the attack force's current target stands
-  // at the end of the sites row — a danger tile with its hp bar and our
-  // besieging units' chips.
-  // One builder for every assaultable place. Homeland targets (`veiled`)
-  // render wide-but-flat and keep their garrison hidden until our own
-  // troops are marching on or fighting at them.
-  function siteTileEl(site, cls) {
-    const mine = siteUnits(site);
-    const engaged = !!(site.strike || site.march);
-    const btn = entityButton({
-      kind: 'site', type: site.key, id: 1, compact: true,
-      icon: site.icon, label: site.label, danger: !site.cleared,
-      hp: (!site.veiled || engaged) ? siteHp(site) : null
-    });
-    btn.classList.add(cls);
-    const reward = document.createElement('span');
-    reward.className = 'site-chip reward';
-    reward.appendChild(makeIcon(ICONS[site.rewardIcon], site.rewardText));
-    btn.appendChild(reward);
-    if (!site.veiled || engaged) {
-      const foes = document.createElement('span');
-      foes.className = 'site-chips';
-      if (!site.cleared && site.guardsLeft > 0) foes.appendChild(siteChip('enemy', site.guardsLeft));
-      if (!site.cleared && site.towersLeft > 0) foes.appendChild(siteChip('orctower', site.towersLeft));
-      if (foes.children.length) btn.appendChild(foes);
-    }
-    if (mine > 0) {
-      const byType = {};
-      [site.strike, site.march, site.returning].forEach(col => {
-        if (!col) return;
-        Object.keys(ARMY).forEach(k => { byType[k] = (byType[k] || 0) + (col[k] || 0); });
-      });
-      btn.appendChild(mineChips(byType, !!(site.march || site.returning)));
-      const shp = strikeHp(site);
-      if (shp) btn.appendChild(hpBarEl(shp, 'mine'));
-    }
-    return btn;
-  }
-
-  game.sites.forEach(site => {
-    if (!site.discovered) return;
-    if (site.cleared && siteUnits(site) === 0) return;
-    siteTiles.appendChild(siteTileEl(site, 'site-big'));
+  const structTiles = [];
+  Object.keys(BUILDINGS).forEach(key => {
+    if (zone.structures[key] <= 0) return;
+    structTiles.push(entityButton({
+      kind: 'structure', type: key, id: zone.id, zoneId: zone.id, compact: true,
+      icon: key === 'hall' ? hallTierIcon(game) : BUILDINGS[key].icon,
+      label: key === 'hall' ? hallTierName(game) : BUILDINGS[key].label,
+      countLabel: zone.structures[key] > 1 ? zone.structures[key] : null,
+      hp: buildingHp(game, zone, key)
+    }));
   });
-  // The homeland's current target: a wide, flat, tap-to-assault card.
-  game.enemy.targets.forEach(target => {
-    if (!target.discovered || (target.cleared && siteUnits(target) === 0)) return;
-    siteTiles.appendChild(siteTileEl(target, 'site-wide'));
-  });
-  sitesRow.appendChild(siteTiles);
+  rows.push(tileRow(`z${zone.id}-struct`, structTiles));
 
-  // War signs: while scouts are out, exploration also brings word of what
-  // the enemy is massing — the next wave's composition and countdown, plus
-  // the wave after, fainter. Deliberately non-interactive: a strip of small
-  // muted icons, no tiles, nothing to tap — it must not read as an attack.
+  return zoneBand(cls, zone.id, rows);
+}
+
+// A small caption naming a zone's band; highlights when the zone is selected so
+// it's clear the whole band is the tap target.
+function zoneCaption(zone) {
+  const cap = document.createElement('div');
+  cap.className = 'zone-caption';
+  if (game.selected.kind === 'zone' && String(game.selected.id) === String(zone.id)) {
+    cap.classList.add('selected');
+  }
+  const status = !zone.discovered ? 'uncharted'
+    : zone.status === 'occupied' ? 'occupied'
+    : zone.index === 0 ? 'home' : 'owned';
+  cap.textContent = `${zone.name} · ${status}`;
+  return cap;
+}
+
+// The uncharted frontier: a selectable wilderness band at the top of the stack,
+// standing in for the next zone to chart. Tapping it (or its terrain tile)
+// selects that zone so you can send scouts from the zone behind it.
+function unchartedBand(charting) {
+  const tiles = [];
+  const terrain = entityButton({
+    kind: 'zone', type: 'head', id: charting.id, zoneId: charting.id, compact: true,
+    icon: 'siteTerrain', label: 'uncharted — send scouts to explore', dimmed: true
+  });
+  terrain.classList.add('site-big');
+  tiles.push(terrain);
+  marchTilesTo(charting.id).forEach(t => tiles.push(t));
+  return zoneBand('field', charting.id, [zoneCaption(charting), tileRow(`z${charting.id}-wild`, tiles), forecastStrip()]);
+}
+
+// War-signs forecast — a vague read on the next raid wave, shown once we've
+// pushed beyond home. Non-interactive.
+function forecastStrip() {
   const forecast = document.createElement('div');
   forecast.className = 'forecast';
-  // War signs need seasoned scouts: nothing shows until exploration has
-  // already found the enemy homeland.
-  if (unitsOnOrder(game, 'explore') > 0 && game.enemy.known && !game.over) {
+  if (game.frontierAt > 0 && !game.over) {
     forecast.appendChild(makeIcon(ICONS.explore, 'war signs'));
-    // Rumours, not intel: a vague sense of when ('imminent'…'distant') and
-    // roughly how many of each raider type ('few'…'a horde'). No numbers,
-    // and only the next wave — beyond that the scouts hear nothing.
     const eta = game.raid.nextIn <= 15 ? 'imminent'
               : game.raid.nextIn <= 45 ? 'soon'
               : game.raid.nextIn <= 90 ? 'gathering' : 'distant';
@@ -2443,36 +2500,34 @@ function renderWorld() {
     });
     forecast.appendChild(group);
   }
-
-  const seen = game.raids.filter(raid => raid.discovered);
-  const raidZone = raid => raid.atBase ? 'base' : 'near';
-
-  // Three zones, read top to bottom as distance from home:
-  //   far   — beyond the map's edge: where scouts and attack columns go.
-  //   near  — the approach: patrols stand here, and raiders cross it and fight
-  //           the patrol here until it falls.
-  //   base  — home: defenders, workers on their nodes, the buildings, and any
-  //           raid that has broken through the patrol.
-  // Every zone (and every row inside it) stays mounted when empty so tiles never
-  // shift position as pools fill and drain; the whole stack scrolls as one.
-  dom.world.append(
-    zone('far', [sitesRow, enemyRow('far', seen.filter(r => raidZone(r) === 'far')), forecast]),
-    zone('near', [enemyRow('near', seen.filter(r => raidZone(r) === 'near')), patrol]),
-    zone('base', [enemyRow('base', seen.filter(r => raidZone(r) === 'base')), defend, workers, structures])
-  );
+  return forecast;
 }
 
-// A band of the world (far/near/base); rows stack inside it. The tint tells
-// the story — no caption.
-function zone(key, rows) {
+function renderWorld() {
+  ensureFrontier(game);   // keep an uncharted zone ready to scout
+  dom.world.replaceChildren();
+  // Deepest zone at the top, home at the bottom (the world grows upward as you
+  // explore). The uncharted frontier caps the stack while ground remains.
+  const discovered = game.zones.filter(z => z.discovered).sort((a, b) => b.index - a.index);
+  const charting = chartingZone(game);
+  if (charting) dom.world.appendChild(unchartedBand(charting));
+  discovered.forEach(zone => dom.world.appendChild(renderZoneBand(zone)));
+}
+
+// A band of the world; rows stack inside it. `cls` sets the tint.
+function zoneBand(cls, id, rows) {
   const el = document.createElement('section');
-  el.className = `world-zone zone-${key}`;
+  el.className = `world-zone zone-${cls}`;
+  if (game.selected.kind === 'zone' && String(game.selected.id) === String(id)) {
+    el.classList.add('zone-selected');
+  }
+  el.dataset.zoneBand = id;
   rows.forEach(row => el.appendChild(row));
   return el;
 }
 
-function productionMeta(state, producer) {
-  const jobs = trainJobs(state, producer);
+function productionMeta(state, producer, zoneId) {
+  const jobs = trainJobs(state, producer, zoneId);
   if (!jobs.length) return '';
   const queued = jobs.length - 1;
   return queued > 0 ? `${jobs[0].label} ${jobs[0].remaining}s +${queued}` : `${jobs[0].label} ${jobs[0].remaining}s`;
@@ -2480,12 +2535,13 @@ function productionMeta(state, producer) {
 
 function entityInfo(state) {
   const { kind, type } = state.selected;
-  if (state.buildMenu) return 'Choose a building';
+  if (state.moveArm) return 'Tap a target zone to move there — or tap away to cancel';
+  if (state.buildMenu) return `Build in ${selectedZone(state).name}`;
   if (!selectionValid(state)) return '';
   if (kind === 'structure') {
     const b = BUILDINGS[type];
     if (!b) return type;
-    return typeof b.blurb === 'function' ? b.blurb(state) : (b.blurb || cap(b.label));
+    return typeof b.blurb === 'function' ? b.blurb(state, selectedZone(state)) : (b.blurb || cap(b.label));
   }
   if (kind === 'workerGroup') {
     return `idle workers ×${workerCount(state, 'idle')}`;
@@ -2495,32 +2551,32 @@ function entityInfo(state) {
     if (!node) return type;
     const n = workersAtNode(state, node).length;
     const status = node.remaining <= 0 ? 'depleted' : `${fmtQty(node.remaining)} left`;
-    return `${node.label} · ${status} · dist ${node.distance} · ${n} working`;
+    return `${node.label} · ${status} · ${n} working`;
   }
-  if (kind === 'site') {
-    const site = siteByKey(state, type);
-    if (!site) return '';
-    // Homeland garrisons stay veiled until our own troops are on the field.
-    const garrison = site.cleared ? 'cleared'
-      : (site.veiled && !site.strike && !site.march) ? 'garrison unknown'
-      : [`${site.guardsLeft} defenders`,
-         site.towersLeft > 0 ? `${site.towersLeft} watch tower${site.towersLeft === 1 ? '' : 's'}` : null]
-        .filter(Boolean).join(', ');
-    const parts = [`${site.label} · ${garrison} · ${site.rewardText}`];
-    if (site.march) parts.push(`${strikeCount(site.march)} marching`);
-    if (site.strike) parts.push(`${strikeCount(site.strike)} attacking`);
-    if (site.returning) parts.push(`${strikeCount(site.returning)} returning`);
-    return parts.join(' · ');
+  if (kind === 'zone') {
+    const zone = zoneById(state, state.selected.id);
+    if (!zone) return '';
+    if (!zone.discovered) {
+      const src = zoneByIndex(state, zone.index - 1);
+      return `uncharted ground · send scouts from ${src ? src.name : 'the frontier'}`;
+    }
+    if (zone.status === 'occupied') {
+      const g = zone.garrison;
+      const engaged = !!zone.strike;
+      const gar = (g.veiled && !engaged) ? 'garrison unknown'
+        : [`${g.guardsLeft} guards`, g.towersLeft > 0 ? `${g.towersLeft} tower${g.towersLeft === 1 ? '' : 's'}` : null]
+          .filter(Boolean).join(', ');
+      return `${zone.name} · occupied · ${gar} · ${g.rewardText}`;
+    }
+    const defs = poolCount(zone.army);
+    const nodes = zone.nodes.length;
+    return `${zone.name} · owned · ${defs} defender${defs === 1 ? '' : 's'} · ${nodes} node${nodes === 1 ? '' : 's'}`;
   }
   if (kind === 'army') {
-    const pool = state.army[type];
-    if (!pool) return type;
-    const parts = Object.keys(ARMY).filter(k => pool[k] > 0).map(k => `${pool[k]} ${ARMY[k].label}`);
-    const enRoute = state.jobs.filter(j => j.kind === 'transfer' && j.to === type)
-      .reduce((sum, j) => sum + j.count, 0);
-    let base = `${type} · ${parts.length ? parts.join(', ') : 'no units'}`;
-    if (enRoute > 0) base += ` · ${enRoute} en route`;
-    return base;
+    const zone = zoneById(state, state.selected.id);
+    if (!zone) return type;
+    const parts = Object.keys(ARMY).filter(k => zone.army[k] > 0).map(k => `${zone.army[k]} ${ARMY[k].label}`);
+    return `${zone.name} · ${parts.length ? parts.join(', ') : 'no units'}`;
   }
   return '';
 }
@@ -2646,12 +2702,6 @@ function updateProgressRings() {
     badge.querySelectorAll('.radial-progress').forEach(el => el.remove());
     values.forEach((p, i) => badge.appendChild(radialProgressCanvas(p, values.length, i === 0)));
   });
-
-  document.querySelectorAll('.job-badge[data-explore-ring]').forEach(badge => {
-    const p = exploreRing(game);
-    badge.querySelectorAll('.radial-progress').forEach(el => el.remove());
-    if (p != null) badge.appendChild(radialProgressCanvas(p));
-  });
 }
 
 // ── Input ──────────────────────────────────────────────────────────────────
@@ -2683,22 +2733,56 @@ document.addEventListener('click', event => {
 // doesn't change selection.
 let worldTap = null;
 dom.world.addEventListener('pointerdown', event => {
+  // A tile tap selects the tile; a tap on empty band area selects the zone.
   const button = event.target.closest('.entity');
-  worldTap = button ? { id: event.pointerId, x: event.clientX, y: event.clientY, button } : null;
+  const band = button ? null : event.target.closest('[data-zone-band]');
+  worldTap = (button || band)
+    ? { id: event.pointerId, x: event.clientX, y: event.clientY, button, band } : null;
 }, { passive: true });
 dom.world.addEventListener('pointerup', event => {
   const tap = worldTap;
   worldTap = null;
   if (!tap || event.pointerId !== tap.id) return;
   if (Math.hypot(event.clientX - tap.x, event.clientY - tap.y) > 10) return;
-  if (tap.button.dataset.kind === 'enemy') return;
+  // An armed move resolves against the tapped target — one worker/unit per tap.
+  // Tapping a resource node sends the worker onto that resource; tapping a zone
+  // keeps its resource. A valid tap keeps the move armed for more; an invalid
+  // one cancels.
+  if (game.moveArm) {
+    const arm = game.moveArm;
+    let destZone = null, destNode = null;
+    if (tap.button) {
+      const b = tap.button.dataset;
+      if (b.kind === 'node') { destNode = nodeById(game, b.id); destZone = destNode ? nodeZone(game, destNode.id) : null; }
+      else if (b.zone != null) destZone = zoneById(game, b.zone);
+    } else if (tap.band) {
+      destZone = zoneById(game, tap.band.dataset.zoneBand);
+    }
+    const owned = destZone && destZone.discovered && destZone.status === 'owned';
+    if (owned && executeMoveOne(game, arm, destZone, destNode)) {
+      // stays armed for another one-at-a-time tap
+    } else {
+      game.moveArm = null;
+      writeLog(game, 'Move ended.');
+    }
+    render();
+    return;
+  }
+  if (!tap.button && tap.band) {
+    // Tapped the band background — select the whole zone.
+    const z = zoneById(game, tap.band.dataset.zoneBand);
+    if (z) selectEntity('zone', 'head', z.id, z.id);
+    return;
+  }
+  if (tap.button.dataset.kind === 'enemy' || tap.button.dataset.kind === 'frontier') return;
   // A marching column's tile recalls it to where it came from.
   if (tap.button.dataset.kind === 'march') {
     cancelJob(game, Number(tap.button.dataset.id));
     render();
     return;
   }
-  selectEntity(tap.button.dataset.kind, tap.button.dataset.type, tap.button.dataset.id);
+  const zoneId = tap.button.dataset.zone != null ? tap.button.dataset.zone : undefined;
+  selectEntity(tap.button.dataset.kind, tap.button.dataset.type, tap.button.dataset.id, zoneId);
 }, { passive: true });
 dom.world.addEventListener('pointercancel', () => { worldTap = null; });
 
@@ -2771,20 +2855,23 @@ document.getElementById('cheat-raid').addEventListener('click', () => {
   render();
 });
 document.getElementById('cheat-footman').addEventListener('click', () => {
-  game.army.defend.footmen += 1;
-  flashTile('army:defend:1', 'spawn');
+  const z = selectedZone(game) && selectedZone(game).status === 'owned' ? selectedZone(game) : homeZone(game);
+  z.army.footmen += 1;
+  flashTile(`army:defend:${z.id}`, 'spawn');
   render();
 });
 document.getElementById('cheat-worker').addEventListener('click', () => {
-  const w = createWorker();
+  const z = selectedZone(game) && selectedZone(game).status === 'owned' ? selectedZone(game) : homeZone(game);
+  const w = createWorker('idle', null, 0, z.id);
   game.workers.push(w);
   autoAssignWorkers(game);
   if (w.nodeId) flashTile(`node:${w.job}:${w.nodeId}`, 'spawn');
   render();
 });
 document.getElementById('cheat-farm').addEventListener('click', () => {
-  game.structures.farm += 1;
-  flashTile('structure:farm:1', 'spawn');
+  const z = selectedZone(game) && selectedZone(game).status === 'owned' ? selectedZone(game) : homeZone(game);
+  z.structures.farm += 1;
+  flashTile(`structure:farm:${z.id}`, 'spawn');
   render();
 });
 document.getElementById('cheat-kill').addEventListener('click', () => {
@@ -2795,25 +2882,15 @@ document.getElementById('cheat-kill').addEventListener('click', () => {
   render();
 });
 document.getElementById('cheat-scout').addEventListener('click', () => {
-  // Everything scouting could ever find: enemy base, scoutable nodes, sites.
-  // Site-locked rewards (discoverAt: Infinity) still need conquest.
-  game.exploreProgress = Math.max(game.exploreProgress, EXPLORE_THRESHOLD,
-    ...game.nodes.map(n => n.discoverAt).filter(Number.isFinite),
-    ...game.sites.map(s => s.discoverAt));
-  if (!game.enemy.known) {
-    game.enemy.known = true;
-    writeLog(game, 'Enemy homeland located! Attack order unlocked.');
-  }
-  game.nodes.forEach(n => {
-    if (!n.discovered && Number.isFinite(n.discoverAt)) {
-      n.discovered = true;
-      flashTile(`node:${n.type}:${n.id}`, 'spawn');
-    }
-  });
-  game.sites.forEach(s => {
-    if (!s.discovered) discoverSite(game, s);
-  });
-  writeLog(game, 'The map lies revealed.');
+  // Reveals the next uncharted zone instantly (garrison and all). Empty ground
+  // is claimed; a garrison is exposed as a blocker to assault.
+  ensureFrontier(game);
+  const z = chartingZone(game);
+  if (!z) { render(); return; }
+  z.discovered = true;
+  game.frontierAt = Math.max(game.frontierAt, z.index);
+  flashTile(`zone:head:${z.id}`, 'spawn');
+  writeLog(game, `Scouts chart ${z.name}.`);
   render();
 });
 
