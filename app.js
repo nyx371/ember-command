@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.40';
-const VERSION_TAG = 'random site pool noted in design doc';
+const VERSION = '0.41';
+const VERSION_TAG = 'homeland targets are assault cards (no attack order), gated war signs';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -21,17 +21,27 @@ const QUEUE_MAX = 5;            // queued units allowed per producing structure
 const SUPPLY_BASE = 4;
 
 const EXPLORE_THRESHOLD = 90;   // explore-unit-ticks to find enemy base
-const ENEMY_REBUILD = 0.05;     // stronghold hp repaired per tick
 const RAID_OUTPOST_RELIEF = 25; // raid-interval bonus per razed outpost
 
-// The enemy homeland: the attack force grinds through these in order —
-// outposts first (each razed one permanently slows the raid schedule), then
-// the stronghold itself, whose fall wins the game. `defense` is attrition
-// dealt per tick to the attack pool while it grinds that target.
+// The enemy homeland: a chain of assaultable sites, revealed one at a time —
+// the next only after the previous is razed. They fight like conquerable
+// sites but far tougher, and `reinforce` musters a fresh guard every N ticks
+// (up to cap) while under attack. Their garrison is veiled until you engage.
+// Outposts pay off in a permanently slower raid schedule; the stronghold's
+// fall wins the game.
 const ENEMY_TARGETS = [
-  { key: 'outpost1',   icon: 'outpost',    label: 'orc outpost',    hp: 40,  defense: 2 },
-  { key: 'outpost2',   icon: 'outpost',    label: 'orc war camp',   hp: 60,  defense: 3 },
-  { key: 'stronghold', icon: 'stronghold', label: 'orc stronghold', hp: 120, defense: 4 }
+  { key: 'outpost1', icon: 'outpost', label: 'orc outpost', veiled: true,
+    guards: { count: 6, hp: 80, dmg: 9 }, towers: 1,
+    reinforce: { every: 8, cap: 8 },
+    rewardText: 'the raids will thin', rewardIcon: 'patrol' },
+  { key: 'outpost2', icon: 'outpost', label: 'orc war camp', veiled: true,
+    guards: { count: 9, hp: 85, dmg: 9 }, towers: 1,
+    reinforce: { every: 7, cap: 12 },
+    rewardText: 'the raids will thin', rewardIcon: 'patrol' },
+  { key: 'stronghold', icon: 'stronghold', label: 'orc stronghold', veiled: true, final: true,
+    guards: { count: 12, hp: 90, dmg: 8 }, towers: 2,
+    reinforce: { every: 5, cap: 16 },
+    rewardText: 'victory', rewardIcon: 'attack' }
 ];
 const RAID_INTERVAL_BASE = 90;  // ticks between raids on day 0
 const RAID_FIRST_DELAY = 150;   // the very first wave holds off a while longer
@@ -260,8 +270,9 @@ const ARMY = {
 };
 
 // Standing orders an army unit can hold. Units live in one pool per order and
-// are moved between pools one at a time (workers-row style).
-const ORDERS = ['defend', 'patrol', 'explore', 'attack'];
+// are moved between pools one at a time (workers-row style). Attacking the
+// enemy homeland is not an order — it's a site assault (tap the target card).
+const ORDERS = ['defend', 'patrol', 'explore'];
 
 const GUARD_TOWER = { cost: { gold: 500, lumber: 150 }, time: 140 };
 const CANNON_TOWER = { cost: { gold: 1000, lumber: 300 }, time: 190 };
@@ -365,7 +376,17 @@ function createGame() {
     structureDamage: Object.fromEntries(Object.keys(BUILDINGS).map(k => [k, 0])),
     enemy: {
       known: false,
-      targets: ENEMY_TARGETS.map(t => ({ ...t, left: t.hp, razed: false, lastHitAt: 0 }))
+      // Site-shaped instances so the whole site machinery (assault, combat,
+      // conquest) applies unchanged; `discovered` is synced each tick.
+      targets: ENEMY_TARGETS.map(t => ({
+        ...t, discovered: false, cleared: false,
+        guards: { ...t.guards },
+        guardsLeft: t.guards.count, guardPool: t.guards.count * t.guards.hp,
+        towersLeft: t.towers, towerHp: SITE_TOWER.hp,
+        strike: null, march: null, returning: null,
+        myStrikeIn: DEFENSE_VOLLEY_EVERY, foeStrikeIn: RAID_VOLLEY_EVERY,
+        reinforceIn: 0, lastHitAt: 0, strikeHitAt: 0
+      }))
     },
     // Conquerable sites (see SITES): garrison state plus up to three of our
     // columns per site — `march` heading out, `strike` fighting there,
@@ -759,7 +780,8 @@ function supplyUsed(state) {
   return state.workers.length
        + ORDERS.reduce((sum, o) => sum + poolCount(state.army[o]), 0)
        + state.jobs.filter(j => j.kind === 'transfer').reduce((sum, j) => sum + j.count, 0)
-       + state.sites.reduce((sum, s) => sum + siteUnits(s), 0);
+       + state.sites.reduce((sum, s) => sum + siteUnits(s), 0)
+       + state.enemy.targets.reduce((sum, t) => sum + siteUnits(t), 0);
 }
 
 function hallTierBonus(state, field) {
@@ -941,17 +963,8 @@ function exploreRing(state) {
   return Math.min(1, (p - prev) / (next - prev));
 }
 
-function attackDamage(state) {
-  return Object.keys(ARMY).reduce((dmg, k) => dmg + state.army.attack[k] * ARMY[k].attack, 0);
-}
-
 function enemyTarget(state) {
-  return state.enemy.targets.find(t => !t.razed) || null;
-}
-
-function enemyTargetHp(target) {
-  if (target.left >= target.hp && !recentlyHit(target.lastHitAt)) return null;
-  return { segments: 1, partial: target.left / target.hp, total: target.left / target.hp };
+  return state.enemy.targets.find(t => !t.cleared) || null;
 }
 
 // Changing orders is a timed march (a 'transfer' job): units leave the source
@@ -1237,7 +1250,8 @@ function raidTick(state) {
 // a second expedition finishes the job.
 
 function siteByKey(state, key) {
-  return state.sites.find(s => s.key === key);
+  return state.sites.find(s => s.key === key)
+      || state.enemy.targets.find(t => t.key === key);
 }
 
 // Sites toughen the later they're found: at the moment of discovery the
@@ -1299,7 +1313,15 @@ function conquerSite(state, site) {
   flashError(`${cap(site.label)} cleared — ${site.rewardText}!`);
   const survivors = site.strike;
   site.strike = null;
-  const r = site.reward;
+  // Homeland targets: outposts thin the raids (see the interval calc), the
+  // stronghold's fall ends the game.
+  if (site.final) {
+    writeLog(state, 'The orc stronghold lies in ruins! Victory!');
+    state.over = { won: true, day: currentDay(state) + 1 };
+  } else if (site.veiled) {
+    writeLog(state, `${cap(site.label)} razed — the raids will thin out.`);
+  }
+  const r = site.reward || {};
   if (r.cache) {
     refund(state, r.cache);
     writeLog(state, `Plundered: ${Object.keys(r.cache).map(k => `${r.cache[k]} ${k}`).join(', ')}.`);
@@ -1341,7 +1363,21 @@ function conquerSite(state, site) {
 }
 
 function siteTick(state) {
-  state.sites.forEach(site => {
+  [...state.sites, ...state.enemy.targets].forEach(site => {
+    // Homeland targets muster reinforcements while under attack — a fresh
+    // guard every `reinforce.every` ticks, up to the cap.
+    if (site.reinforce && site.strike && !site.cleared) {
+      site.reinforceIn -= 1;
+      if (site.reinforceIn <= 0) {
+        site.reinforceIn = site.reinforce.every;
+        if (site.guardsLeft < site.reinforce.cap) {
+          site.guardsLeft += 1;
+          site.guardPool += site.guards.hp;
+          flashTile(`site:${site.key}:1`, 'spawn');
+          writeLog(state, `Reinforcements muster at the ${site.label}.`);
+        }
+      }
+    }
     if (site.march) {
       site.march.arriveIn -= 1;
       if (site.march.arriveIn <= 0) {
@@ -1467,40 +1503,20 @@ function gameTick() {
     });
   }
 
-  // Attack — the attack force grinds the enemy homeland target by target:
-  // outposts first, then the stronghold, whose fall wins the game. The
-  // target's garrison hits back (slow attrition on the attack pool, which
-  // never heals), and the stronghold repairs itself between blows.
-  const warTarget = enemyTarget(game);
-  if (game.enemy.known && warTarget && !game.over) {
-    const siege = attackDamage(game);
-    if (siege > 0) {
-      warTarget.left = Math.max(0, warTarget.left - siege);
-      warTarget.lastHitAt = performance.now();
-      flashTile(`enemy:base:${warTarget.key}`, 'damage');
-      flashTile('army:attack:1', 'attack');
-      if (warTarget.defense > 0) damagePool(game, 'attack', warTarget.defense);
-      if (warTarget.left <= 0) {
-        warTarget.razed = true;
-        if (warTarget.key === 'stronghold') {
-          writeLog(game, 'The orc stronghold lies in ruins! Victory!');
-          game.over = { won: true, day: currentDay(game) + 1 };
-        } else {
-          writeLog(game, `${cap(warTarget.label)} razed — the raids will thin out.`);
-          flashError(`${cap(warTarget.label)} razed!`);
-        }
-      }
-    }
-  }
-  const hold = game.enemy.targets.find(t => t.key === 'stronghold');
-  if (!hold.razed) hold.left = Math.min(hold.hp, hold.left + ENEMY_REBUILD);
+  // Homeland visibility: targets reveal one at a time once the enemy is
+  // found — the next only after the previous falls. Their combat runs
+  // through siteTick like any other site.
+  game.enemy.targets.reduce((open, t) => {
+    t.discovered = game.enemy.known && open;
+    return open && t.cleared;
+  }, true);
 
   // Raids — spawn on a shrinking interval, then fight tick by tick. Every
   // razed outpost permanently stretches the interval back out.
   game.raid.nextIn -= 1;
   if (game.raid.nextIn <= 0) {
     spawnRaid(game);
-    const relief = game.enemy.targets.filter(t => t.razed && t.key !== 'stronghold').length * RAID_OUTPOST_RELIEF;
+    const relief = game.enemy.targets.filter(t => t.cleared && !t.final).length * RAID_OUTPOST_RELIEF;
     game.raid.interval = Math.max(RAID_INTERVAL_MIN, RAID_INTERVAL_BASE - currentDay(game) * RAID_INTERVAL_SCALE) + relief;
     game.raid.nextIn = game.raid.interval;
   }
@@ -1643,9 +1659,8 @@ function armyGroupCommands(state, order, onlyType) {
         id: `move-${order}-${type}-${o}`,
         icon: ARMY[type].icon, overlay: orderIcon(o),
         label: `send ${ARMY[type].singular} to ${o}`, cost: '',
-        enabled: s => s.army[order][type] > 0 && (o !== 'attack' || s.enemy.known),
-        reason: s => (o === 'attack' && !s.enemy.known) ? 'Enemy not found — explore first'
-                   : 'None left in this group',
+        enabled: s => s.army[order][type] > 0,
+        reason: () => 'None left in this group',
         run: s => moveUnit(s, order, o, type),
         runAll: s => moveAllUnits(s, order, o, type)
       });
@@ -2268,11 +2283,6 @@ function renderWorld() {
     return section;
   }
 
-  // Away-from-base pools, pinned to the top: columns marching on the enemy
-  // base (scouts render as their own wilderness tile in the sites row). Both
-  // are off-map as far as raids are concerned — they neither defend nor get
-  // targeted.
-  const away = armySection('away', ['attack'], 'away');
   const patrol = armySection('patrol', ['patrol'], 'patrol');
   const defend = armySection('defend', ['defend'], 'defend');
 
@@ -2351,37 +2361,29 @@ function renderWorld() {
   // The enemy homeland: once found, the attack force's current target stands
   // at the end of the sites row — a danger tile with its hp bar and our
   // besieging units' chips.
-  const warTarget = enemyTarget(game);
-  if (game.enemy.known && warTarget) {
-    const btn = entityButton({
-      kind: 'enemy', type: 'base', id: warTarget.key, compact: true,
-      icon: warTarget.icon, label: warTarget.label, danger: true,
-      hp: enemyTargetHp(warTarget)
-    });
-    btn.classList.add('site-big');
-    if (unitsOnOrder(game, 'attack') > 0) btn.appendChild(mineChips(game.army.attack));
-    siteTiles.appendChild(btn);
-  }
-  game.sites.forEach(site => {
-    if (!site.discovered) return;
+  // One builder for every assaultable place. Homeland targets (`veiled`)
+  // render wide-but-flat and keep their garrison hidden until our own
+  // troops are marching on or fighting at them.
+  function siteTileEl(site, cls) {
     const mine = siteUnits(site);
-    if (site.cleared && mine === 0) return;
+    const engaged = !!(site.strike || site.march);
     const btn = entityButton({
       kind: 'site', type: site.key, id: 1, compact: true,
       icon: site.icon, label: site.label, danger: !site.cleared,
-      hp: siteHp(site)
+      hp: (!site.veiled || engaged) ? siteHp(site) : null
     });
-    btn.classList.add('site-big');
-    // Contextual reward badge, top-left: what clearing this place pays.
+    btn.classList.add(cls);
     const reward = document.createElement('span');
     reward.className = 'site-chip reward';
     reward.appendChild(makeIcon(ICONS[site.rewardIcon], site.rewardText));
     btn.appendChild(reward);
-    const foes = document.createElement('span');
-    foes.className = 'site-chips';
-    if (!site.cleared && site.guardsLeft > 0) foes.appendChild(siteChip('enemy', site.guardsLeft));
-    if (!site.cleared && site.towersLeft > 0) foes.appendChild(siteChip('orctower', site.towersLeft));
-    if (foes.children.length) btn.appendChild(foes);
+    if (!site.veiled || engaged) {
+      const foes = document.createElement('span');
+      foes.className = 'site-chips';
+      if (!site.cleared && site.guardsLeft > 0) foes.appendChild(siteChip('enemy', site.guardsLeft));
+      if (!site.cleared && site.towersLeft > 0) foes.appendChild(siteChip('orctower', site.towersLeft));
+      if (foes.children.length) btn.appendChild(foes);
+    }
     if (mine > 0) {
       const byType = {};
       [site.strike, site.march, site.returning].forEach(col => {
@@ -2392,7 +2394,18 @@ function renderWorld() {
       const shp = strikeHp(site);
       if (shp) btn.appendChild(hpBarEl(shp, 'mine'));
     }
-    siteTiles.appendChild(btn);
+    return btn;
+  }
+
+  game.sites.forEach(site => {
+    if (!site.discovered) return;
+    if (site.cleared && siteUnits(site) === 0) return;
+    siteTiles.appendChild(siteTileEl(site, 'site-big'));
+  });
+  // The homeland's current target: a wide, flat, tap-to-assault card.
+  game.enemy.targets.forEach(target => {
+    if (!target.discovered || (target.cleared && siteUnits(target) === 0)) return;
+    siteTiles.appendChild(siteTileEl(target, 'site-wide'));
   });
   sitesRow.appendChild(siteTiles);
 
@@ -2402,7 +2415,9 @@ function renderWorld() {
   // muted icons, no tiles, nothing to tap — it must not read as an attack.
   const forecast = document.createElement('div');
   forecast.className = 'forecast';
-  if (unitsOnOrder(game, 'explore') > 0 && !game.over) {
+  // War signs need seasoned scouts: nothing shows until exploration has
+  // already found the enemy homeland.
+  if (unitsOnOrder(game, 'explore') > 0 && game.enemy.known && !game.over) {
     forecast.appendChild(makeIcon(ICONS.explore, 'war signs'));
     // Rumours, not intel: a vague sense of when ('imminent'…'distant') and
     // roughly how many of each raider type ('few'…'a horde'). No numbers,
@@ -2441,7 +2456,7 @@ function renderWorld() {
   // Every zone (and every row inside it) stays mounted when empty so tiles never
   // shift position as pools fill and drain; the whole stack scrolls as one.
   dom.world.append(
-    zone('far', [away, sitesRow, forecast, enemyRow('far', seen.filter(r => raidZone(r) === 'far'))]),
+    zone('far', [sitesRow, enemyRow('far', seen.filter(r => raidZone(r) === 'far')), forecast]),
     zone('near', [enemyRow('near', seen.filter(r => raidZone(r) === 'near')), patrol]),
     zone('base', [enemyRow('base', seen.filter(r => raidZone(r) === 'base')), defend, workers, structures])
   );
@@ -2485,8 +2500,10 @@ function entityInfo(state) {
   if (kind === 'site') {
     const site = siteByKey(state, type);
     if (!site) return '';
+    // Homeland garrisons stay veiled until our own troops are on the field.
     const garrison = site.cleared ? 'cleared'
-      : [`${site.guardsLeft} grunts`,
+      : (site.veiled && !site.strike && !site.march) ? 'garrison unknown'
+      : [`${site.guardsLeft} defenders`,
          site.towersLeft > 0 ? `${site.towersLeft} watch tower${site.towersLeft === 1 ? '' : 's'}` : null]
         .filter(Boolean).join(', ');
     const parts = [`${site.label} · ${garrison} · ${site.rewardText}`];
@@ -2503,16 +2520,15 @@ function entityInfo(state) {
       .reduce((sum, j) => sum + j.count, 0);
     let base = `${type} · ${parts.length ? parts.join(', ') : 'no units'}`;
     if (enRoute > 0) base += ` · ${enRoute} en route`;
-    if (type !== 'attack') return base;
-    const target = enemyTarget(state);
-    if (!state.enemy.known) return `${base} · enemy unfound — explore`;
-    return target ? `${base} · besieging ${target.label} ${Math.ceil(target.left)}/${target.hp}`
-                  : `${base} · the enemy is destroyed`;
+    return base;
   }
   return '';
 }
 
 function renderOrders() {
+  // Preserve the command strip's scroll across the full rebuild.
+  const prevStrip = dom.orders.querySelector('.command-strip');
+  const stripScroll = prevStrip ? prevStrip.scrollLeft : 0;
   dom.orders.replaceChildren();
 
   const info = document.createElement('div');
@@ -2578,6 +2594,7 @@ function renderOrders() {
 
     strip.appendChild(button);
   });
+  if (stripScroll) strip.scrollLeft = stripScroll;
 }
 
 function renderGameOver() {

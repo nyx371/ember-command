@@ -476,6 +476,15 @@ button { touch-action: manipulation; }
   width: calc((100% - 9px) / 2 + 3px);
   min-height: 84px;
 }
+/* Homeland target card: full-row wide, regular tile height. Its chips lay
+   out horizontally to fit the flat card. */
+.tile-row > .entity.site-wide {
+  width: 100%;
+  min-height: 42px;
+}
+.entity.site-wide .site-chips { flex-direction: row; top: auto; bottom: 8px; }
+.entity.site-wide > .mine-chips { flex-direction: row; bottom: 8px; }
+.entity.site-wide .job-badge { display: none; }
 .site-chips {
   position: absolute;
   top: 3px;
@@ -504,6 +513,8 @@ button { touch-action: manipulation; }
 .forecast {
   display: flex;
   align-items: center;
+  justify-content: center;   /* centered, pinned to the far zone's bottom */
+  margin-top: auto;
   gap: 10px;
   min-height: 22px;
   padding: 1px 4px;

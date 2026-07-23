@@ -43,7 +43,7 @@ timers: `gameTick` (1s, simulation + render) and `updateProgressRings`
   combat; first listed type soaks damage first within a pool), `attack`
   (siege dps vs the enemy base). Units live in per-order pools:
   `game.army[order] = { footmen, archers, wounds }` for each of `ORDERS`
-  (defend/patrol/explore/attack). Army tiles are one per ORDER; selecting one
+  (defend/patrol/explore — there is no attack order). Army tiles are one per ORDER; selecting one
   offers per-type move commands — (type present × other order) buttons, unit
   icon with order overlay; tap moves one, hold moves all of that type
   (`armyGroupCommands`, built dynamically per render).
@@ -155,7 +155,8 @@ One `advanceJobs`, one `cancelJob` (refund + builder release), one
 Plain objects: `{ id, icon, label, cost, overlay?, enabled(s), available?(s),
 reason?(s), isActive?(s), run(s) }`, resolved per selection by
 `selectedCommands`. Commands render in one horizontally scrollable `.command-strip` row (no
-wrapping); the build menu's back button leads its list. Semantics:
+wrapping, scrollLeft preserved across renders); the build menu's back
+button leads its list. Semantics:
 - `enabled` — actually runnable (includes affordability).
 - `available` — non-resource prerequisites only; drives **fading**
   (`commandFaded`). A costed command missing only resources stays lit.
@@ -207,11 +208,14 @@ generates `techCommand`s on their source structures; levels in `game.tech`
 are read by `harvestYield`/`unitDmg`/`unitHp`. Nodes with `discoverAt > 0`
 start hidden; exploration accumulates past the enemy-base find and reveals
 them. The endgame is the `ENEMY_TARGETS` chain on `game.enemy.targets`
-(two outposts, then the stronghold): the attack pool grinds the first
-unrazed target (`attackDamage`), takes `target.defense`/tick attrition,
-each razed outpost adds `RAID_OUTPOST_RELIEF` to the raid interval, the
-stronghold self-repairs (`ENEMY_REBUILD`) and its fall wins. The current
-target renders as a `.site-big` danger tile in the sites row. Hall tiers
+(two outposts, then the stronghold): site-shaped instances fought through
+the normal site machinery (assault from defend, `siteTick`, `conquerSite`).
+They reveal one at a time (`discovered` synced each tick), are `veiled`
+(garrison chips/hp/info hidden until our column engages), and `reinforce`
+musters a fresh guard every N ticks up to a cap while under attack. Each
+razed outpost adds `RAID_OUTPOST_RELIEF` to the raid interval; the
+stronghold (`final`) ends the game on fall. The current target renders as a
+full-width flat `.site-wide` card in the sites row. Hall tiers
 (`HALL_TIERS`, `game.hallTier`): Keep gates Stables (`build.requiresTier`),
 Castle needs Stables. Town Hall → Keep is `game.hallTier` (1 = keep): same structure key, so
 loss condition/targeting/training are untouched; `buildingMaxHp` adds the
