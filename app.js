@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.60';
-const VERSION_TAG = 'uncharted zones darkened (fog); world stack pinned to bottom so you only scroll up';
+const VERSION = '0.61';
+const VERSION_TAG = 'remove zone labels; selection ring only on owned/home zones, not uncharted/occupied';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -2460,15 +2460,13 @@ function renderZoneBand(zone) {
   const marches = marchTilesTo(zone.id);
 
   if (zone.status === 'occupied') {
-    rows.push(zoneCaption(zone));
     rows.push(tileRow(`z${zone.id}-head`, [garrisonTile(zone), ...marches]));
     if (raids.length) rows.push(tileRow(`z${zone.id}-raids`, raids));
     return zoneBand(cls, zone.id, rows);
   }
 
-  // Owned zone: a caption naming it, then defenders (+ inbound columns),
-  // workers/nodes and buildings. No header tile — tap the band to select it.
-  rows.push(zoneCaption(zone));
+  // Owned zone: defenders (+ inbound columns), workers/nodes and buildings.
+  // No header tile or caption — tap the band to select it.
   if (raids.length) rows.push(tileRow(`z${zone.id}-raids`, raids));
   rows.push(tileRow(`z${zone.id}-army`, [...zoneArmyTiles(zone), ...marches]));
 
@@ -2511,28 +2509,13 @@ function renderZoneBand(zone) {
   return zoneBand(cls, zone.id, rows);
 }
 
-// A small caption naming a zone's band; highlights when the zone is selected so
-// it's clear the whole band is the tap target.
-function zoneCaption(zone) {
-  const cap = document.createElement('div');
-  cap.className = 'zone-caption';
-  if (game.selected.kind === 'zone' && String(game.selected.id) === String(zone.id)) {
-    cap.classList.add('selected');
-  }
-  const status = !zone.discovered ? 'uncharted'
-    : zone.status === 'occupied' ? 'occupied'
-    : zone.index === 0 ? 'home' : 'owned';
-  cap.textContent = `${zone.name} · ${status}`;
-  return cap;
-}
-
 // The uncharted frontier: a selectable wilderness band at the top of the stack,
 // standing in for the next zone to chart. Tapping the band selects that zone so
 // you can send scouts from the zone behind it; any inbound scout column shows
 // as a marching tile.
 function unchartedBand(charting) {
   const marches = marchTilesTo(charting.id);
-  const rows = [zoneCaption(charting)];
+  const rows = [];
   if (marches.length) rows.push(tileRow(`z${charting.id}-wild`, marches));
   rows.push(forecastStrip());
   return zoneBand('field', charting.id, rows);
