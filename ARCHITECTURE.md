@@ -98,14 +98,14 @@ it built in). Repair rides the construct machinery (`startRepair`,
 and persists until repaired.
 
 ### Moving between zones
-`startTransfer(state, fromId, toId, type, count, mode)` — a timed `transfer`
-job (`transferTicks` = `TRANSFER_BASE_TICKS` + zones crossed ×
-`ZONE_MARCH_PER_STEP`); units leave the source zone's pool immediately,
-count toward supply in transit, merge into same-route columns, and are
-delivered by `arriveColumn`. `mode` ∈ move | explore | assault (sets the
-march-tile overlay icon and arrival behavior). `exploreFrom` marches units
-at the uncharted zone (creating it if needed); arrival reveals it — empty
-ground is claimed, a garrison starts a fight. The **move arm**
+`startTransfer(state, fromId, toId, type, count)` — **instant**: units leave
+the source zone's pool and `arriveColumn` delivers them into the destination
+in the same beat. No travel time, no distance cost, no in-transit state.
+`arriveColumn` decides what arrival means: an unrevealed zone is charted,
+empty ground is claimed as `owned` (units become its defenders), an occupied
+zone takes them as its `strike` column. `exploreFrom` sends units at the
+uncharted zone (creating it if needed) and it is revealed on the spot. The
+**move arm**
 (`game.moveArm`) is the one-at-a-time flow: a Move command arms a source
 (worker crew / idle worker / unit type), then each tap on a destination zone
 (or a specific resource node — which retasks the worker to that resource)
@@ -114,21 +114,22 @@ moves exactly one; tapping elsewhere disarms.
 ### Raid combat
 `RAIDER_TYPES` roster (grunts wave 1+, axethrowers 6+, ogres 9+, catapults
 12+; gentle ramp, per-party offset volley phases via `foeDelay`). Raids
-spawn beyond the **deepest owned zone** and march inward zone by zone
-(`raid.index`, `ZONE_MARCH_PER_STEP` between zones), fighting whichever
-owned zone they reach: that zone's defenders + towers fire
+spawn beyond the **deepest owned zone** and move inward zone by zone
+(`raid.index`) with **no travel time** — they appear in the zone they're set
+on and fight the same tick (`raid.atIndex` tracks the last announced zone so
+arrival flashes/logs fire once). That zone's defenders + towers fire
 (`defenseDamage`; siege parties are immune to towers), raiders answer on
 their cadence with targeting defenders → towers → workers → buildings
 (`RAID_TARGET_ORDER`, home hall's fall = defeat; `siege` parties shell
 buildings only). A zone with no defenders, workers, or buildings is
-"subdued" and the raid marches on inward. Killed raiders drop `bounty`
+"subdued" and the raid moves on inward immediately. Killed raiders drop `bounty`
 plunder. Spawn interval shrinks per day but every once-occupied zone we
 cleared (`zone.wasOccupied`) adds `RAID_OUTPOST_RELIEF` back. Defender regen
 is per zone (paused while a raid fights there); workers mend slowly, paused
 while any raid is at a zone.
 
 ### Garrison combat (occupied zones)
-Units marched into an occupied zone become `zone.strike` and exchange
+Units sent into an occupied zone become `zone.strike` and exchange
 volleys with the garrison on the raid cadences — guards soak first, then
 watch towers fall. Garrisons **reinforce** while under attack
 (`GARRISON_REINFORCE`: +1 guard every 7 ticks up to 10). `conquerZone` on
@@ -147,9 +148,9 @@ cost, complete }` plus:
 - `kind: 'construct'` → `{ workerId, zoneId, returnTo, repairKey? }`.
 - `kind: 'upgrade'` → `{ tag, source }` (`tag` blocks duplicate tracks,
   `source` enforces one research per source building). Never takes a worker.
-- `kind: 'transfer'` → `{ from, to, type, count, mode }` (zone ids).
-One `advanceJobs`, one `cancelJob` (refund + builder release / column
-recall), one `jobProgress`, one `jobChip`. Chips live in the fixed-height
+(Unit movement is *not* a job — it resolves instantly, see above.)
+One `advanceJobs`, one `cancelJob` (refund + builder release), one
+`jobProgress`, one `jobChip`. Chips live in the fixed-height
 `#queue` strip under the resource bar (`renderQueueStrip`). Don't add
 parallel job arrays.
 

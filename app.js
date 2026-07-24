@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.70';
-const VERSION_TAG = 'zones stand eight button rows tall';
+const VERSION = '0.71';
+const VERSION_TAG = 'instant zone movement for both sides — no marches, no fade-in';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -31,7 +31,6 @@ const SUPPLY_BASE = 4;
 // yours. Garrisons toughen with depth. The scripted stronghold sits at a fixed
 // depth and ends the game when razed.
 const STRONGHOLD_DEPTH = 20;     // zone index of the final orc stronghold
-const ZONE_MARCH_PER_STEP = 6;   // march ticks between adjacent zones
 // Odds a freshly-charted zone (past home) holds a garrison rather than being
 // empty. The stronghold zone is always occupied regardless.
 const ZONE_OCCUPY_CHANCE = 0.6;
@@ -42,7 +41,6 @@ const RAID_INTERVAL_BASE = 90;  // ticks between raids on day 0
 const RAID_FIRST_DELAY = 150;   // the very first wave holds off a while longer
 const RAID_INTERVAL_SCALE = 5;  // reduce interval by this per day
 const RAID_INTERVAL_MIN = 25;
-const RAID_ARRIVE_TICKS = 10;   // ticks a fresh wave marches before reaching its first zone
 const DEFENSE_VOLLEY_EVERY = 2; // my side strikes every 2 ticks...
 const RAID_VOLLEY_EVERY = 3;    // ...raiders every 3 — offset cadences, not lockstep
 // Enemy roster: each wave spawns one party per type whose fromWave has
@@ -66,9 +64,6 @@ const REPAIR_HP_PER_TICK = 20;  // how fast one worker patches a building up
 // there, so rotating wounded units to a quiet zone has a real benefit.
 const HEAL_DEFEND_PER_TICK = 1;
 const WORKER_HEAL_PER_TICK = 1;   // very slow, and only while not under attack
-// Moving units between zones is a timed march: TRANSFER_BASE_TICKS plus one
-// ZONE_MARCH_PER_STEP per zone of separation (see transferTicks).
-const TRANSFER_BASE_TICKS = 2;
 const HP_BAR_LINGER_MS = 3000;  // keep a combat hp bar visible across volleys
 // Raider targeting: warriors first, then the towers shooting at them, then
 // workers, then the remaining buildings — the town hall falls last.
@@ -247,7 +242,7 @@ const UNITS = {
 
 // Army unit types. `hp`/`dmg` drive combat (listed first = soaks damage first
 // within a pool); `attack` is siege dps. Units live in a per-zone defend pool
-// (zone.army) plus transient marching columns (see transfers/assaults).
+// (zone.army); moving between zones is instant (see startTransfer).
 const ARMY = {
   footmen:   { icon: 'footman',  label: 'footmen',   singular: 'footman',  hp: 60,  dmg: 7,  attack: 0.10, melee: true },
   knights:   { icon: 'knight',   label: 'knights',   singular: 'knight',   hp: 90,  dmg: 10, attack: 0.15, melee: true },
@@ -760,7 +755,7 @@ function executeMoveOne(state, arm, destZone, destNode) {
   if (arm.kind === 'army') {
     const from = zoneById(state, arm.fromZoneId);
     if (!from || String(from.id) === String(destZone.id) || from.army[arm.type] <= 0) return false;
-    startTransfer(state, from.id, destZone.id, arm.type, 1, 'move');
+    startTransfer(state, from.id, destZone.id, arm.type, 1);
     return true;
   }
   // Workers: pick one from the source node's crew, or one idle in the zone.
@@ -982,12 +977,6 @@ function cancelJob(state, uid) {
   state.jobs = state.jobs.filter(j => j !== job);
   refund(state, job.cost);
   if (job.kind === 'construct') releaseBuilder(state, job.workerId, job.zoneId);
-  if (job.kind === 'transfer') {
-    const from = zoneById(state, job.from);
-    if (from) from.army[job.type] += job.count;   // recall to where they set out
-    writeLog(state, `${job.label}: recalled.`);
-    return;
-  }
   writeLog(state, `${job.label}: cancelled, refunded.`);
 }
 
@@ -1018,11 +1007,6 @@ function advanceJobs(state) {
   state.jobs = state.jobs.filter(j => j.remaining > 0);
   done.forEach(job => {
     if (job.kind === 'construct') releaseBuilder(state, job.workerId, job.zoneId);
-    if (job.kind === 'transfer') {
-      const to = zoneById(state, job.to);
-      if (to) arriveColumn(state, to, job.type, job.count);
-      return;
-    }
     job.complete(state);
   });
 }
@@ -1031,8 +1015,7 @@ function advanceJobs(state) {
 
 function supplyUsed(state) {
   const stationed = state.zones.reduce((sum, z) => sum + poolCount(z.army) + strikeCount(z.strike), 0);
-  const marching = state.jobs.filter(j => j.kind === 'transfer').reduce((sum, j) => sum + j.count, 0);
-  return state.workers.length + stationed + marching;
+  return state.workers.length + stationed;
 }
 
 function hallTierBonus(state, field) {
@@ -1186,18 +1169,11 @@ function strikeHp(zone) {
   };
 }
 
-// Marching between zones is a timed 'transfer' job: units leave the source
-// zone's defenders immediately, spend the march in transit (untargetable), and
-// are delivered by arriveColumn on arrival. Tapping the chip recalls them.
-// Consecutive moves on the same route join the same column. Cost grows with the
-// number of zones crossed.
-function transferTicks(state, fromId, toId) {
-  const a = zoneById(state, fromId), b = zoneById(state, toId);
-  const steps = (a && b) ? Math.abs(a.index - b.index) : 1;
-  return TRANSFER_BASE_TICKS + Math.max(1, steps) * ZONE_MARCH_PER_STEP;
-}
-
-function startTransfer(state, fromId, toId, type, count, mode = 'move') {
+// Moving units between zones is instant: they leave the source zone's pool and
+// arrive in the destination in the same beat (arriveColumn does the delivery,
+// which also claims empty ground and joins an assault in progress). Distance
+// costs nothing — position matters, travel time doesn't.
+function startTransfer(state, fromId, toId, type, count) {
   const from = zoneById(state, fromId);
   const to = zoneById(state, toId);
   if (!from || !to) return;
@@ -1205,22 +1181,7 @@ function startTransfer(state, fromId, toId, type, count, mode = 'move') {
   if (moved <= 0) return;
   from.army[type] -= moved;
   if (poolCount(from.army) === 0) from.army.wounds = 0;
-  const marching = state.jobs.find(j => j.kind === 'transfer'
-    && String(j.from) === String(fromId) && String(j.to) === String(toId) && j.type === type);
-  if (marching) {
-    marching.count += moved;   // join the column already under way
-  } else {
-    const time = transferTicks(state, fromId, toId);
-    const verb = mode === 'assault' ? 'assault' : mode === 'explore' ? 'explore' : 'move';
-    state.jobs.push({
-      uid: nextId(), kind: 'transfer', from: fromId, to: toId, type, count: moved, mode,
-      icon: ARMY[type].icon, overlay: mode === 'assault' ? 'attack' : mode === 'explore' ? 'explore' : 'defend',
-      label: `${ARMY[type].label} → ${to.name}`,
-      duration: time, remaining: time, cost: {}
-    });
-  }
-  const dest = mode === 'explore' ? 'to chart new ground' : `to ${to.name}`;
-  writeLog(state, `${moved} ${moved === 1 ? ARMY[type].singular : ARMY[type].label} marching ${dest}.`);
+  arriveColumn(state, to, type, moved);
 }
 
 // Send units out from `fromId` to chart the next zone (fromId's index + 1).
@@ -1231,13 +1192,14 @@ function exploreFrom(state, fromId, type, count) {
   let target = zoneByIndex(state, from.index + 1);
   if (!target) { target = makeZone(from.index + 1, state.raid.wave); state.zones.push(target); }
   if (target.discovered) return;   // already charted
-  startTransfer(state, fromId, target.id, type, count, 'explore');
+  startTransfer(state, fromId, target.id, type, count);
 }
 
 // ── Raid combat ────────────────────────────────────────────────────────────
-// Raiding parties are real: they spawn beyond the deepest owned zone and
-// march inward zone by zone, exchanging volleys with each owned zone's
-// defenders and towers; a subdued zone (nothing left) is passed through.
+// Raiding parties are real: they appear beyond the deepest owned zone and
+// move inward zone by zone with no travel time, exchanging volleys with each
+// owned zone's defenders and towers; a subdued zone (nothing left) is passed
+// through immediately.
 
 // Damage a pool of ARMY units deals per volley.
 function poolDamage(state, pool) {
@@ -1247,7 +1209,6 @@ function poolDamage(state, pool) {
 // My side's fire at a raid standing in `zone`: that zone's defenders plus its
 // towers. Siege parties sit beyond tower range (towers deal 0 vs them).
 function defenseDamage(state, zone, raid) {
-  if (!raid.atZone) return 0;
   const towerDmg = raid.siege ? 0
     : Object.keys(BUILDINGS).reduce((sum, k) => sum + (BUILDINGS[k].dmg || 0) * zone.structures[k], 0);
   return poolDamage(state, zone.army) + towerDmg;
@@ -1319,7 +1280,7 @@ function damageBuildings(state, zone, raid, dmg, order) {
   }
 }
 
-// Raiders enter beyond the deepest owned zone and march inward toward home.
+// Raiders enter beyond the deepest owned zone and drive inward toward home.
 function spawnRaid(state) {
   const wave = state.raid.wave;
   state.raid.wave += 1;
@@ -1336,21 +1297,18 @@ function spawnRaid(state) {
     state.raids.push({
       id: nextId(), kind: key, icon: t.icon, label: t.label, siege: !!t.siege,
       size, grunt, hpPool: size * grunt.hp, discovered: true,
-      index: startIndex, arriveIn: RAID_ARRIVE_TICKS, atZone: false,
+      index: startIndex, atIndex: null,
       myStrikeIn: DEFENSE_VOLLEY_EVERY, foeStrikeIn: foeDelay, foeDelay,
       targetType: null
     });
     total += size;
     party += 1;
   });
-  if (total > 0) {
-    writeLog(state, `${total} raiders are marching in from the frontier!`);
-    flashError('Raiders approaching the frontier!');
-  }
+  if (total > 0) writeLog(state, `${total} raiders storm in from the frontier!`);
 }
 
 // A zone is subdued once it has no defenders, no workers, and no buildings —
-// the raid then marches on to the next zone inward.
+// the raid then moves on to the next zone inward.
 function zoneSubdued(state, zone) {
   return poolCount(zone.army) === 0
     && workersInZoneLive(state, zone).length === 0
@@ -1358,16 +1316,15 @@ function zoneSubdued(state, zone) {
 }
 
 // Snap a raid's target to the next owned, charted zone at or inward of its
-// current index that's actually worth attacking. Raiders march straight past
+// current index that's actually worth attacking. Raiders sweep straight past
 // enemy-held zones, uncharted ground, and neutral/empty owned zones (no units,
-// no workers, no buildings) toward the next zone that has something to hit.
+// no workers, no buildings) to the next zone that has something to hit — with
+// no travel time, a subdued zone is passed through the moment it falls.
 function raidTargetZone(state, raid) {
   while (raid.index >= 0) {
     const z = zoneByIndex(state, raid.index);
     if (z && z.discovered && z.status === 'owned' && !zoneSubdued(state, z)) return z;
     raid.index -= 1;
-    raid.atZone = false;
-    raid.arriveIn = ZONE_MARCH_PER_STEP;
   }
   return homeZone(state);
 }
@@ -1375,20 +1332,19 @@ function raidTargetZone(state, raid) {
 function raidTick(state) {
   state.raids.forEach(raid => {
     const zone = raidTargetZone(state, raid);
-    if (raid.arriveIn > 0) {
-      raid.arriveIn -= 1;
-      if (raid.arriveIn <= 0) {
-        raid.atZone = true;
-        raid.razing = false;
-        writeLog(state, `${raid.size} ${raid.label} reach ${zone.name}!`);
-        flashError(zone.index === 0 ? 'Our town is under attack!' : `${cap(zone.name)} is under attack!`);
-      }
+    // Raiders appear in whichever zone they're set on — no march, no warning.
+    if (raid.atIndex !== zone.index) {
+      raid.atIndex = zone.index;
+      raid.razing = false;
+      flashTile(`enemy:raid:${raid.id}`, 'spawn');
+      writeLog(state, `${raid.size} ${raid.label} fall upon ${zone.name}!`);
+      flashError(zone.index === 0 ? 'Our town is under attack!' : `${cap(zone.name)} is under attack!`);
     }
     // My volley: this zone's defenders + towers fire once the raid arrives.
     raid.myStrikeIn -= 1;
     if (raid.myStrikeIn <= 0) {
       raid.myStrikeIn = DEFENSE_VOLLEY_EVERY;
-      const peers = state.raids.filter(r => r.index === raid.index && !!r.atZone === !!raid.atZone).length || 1;
+      const peers = state.raids.filter(r => r.index === raid.index).length || 1;
       const dealt = defenseDamage(state, zone, raid) / peers;
       if (dealt > 0) {
         flashTile(`enemy:raid:${raid.id}`, 'damage');
@@ -1411,10 +1367,6 @@ function raidTick(state) {
         writeLog(state, `Raid repelled at ${zone.name}! Plundered ${raid.plunder || 0} gold.`);
         return;
       }
-    }
-    if (raid.arriveIn > 0) {   // still marching to this zone
-      raid.foeStrikeIn = raid.foeDelay || RAID_VOLLEY_EVERY;
-      return;
     }
     // Raiders strike back on their offset cadence. (Subdued zones are skipped
     // by raidTargetZone before we ever get here.)
@@ -1569,9 +1521,9 @@ function gameTick() {
   // Survivors patch up between fights — a zone's defenders heal only while no
   // raid is fighting there. Workers mend very slowly, and not at all while any
   // raid has reached a zone.
-  const underAttack = game.raids.some(r => r.atZone);
+  const underAttack = game.raids.length > 0;
   game.zones.forEach(z => {
-    const raidHere = game.raids.some(r => r.atZone && r.index === z.index);
+    const raidHere = game.raids.some(r => r.index === z.index);
     if (!raidHere) z.army.wounds = Math.max(0, z.army.wounds - HEAL_DEFEND_PER_TICK);
   });
   if (!underAttack) game.workerWounds = Math.max(0, game.workerWounds - WORKER_HEAL_PER_TICK);
@@ -1748,20 +1700,20 @@ function pullableDefenders(state, target) {
     .sort((a, b) => Math.abs(a.index - target.index) - Math.abs(b.index - target.index));
 }
 
-// March one defender from the nearest zone that can spare one to `target`
-// (mode 'move' = reinforce, 'assault' = attack a garrison). Returns false when
-// there's nobody left to send.
-function pullDefender(state, target, mode) {
+// Send one defender from the nearest zone that can spare one to `target` —
+// reinforcing an owned zone or joining the assault on a garrison, whichever
+// `target` is. Returns false when there's nobody left to send.
+function pullDefender(state, target) {
   const src = pullableDefenders(state, target)[0];
   if (!src) return false;
   const type = Object.keys(ARMY).find(k => src.army[k] > 0);
-  startTransfer(state, src.id, target.id, type, 1, mode);
+  startTransfer(state, src.id, target.id, type, 1);
   return true;
 }
 
-function pullDefenderAll(state, target, mode) {
+function pullDefenderAll(state, target) {
   let n = 0;
-  while (n < 200 && pullDefender(state, target, mode)) n += 1;
+  while (n < 200 && pullDefender(state, target)) n += 1;
 }
 
 // Commands for a selected zone:
@@ -1780,8 +1732,8 @@ function zoneCommands(state, zone) {
       id: 'zone-attack', icon: 'attack', label: `attack ${zone.name} — send units from your zones`, cost: '',
       enabled: s => pullableDefenders(s, zone).length > 0,
       reason: () => 'No units in your other zones to send',
-      run: s => pullDefender(s, zone, 'assault'),
-      runAll: s => pullDefenderAll(s, zone, 'assault')
+      run: s => pullDefender(s, zone),
+      runAll: s => pullDefenderAll(s, zone)
     }];
   }
   // Owned zone: Build + Defend (draw reinforcements from your other zones).
@@ -1796,8 +1748,8 @@ function zoneCommands(state, zone) {
       hidden: s => ownedZones(s).filter(z => String(z.id) !== String(zone.id)).length === 0,
       enabled: s => pullableDefenders(s, zone).length > 0,
       reason: () => 'No units in other zones to pull',
-      run: s => pullDefender(s, zone, 'move'),
-      runAll: s => pullDefenderAll(s, zone, 'move') }
+      run: s => pullDefender(s, zone),
+      runAll: s => pullDefenderAll(s, zone) }
   ];
 }
 
@@ -2271,10 +2223,9 @@ function render() {
   updateRaidAlerts();
 }
 
-// Zone ids a known raid is menacing — the owned zone it's fighting in OR
-// marching on. (Keyed on the raid's target zone, not `atZone`, so the off-view
-// alert stays lit while raiders close in and cross between zones, rather than
-// blinking off in the gaps between combat volleys.)
+// Zone ids a known raid is menacing. (Keyed on the raid's target zone, so the
+// off-view alert stays lit as raiders cross between zones rather than blinking
+// off in the gaps between combat volleys.)
 function attackedZoneIds() {
   const ids = new Set();
   game.raids.forEach(r => {
@@ -2348,12 +2299,6 @@ function jobChip(job) {
   chip.title = `${job.label} — tap to cancel, refund resources`;
   chip.setAttribute('aria-label', `cancel ${job.label}`);
   chip.appendChild(makeIcon(ICONS[job.icon], job.label));
-  if (job.kind === 'transfer' && job.count > 1) {
-    const n = document.createElement('span');
-    n.className = 'chip-count';
-    n.textContent = job.count;
-    chip.appendChild(n);
-  }
   // Jobs running in a forward zone carry its index, so parallel bases'
   // queues stay tellable apart at a glance.
   if (job.zoneId != null) {
@@ -2384,20 +2329,6 @@ function renderQueueStrip() {
   if (scrollLeft) dom.queue.scrollLeft = scrollLeft;
 }
 
-// A column mid-march to a zone: unit icon, destination badge with the march
-// progress ring. Tapping it recalls the column to where it set out. Pulses
-// in and out while in transit, the same signal incoming raiders use.
-function marchTile(job) {
-  const to = zoneById(game, job.to);
-  const btn = entityButton({
-    kind: 'march', type: job.mode || 'move', id: job.uid, compact: true,
-    icon: ARMY[job.type].icon, label: `${job.count} marching to ${to ? to.name : 'the frontier'} — tap to recall`,
-    jobIcon: job.mode === 'assault' ? 'attack' : job.mode === 'explore' ? 'explore' : 'defend',
-    jobUid: job.uid, progressBars: [jobProgress(game, job)], countLabel: job.count
-  });
-  btn.classList.add('incoming');
-  return btn;
-}
 
 // The defenders of an owned zone: one tile per unit type present (each its own
 // selection, id = zoneId, type = ARMY key). The shared wounds bar rides on the
@@ -2492,7 +2423,7 @@ function tileRow(scrollKey, tiles) {
   return section;
 }
 
-// Raids currently at (or marching on) a given zone index.
+// Raids currently fighting at a given zone index.
 function raidTilesAt(index) {
   return game.raids.filter(r => r.discovered && r.index === index).map(raid => {
     const btn = entityButton({
@@ -2500,17 +2431,10 @@ function raidTilesAt(index) {
       icon: raid.icon, label: raid.label, danger: true,
       countLabel: raid.size, hp: raidHp(raid)
     });
-    // Approaching (not yet arrived): pulse in and out until they land in the
-    // zone and start attacking. Melee raiders lunge harder when they strike.
-    if (!raid.atZone) btn.classList.add('incoming');
+    // Melee raiders lunge harder when they strike.
     if (RAIDER_TYPES[raid.kind] && RAIDER_TYPES[raid.kind].melee) btn.classList.add('melee-attacker');
     return btn;
   });
-}
-
-// Marching columns whose destination is this zone.
-function marchTilesTo(zoneId) {
-  return game.jobs.filter(j => j.kind === 'transfer' && String(j.to) === String(zoneId)).map(marchTile);
 }
 
 // Render one zone as a stacked, tappable band (tapping empty band area selects
@@ -2519,11 +2443,10 @@ function renderZoneBand(zone) {
   const cls = zone.status === 'occupied' ? 'occupied' : (zone.index === 0 ? 'home' : 'owned');
   const rows = [];
   const raids = raidTilesAt(zone.index);
-  const marches = marchTilesTo(zone.id);
 
   if (zone.status === 'occupied') {
     rows.push(tileRow(`z${zone.id}-foes`, garrisonTiles(zone)));   // enemies up top
-    const ours = [...strikeTiles(zone), ...marches];               // our force enters from the bottom
+    const ours = strikeTiles(zone);                                // our force enters from the bottom
     if (ours.length) rows.push(tileRow(`z${zone.id}-strike`, ours));
     if (raids.length) rows.push(tileRow(`z${zone.id}-raids`, raids));
     const band = zoneBand(cls, zone.id, rows, zone.terrain);
@@ -2531,10 +2454,10 @@ function renderZoneBand(zone) {
     return band;
   }
 
-  // Owned zone: defenders (+ inbound columns), workers/nodes and buildings.
+  // Owned zone: defenders, workers/nodes and buildings.
   // No header tile or caption — tap the band to select it.
   if (raids.length) rows.push(tileRow(`z${zone.id}-raids`, raids));
-  rows.push(tileRow(`z${zone.id}-army`, [...zoneArmyTiles(zone), ...marches]));
+  rows.push(tileRow(`z${zone.id}-army`, zoneArmyTiles(zone)));
 
   // Live resource nodes with their crews (idle-workers tile when none live).
   const liveNodes = zone.nodes.filter(n => n.remaining > 0);
@@ -2577,12 +2500,9 @@ function renderZoneBand(zone) {
 
 // The uncharted frontier: a selectable wilderness band at the top of the stack,
 // standing in for the next zone to chart. Tapping the band selects that zone so
-// you can send scouts from the zone behind it; any inbound scout column shows
-// as a marching tile.
+// you can send scouts from the zone behind it.
 function unchartedBand(charting) {
-  const marches = marchTilesTo(charting.id);
   const rows = [];
-  if (marches.length) rows.push(tileRow(`z${charting.id}-wild`, marches));
   rows.push(forecastStrip());
   return zoneBand('field', charting.id, rows);
 }
@@ -2801,10 +2721,10 @@ function renderLog() {
   });
 }
 
-// Smooth ring animation between ticks. Three uniform cases cover everything:
-// anything bound to a job uid (construction chips AND march-tile badges),
-// node harvest badges, and the scouts' explore ring — new jobs, nodes, or
-// tiles that reuse these data attributes never need changes here.
+// Smooth ring animation between ticks. Two uniform cases cover everything:
+// anything bound to a job uid (construction chips) and node harvest badges —
+// new jobs, nodes, or tiles that reuse these data attributes never need
+// changes here.
 function updateProgressRings() {
   document.querySelectorAll('.construction-chip[data-job-uid], .job-badge[data-job-uid]').forEach(el => {
     const job = game.jobs.find(j => j.uid === Number(el.dataset.jobUid));
@@ -2880,7 +2800,7 @@ dom.world.addEventListener('pointerup', event => {
       executeMoveOne(game, arm, destZone, destNode);
     } else if (destZone && !destZone.discovered && arm.kind === 'army') {
       const from = zoneById(game, arm.fromZoneId);
-      if (from && from.army[arm.type] > 0) startTransfer(game, from.id, destZone.id, arm.type, 1, 'explore');
+      if (from && from.army[arm.type] > 0) startTransfer(game, from.id, destZone.id, arm.type, 1);
     }
     render();
     return;
@@ -2892,12 +2812,6 @@ dom.world.addEventListener('pointerup', event => {
     return;
   }
   if (tap.button.dataset.kind === 'enemy' || tap.button.dataset.kind === 'frontier') return;
-  // A marching column's tile recalls it to where it came from.
-  if (tap.button.dataset.kind === 'march') {
-    cancelJob(game, Number(tap.button.dataset.id));
-    render();
-    return;
-  }
   const zoneId = tap.button.dataset.zone != null ? tap.button.dataset.zone : undefined;
   selectEntity(tap.button.dataset.kind, tap.button.dataset.type, tap.button.dataset.id, zoneId);
 }, { passive: true });
@@ -2913,7 +2827,7 @@ dom.world.addEventListener('scroll', () => {
   raidAlertRaf = requestAnimationFrame(() => { raidAlertRaf = 0; updateRaidAlerts(); });
 }, { passive: true });
 
-// Press-and-hold on a command with a runAll (harvest, army moves) transfers
+// Press-and-hold on a command with a runAll (harvest, army moves) sends
 // everything at once; a quick tap still moves one. The hold timer fires the
 // bulk action and suppresses the click that follows pointerup.
 const HOLD_MS = 500;

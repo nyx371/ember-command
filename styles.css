@@ -381,18 +381,6 @@ button { touch-action: manipulation; }
   pointer-events: none;
 }
 
-.chip-count {
-  position: absolute;
-  bottom: 0;
-  right: 0;
-  background: rgba(0, 0, 0, 0.78);
-  color: var(--text);
-  font-size: 14px;
-  font-family: monospace;
-  padding: 0 3px;
-  line-height: 15px;
-  pointer-events: none;
-}
 .construction-chip { transition: transform 40ms ease; }
 .construction-chip:active { outline: 1px solid var(--danger); outline-offset: -1px; transform: scale(0.9); }
 
@@ -507,14 +495,6 @@ button { touch-action: manipulation; }
 .entity.danger.flash-attack { animation-name: tile-lunge-down; }
 .entity.melee-attacker.flash-attack { animation-name: tile-lunge-up-strong; animation-duration: 0.42s; }
 .entity.danger.melee-attacker.flash-attack { animation-name: tile-lunge-down-strong; }
-
-/* Enemies still marching into a zone pulse in and out until they arrive and
-   start attacking (at which point .incoming is dropped). */
-@keyframes incoming-fade {
-  0%, 100% { opacity: 0.25; }
-  50% { opacity: 1; }
-}
-.entity.incoming { animation: incoming-fade 1s ease-in-out infinite; }
 
 /* Segmented hp bar along a tile's bottom edge: one segment per unit, drained
    left-to-right; collapses to one continuous bar for hordes (>20). */
