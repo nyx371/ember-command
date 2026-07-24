@@ -2,14 +2,14 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.49';
-const VERSION_TAG = 'harvest pulls workers cross-zone (idle→same→other); move is one-shot+cancel; unit onto uncharted = explore';
+const VERSION = '0.50';
+const VERSION_TAG = 'faster cheats (50x), cheat buttons auto-width + pressed state, drop orc hoard garrison';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
 const TICK_MS = 1000;
 const DAY_TICKS = 60;
-const CHEAT_SPEED = 5;          // multiplier applied by fast-train / fast-harvest toggles
+const CHEAT_SPEED = 50;         // multiplier applied by fast-train / fast-harvest toggles
 const TIME_SCALE = 0.3;         // global multiplier on ALL build/train/upgrade durations
                                 // (tables keep real WC2 seconds; this scales them at job start)
 
@@ -116,9 +116,6 @@ const GARRISON_POOL = [
   { key: 'shrine', rewardIcon: 'gold',    label: 'orc shrine',
     guards: { count: 6, hp: 75, dmg: 9 }, towers: 1,
     reward: { cache: { gold: 3000 } }, rewardText: 'looted idol 3000g' },
-  { key: 'hoard',  rewardIcon: 'gold',    label: 'orc hoard',
-    guards: { count: 8, hp: 80, dmg: 10 }, towers: 2,
-    reward: { cache: { gold: 4000, lumber: 2500 } }, rewardText: 'war hoard 4000g 2500w' },
   { key: 'armory', rewardIcon: 'knight',  label: 'slave pens',
     guards: { count: 8, hp: 85, dmg: 10 }, towers: 2,
     reward: { units: { knights: 2, archers: 2 } }, rewardText: 'freed knights & archers join you' }

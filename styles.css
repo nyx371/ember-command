@@ -179,7 +179,8 @@ button { touch-action: manipulation; }
    the panel padding) and the buttons keep only hairline gaps. */
 .cheat-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; margin: 10px -12px -12px; }
 .cheat-btn {
-  width: 100%;
+  width: auto;
+  height: 100%;
   min-height: 34px;
   display: grid;
   place-items: center;
@@ -188,8 +189,14 @@ button { touch-action: manipulation; }
   padding: 10px 4px;
   border-radius: 0;
   cursor: pointer;
+  transition: background 40ms ease, transform 40ms ease;
 }
 .cheat-btn .icon { width: 22px; height: 22px; }
+/* Pressed feedback so it's clear which button was tapped. */
+.cheat-btn:active {
+  background: #3a3a5c;
+  transform: scale(0.92);
+}
 .cheat-toggle.active {
   background: #1a2e1a;
   border-color: #3a6;
