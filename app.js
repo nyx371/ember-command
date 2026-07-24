@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.52';
-const VERSION_TAG = 'zone Defend/Attack buttons draw defenders from other zones; move-worker cmd shows move+harvest, hidden when no crew';
+const VERSION = '0.53';
+const VERSION_TAG = 'apply gray-out vs hide rule: hide inapplicable buttons (defend w/ one zone, idle-move w/ no idlers)';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -1800,6 +1800,9 @@ function zoneCommands(state, zone) {
       reason: () => 'No worker available',
       run: s => { s.buildMenu = true; } },
     { id: 'zone-defend', icon: 'defend', label: `defend ${zone.name} — pull reinforcements here`, cost: '',
+      // Not applicable with a single zone → hide; blocked because other zones
+      // happen to be empty → gray (train units and it lights up).
+      hidden: s => ownedZones(s).filter(z => String(z.id) !== String(zone.id)).length === 0,
       enabled: s => pullableDefenders(s, zone).length > 0,
       reason: () => 'No units in other zones to pull',
       run: s => pullDefender(s, zone, 'move'),
@@ -1907,9 +1910,11 @@ function nodeMoveCommand(state, node, zone) {
 // A selected worker group (the idle-workers tile) can be sent to another zone.
 function workerGroupCommands(state) {
   const zone = selectedZone(state);
-  return [moveCommand(`idle-move-${zone.id}`, 'worker', 'move an idle worker — then tap a zone or resource',
+  const cmd = moveCommand(`idle-move-${zone.id}`, 'worker', 'move an idle worker — then tap a zone or resource',
     s => idleInZone(s, selectedZone(s)) > 0,
-    { kind: 'workers', fromZoneId: zone.id, resource: null })];
+    { kind: 'workers', fromZoneId: zone.id, resource: null });
+  cmd.hidden = s => idleInZone(s, selectedZone(s)) === 0;   // no idle workers → not applicable
+  return [cmd];
 }
 
 // A selected army group (a zone's defenders of one type) marches to another
