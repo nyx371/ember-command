@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.58';
-const VERSION_TAG = 'zone bands tiled with a grass tile ripped from tileset.png (repeat, nearest-neighbour)';
+const VERSION = '0.59';
+const VERSION_TAG = 'zone grass background at 64px, no status tint';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';

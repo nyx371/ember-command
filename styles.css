@@ -260,29 +260,22 @@ button { touch-action: manipulation; }
    multiples of the tile height (--tile) so bands read as N button rows. */
 .world-zone {
   --tile: 42px;
-  /* Per-status colour wash laid over the shared terrain texture. */
-  --zone-tint: rgba(10, 10, 16, 0.5);
   flex: 0 0 auto;
   position: relative;
   display: flex;
   flex-direction: column;
   gap: 3px;
   padding: 5px;
-  /* A single grass tile (ripped from the tileset) repeated across the band,
-     with the per-status tint on top so tiles/text stay legible and each band's
-     status still reads. Nearest-neighbour keeps the pixel-art crisp. */
-  background:
-    linear-gradient(var(--zone-tint), var(--zone-tint)),
-    url('assets/tiles/grass.png') top left / auto repeat;
+  /* A single grass tile (ripped from the tileset) repeated across the band at
+     64px. Nearest-neighbour keeps the pixel-art crisp when scaled up. */
+  background: url('assets/tiles/grass.png') top left / 64px repeat;
   image-rendering: -webkit-optimize-contrast;
   image-rendering: crisp-edges;
   image-rendering: pixelated;
 }
 .world-zone + .world-zone { border-top: 1px solid rgba(255, 255, 255, 0.12); }
-.zone-field    { --zone-tint: rgba(8, 9, 14, 0.74); min-height: calc(var(--tile) * 4); }
-.zone-owned    { --zone-tint: rgba(20, 40, 22, 0.52); }
-.zone-occupied { --zone-tint: rgba(96, 30, 24, 0.54); }
-.zone-home     { --zone-tint: rgba(22, 30, 52, 0.46); min-height: calc(var(--tile) * 6); }
+.zone-field { min-height: calc(var(--tile) * 4); }
+.zone-home  { min-height: calc(var(--tile) * 6); }
 /* The selected zone gets an inset ring so it's clear the whole band is picked. */
 .world-zone.zone-selected { box-shadow: inset 0 0 0 2px rgba(120, 190, 255, 0.75); }
 .zone-caption {
