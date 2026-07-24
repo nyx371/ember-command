@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.48';
-const VERSION_TAG = 'docs re-synced to the world-zone model';
+const VERSION = '0.49';
+const VERSION_TAG = 'harvest pulls workers cross-zone (idle→same→other); move is one-shot+cancel; unit onto uncharted = explore';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -638,19 +638,31 @@ function firstNodeOfType(zone, type) {
   return liveNodesInZone(zone).find(n => n.type === type) || null;
 }
 
-// A worker in `zone` to spare for `node`: idle first, then one from another
-// node of the SAME resource, then one from a different resource — all within
-// the same zone (workers don't teleport between zones to harvest).
-function spareWorker(state, zone, node) {
-  const here = state.workers.filter(w => String(w.zoneId) === String(zone.id));
-  return here.find(w => w.job === 'idle')
-      || here.find(w => w.job === node.type && String(w.nodeId) !== String(node.id))
-      || here.find(w => (w.job === 'gold' || w.job === 'lumber') && w.job !== node.type);
+// A worker to spare for `node`, searched across ALL zones nearest-first:
+//   1. idle workers (anywhere),
+//   2. workers harvesting the SAME resource,
+//   3. workers harvesting a different resource.
+// A worker pulled from another zone relocates to the node's zone (assignWorker
+// sets its zoneId). Ties break toward the closest zone.
+function nearestSpareWorker(state, node) {
+  const zone = nodeZone(state, node.id);
+  if (!zone) return null;
+  const dist = w => { const wz = zoneById(state, w.zoneId); return wz ? Math.abs(wz.index - zone.index) : 999; };
+  const pools = [
+    state.workers.filter(w => w.job === 'idle'),
+    state.workers.filter(w => w.job === node.type && String(w.nodeId) !== String(node.id)),
+    state.workers.filter(w => (w.job === 'gold' || w.job === 'lumber') && w.job !== node.type)
+  ];
+  for (const pool of pools) {
+    if (pool.length) return pool.sort((a, b) => dist(a) - dist(b))[0];
+  }
+  return null;
 }
 
 function assignWorker(state, worker, node) {
   worker.job = node.type;
   worker.nodeId = node.id;
+  worker.zoneId = node.zoneId;   // follow the node's zone (may be a cross-zone pull)
   worker.cooldown = nodeCooldown(state, node);
 }
 
@@ -670,22 +682,20 @@ function idleInZone(state, zone) {
 
 function sendWorkerToNode(state, node) {
   if (node.remaining <= 0) return;
-  const zone = nodeZone(state, node.id);
-  const worker = zone && spareWorker(state, zone, node);
+  const worker = nearestSpareWorker(state, node);
   if (!worker) return;
-  assignWorker(state, worker, node);
+  const pulled = String(worker.zoneId) !== String(node.zoneId);
+  assignWorker(state, worker, node);   // relocates the worker to the node's zone
   flashTile(`node:${node.type}:${node.id}`, 'spawn');
-  writeLog(state, `Worker → ${node.label}.`);
+  writeLog(state, pulled ? `Worker pulled to ${node.label}.` : `Worker → ${node.label}.`);
 }
 
-// Long-press variant: pull every spare worker in the zone to this node.
+// Long-press variant: pull every spare worker (across zones) to this node.
 function sendAllWorkersToNode(state, node) {
   if (node.remaining <= 0) return;
-  const zone = nodeZone(state, node.id);
-  if (!zone) return;
   let moved = 0;
   let worker;
-  while (moved < 200 && (worker = spareWorker(state, zone, node))) {
+  while (moved < 200 && (worker = nearestSpareWorker(state, node))) {
     assignWorker(state, worker, node);
     moved += 1;
   }
@@ -1833,40 +1843,52 @@ function nodeCommands(state, node) {
   const zone = nodeZone(state, node.id);
   return [
     { id: 'node-assign', icon: 'harvest', overlay: node.type, label: `harvest ${node.type}`, cost: '',
-      enabled: s => node.remaining > 0 && zone && spareWorker(s, zone, node) != null,
-      reason: s => node.remaining <= 0 ? `${node.label} depleted` : 'No spare workers here',
+      enabled: s => node.remaining > 0 && nearestSpareWorker(s, node) != null,
+      reason: s => node.remaining <= 0 ? `${node.label} depleted` : 'No spare workers anywhere',
       run: s => sendWorkerToNode(s, node),
       runAll: s => sendAllWorkersToNode(s, node) },
-    // Move one of this crew: tap Move, then tap a zone (or a specific resource
-    // node in a zone to switch what they harvest). One worker per tap.
-    { id: 'node-move', icon: 'move', overlay: node.icon, label: 'move a worker — then tap a zone or resource', cost: '',
-      enabled: s => workersAtNode(s, node).length > 0,
-      reason: () => 'No crew here',
-      run: s => { s.moveArm = { kind: 'workers', fromZoneId: zone ? zone.id : node.zoneId, resource: node.type, nodeId: node.id }; } }
+    nodeMoveCommand(state, node, zone)
   ];
+}
+
+// Build a one-shot Move command: tapping it arms the move (highlighted), then
+// the next zone/resource tap sends ONE and disarms. Tapping it again cancels.
+function moveCommand(id, overlay, label, enabled, arm) {
+  return {
+    id, icon: 'move', overlay, label, cost: '',
+    isActive: s => !!s.moveArm && s.moveArm.cmdId === id,
+    enabled,
+    reason: () => 'Nothing to move',
+    run: s => { s.moveArm = (s.moveArm && s.moveArm.cmdId === id) ? null : { cmdId: id, ...arm }; }
+  };
+}
+
+// Move one of this crew: tap Move, then tap a zone (or a specific resource node
+// to switch what they harvest).
+function nodeMoveCommand(state, node, zone) {
+  const id = `node-move-${node.id}`;
+  return moveCommand(id, node.icon, 'move a worker — then tap a zone or resource',
+    s => workersAtNode(s, node).length > 0,
+    { kind: 'workers', fromZoneId: zone ? zone.id : node.zoneId, resource: node.type, nodeId: node.id });
 }
 
 // A selected worker group (the idle-workers tile) can be sent to another zone.
 function workerGroupCommands(state) {
-  return [
-    { id: 'idle-move', icon: 'move', overlay: 'worker', label: 'move an idle worker — then tap a zone or resource', cost: '',
-      enabled: s => idleInZone(s, selectedZone(s)) > 0,
-      reason: () => 'No idle workers here',
-      run: s => { s.moveArm = { kind: 'workers', fromZoneId: selectedZone(s).id, resource: null }; } }
-  ];
+  const zone = selectedZone(state);
+  return [moveCommand(`idle-move-${zone.id}`, 'worker', 'move an idle worker — then tap a zone or resource',
+    s => idleInZone(s, selectedZone(s)) > 0,
+    { kind: 'workers', fromZoneId: zone.id, resource: null })];
 }
 
-// A selected army group (a zone's defenders of one type) can march to another
-// owned zone: tap Move, then tap the destination. One unit per tap.
+// A selected army group (a zone's defenders of one type) marches to another
+// owned zone — or scouts the uncharted zone ahead — one unit per Move.
 function armyGroupCommands(state) {
   const type = state.selected.type;
+  const zid = state.selected.id;
   if (!ARMY[type]) return [];
-  return [
-    { id: 'army-move', icon: 'move', overlay: ARMY[type].icon, label: `move a ${ARMY[type].singular} — then tap a zone`, cost: '',
-      enabled: s => { const z = zoneById(s, s.selected.id); return !!z && z.army[type] > 0; },
-      reason: () => 'None here',
-      run: s => { s.moveArm = { kind: 'army', fromZoneId: s.selected.id, type }; } }
-  ];
+  return [moveCommand(`army-move-${zid}-${type}`, ARMY[type].icon, `move a ${ARMY[type].singular} — then tap a zone`,
+    s => { const z = zoneById(s, zid); return !!z && z.army[type] > 0; },
+    { kind: 'army', fromZoneId: zid, type })];
 }
 
 function selectedCommands(state) {
@@ -2458,18 +2480,15 @@ function zoneCaption(zone) {
 }
 
 // The uncharted frontier: a selectable wilderness band at the top of the stack,
-// standing in for the next zone to chart. Tapping it (or its terrain tile)
-// selects that zone so you can send scouts from the zone behind it.
+// standing in for the next zone to chart. Tapping the band selects that zone so
+// you can send scouts from the zone behind it; any inbound scout column shows
+// as a marching tile.
 function unchartedBand(charting) {
-  const tiles = [];
-  const terrain = entityButton({
-    kind: 'zone', type: 'head', id: charting.id, zoneId: charting.id, compact: true,
-    icon: 'siteTerrain', label: 'uncharted — send scouts to explore', dimmed: true
-  });
-  terrain.classList.add('site-big');
-  tiles.push(terrain);
-  marchTilesTo(charting.id).forEach(t => tiles.push(t));
-  return zoneBand('field', charting.id, [zoneCaption(charting), tileRow(`z${charting.id}-wild`, tiles), forecastStrip()]);
+  const marches = marchTilesTo(charting.id);
+  const rows = [zoneCaption(charting)];
+  if (marches.length) rows.push(tileRow(`z${charting.id}-wild`, marches));
+  rows.push(forecastStrip());
+  return zoneBand('field', charting.id, rows);
 }
 
 // War-signs forecast — a vague read on the next raid wave, shown once we've
@@ -2535,7 +2554,7 @@ function productionMeta(state, producer, zoneId) {
 
 function entityInfo(state) {
   const { kind, type } = state.selected;
-  if (state.moveArm) return 'Tap a target zone to move there — or tap away to cancel';
+  if (state.moveArm) return 'Tap a destination to move one — or tap Move again to cancel';
   if (state.buildMenu) return `Build in ${selectedZone(state).name}`;
   if (!selectionValid(state)) return '';
   if (kind === 'structure') {
@@ -2744,12 +2763,13 @@ dom.world.addEventListener('pointerup', event => {
   worldTap = null;
   if (!tap || event.pointerId !== tap.id) return;
   if (Math.hypot(event.clientX - tap.x, event.clientY - tap.y) > 10) return;
-  // An armed move resolves against the tapped target — one worker/unit per tap.
-  // Tapping a resource node sends the worker onto that resource; tapping a zone
-  // keeps its resource. A valid tap keeps the move armed for more; an invalid
-  // one cancels.
+  // A move is one-shot: the armed group's next tap sends ONE worker/unit to the
+  // tapped destination, then disarms. Tapping a resource node sends the worker
+  // onto that resource; tapping a zone keeps its resource; tapping a unit onto
+  // uncharted ground scouts it. Any other tap just cancels.
   if (game.moveArm) {
     const arm = game.moveArm;
+    game.moveArm = null;   // one action per Move press
     let destZone = null, destNode = null;
     if (tap.button) {
       const b = tap.button.dataset;
@@ -2758,12 +2778,11 @@ dom.world.addEventListener('pointerup', event => {
     } else if (tap.band) {
       destZone = zoneById(game, tap.band.dataset.zoneBand);
     }
-    const owned = destZone && destZone.discovered && destZone.status === 'owned';
-    if (owned && executeMoveOne(game, arm, destZone, destNode)) {
-      // stays armed for another one-at-a-time tap
-    } else {
-      game.moveArm = null;
-      writeLog(game, 'Move ended.');
+    if (destZone && destZone.discovered && destZone.status === 'owned') {
+      executeMoveOne(game, arm, destZone, destNode);
+    } else if (destZone && !destZone.discovered && arm.kind === 'army') {
+      const from = zoneById(game, arm.fromZoneId);
+      if (from && from.army[arm.type] > 0) startTransfer(game, from.id, destZone.id, arm.type, 1, 'explore');
     }
     render();
     return;
