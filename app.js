@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.50';
-const VERSION_TAG = 'faster cheats (50x), cheat buttons auto-width + pressed state, drop orc hoard garrison';
+const VERSION = '0.51';
+const VERSION_TAG = 'tactile pressed states on all buttons; explore cheat reveals the whole frontier';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -2898,15 +2898,15 @@ document.getElementById('cheat-kill').addEventListener('click', () => {
   render();
 });
 document.getElementById('cheat-scout').addEventListener('click', () => {
-  // Reveals the next uncharted zone instantly (garrison and all). Empty ground
-  // is claimed; a garrison is exposed as a blocker to assault.
-  ensureFrontier(game);
-  const z = chartingZone(game);
-  if (!z) { render(); return; }
-  z.discovered = true;
-  game.frontierAt = Math.max(game.frontierAt, z.index);
-  flashTile(`zone:head:${z.id}`, 'spawn');
-  writeLog(game, `Scouts chart ${z.name}.`);
+  // Reveal the entire remaining frontier at once — every zone out to the
+  // stronghold (empty ground claimed, garrisons exposed as blockers).
+  for (let i = 1; i <= STRONGHOLD_DEPTH; i += 1) {
+    let z = zoneByIndex(game, i);
+    if (!z) { z = makeZone(i, game.raid.wave); game.zones.push(z); }
+    if (!z.discovered) { z.discovered = true; flashTile(`zone:head:${z.id}`, 'spawn'); }
+    game.frontierAt = Math.max(game.frontierAt, i);
+  }
+  writeLog(game, 'The whole frontier lies revealed.');
   render();
 });
 
