@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.51';
-const VERSION_TAG = 'tactile pressed states on all buttons; explore cheat reveals the whole frontier';
+const VERSION = '0.52';
+const VERSION_TAG = 'zone Defend/Attack buttons draw defenders from other zones; move-worker cmd shows move+harvest, hidden when no crew';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -1749,10 +1749,34 @@ function sendFromCommands(state, zone, src, mode, overlay, verb, send) {
   }));
 }
 
+// Owned zones (other than `target`) that have defenders to spare, nearest to
+// the target first. The source pool for the Defend / Attack buttons.
+function pullableDefenders(state, target) {
+  return ownedZones(state)
+    .filter(z => String(z.id) !== String(target.id) && poolCount(z.army) > 0)
+    .sort((a, b) => Math.abs(a.index - target.index) - Math.abs(b.index - target.index));
+}
+
+// March one defender from the nearest zone that can spare one to `target`
+// (mode 'move' = reinforce, 'assault' = attack a garrison). Returns false when
+// there's nobody left to send.
+function pullDefender(state, target, mode) {
+  const src = pullableDefenders(state, target)[0];
+  if (!src) return false;
+  const type = Object.keys(ARMY).find(k => src.army[k] > 0);
+  startTransfer(state, src.id, target.id, type, 1, mode);
+  return true;
+}
+
+function pullDefenderAll(state, target, mode) {
+  let n = 0;
+  while (n < 200 && pullDefender(state, target, mode)) n += 1;
+}
+
 // Commands for a selected zone:
 //  • uncharted (undiscovered) → explore buttons, pulling from the zone behind it;
-//  • occupied → assault buttons, pulling from the zone behind it;
-//  • owned → just Build (for now).
+//  • occupied → a single Attack button that draws defenders from your zones;
+//  • owned → Build, plus a Defend button that pulls reinforcements in.
 function zoneCommands(state, zone) {
   const src = zoneByIndex(state, zone.index - 1);
   if (!zone.discovered) {
@@ -1761,18 +1785,26 @@ function zoneCommands(state, zone) {
       (s, fromId, _toId, type, n) => exploreFrom(s, fromId, type, n));
   }
   if (zone.status === 'occupied') {
-    if (!src || src.status !== 'owned') return [];
-    return sendFromCommands(state, zone, src, 'assault', 'attack', 'assault',
-      (s, fromId, toId, type, n) => startTransfer(s, fromId, toId, type, n, 'assault'));
+    return [{
+      id: 'zone-attack', icon: 'attack', label: `attack ${zone.name} — send units from your zones`, cost: '',
+      enabled: s => pullableDefenders(s, zone).length > 0,
+      reason: () => 'No units in your other zones to send',
+      run: s => pullDefender(s, zone, 'assault'),
+      runAll: s => pullDefenderAll(s, zone, 'assault')
+    }];
   }
-  // Owned zone: just Build. Moving defenders is done by selecting a defender
-  // group (a unit tile) and using its Move command.
-  return [{
-    id: 'zone-build', icon: 'build', label: `build in ${zone.name}`, cost: '',
-    enabled: s => builderWorker(s, zoneById(s, zone.id)) != null,
-    reason: () => 'No worker available',
-    run: s => { s.buildMenu = true; }
-  }];
+  // Owned zone: Build + Defend (draw reinforcements from your other zones).
+  return [
+    { id: 'zone-build', icon: 'build', label: `build in ${zone.name}`, cost: '',
+      enabled: s => builderWorker(s, zoneById(s, zone.id)) != null,
+      reason: () => 'No worker available',
+      run: s => { s.buildMenu = true; } },
+    { id: 'zone-defend', icon: 'defend', label: `defend ${zone.name} — pull reinforcements here`, cost: '',
+      enabled: s => pullableDefenders(s, zone).length > 0,
+      reason: () => 'No units in other zones to pull',
+      run: s => pullDefender(s, zone, 'move'),
+      runAll: s => pullDefenderAll(s, zone, 'move') }
+  ];
 }
 
 // Static per-structure command sets. Train commands attach to their producer;
@@ -1861,12 +1893,15 @@ function moveCommand(id, overlay, label, enabled, arm) {
 }
 
 // Move one of this crew: tap Move, then tap a zone (or a specific resource node
-// to switch what they harvest).
+// to switch what they harvest). Uses the move + harvest icons, and hides
+// entirely when the node has no crew to move.
 function nodeMoveCommand(state, node, zone) {
   const id = `node-move-${node.id}`;
-  return moveCommand(id, node.icon, 'move a worker — then tap a zone or resource',
+  const cmd = moveCommand(id, 'harvest', 'move a worker — then tap a zone or resource',
     s => workersAtNode(s, node).length > 0,
     { kind: 'workers', fromZoneId: zone ? zone.id : node.zoneId, resource: node.type, nodeId: node.id });
+  cmd.hidden = s => workersAtNode(s, node).length === 0;
+  return cmd;
 }
 
 // A selected worker group (the idle-workers tile) can be sent to another zone.
