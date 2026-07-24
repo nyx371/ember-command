@@ -343,6 +343,20 @@ button { touch-action: manipulation; }
   overflow: hidden;
 }
 .construction-chip .icon { width: 100%; height: 100%; object-fit: cover; }
+/* Forward-zone tag on queue chips (z1, z2…) — home jobs stay untagged. */
+.chip-zone {
+  position: absolute;
+  bottom: 1px;
+  left: 2px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text);
+  background: rgba(0, 0, 0, 0.72);
+  padding: 1px 2px;
+  border-radius: 2px;
+  pointer-events: none;
+}
+
 .chip-count {
   position: absolute;
   bottom: 0;
@@ -388,6 +402,9 @@ button { touch-action: manipulation; }
   object-fit: cover;
 }
 .entity.selected { outline: 1px solid var(--accent); outline-offset: -1px; }
+/* Pressed feedback: tiles dip like the buttons do, so every tap reads. */
+.entity { transition: transform 40ms ease; }
+.entity:active { transform: scale(0.94); }
 .entity.danger { outline: 1px solid #4a2620; outline-offset: -1px; }
 /* Tactile press. No transition here so it never softens the combat-lunge
    animation that also drives .entity transforms. */

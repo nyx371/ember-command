@@ -134,6 +134,20 @@
 
 <div class="note"><strong>Open — Raid posture.</strong> Army granularity is resolved (arbitrary per-type headcount splits across orders). Still open: a separate <code>Raid</code> posture (harass enemy economy) distinct from <code>Attack</code> (kill the base).</div>
 
+<h2><img class="icon" src="assets/icons/h_bld_shipyard.png" alt="">Levels &amp; the Sea (Planned)</h2>
+<p>Two planned expansions, designed against the zone architecture but <strong>not yet built</strong>. Both stay table-driven: new zone kinds, buildings, and units are data entries, not new systems.</p>
+
+<p><span class="status idea">idea</span> — <strong>Levels.</strong> A run becomes one <em>level</em>: a scripted layout (stronghold depth, garrison scaling curve, raider mix, node richness) that ramps in difficulty from level to level. Level 1 is roughly today's game; later levels push the stronghold deeper, mix ogres/catapults in earlier, and thin the neutral zones. Winning unlocks the next level (persistence stores the highest unlocked). Implementation-wise a level is a <code>LEVELS[n]</code> config consumed by <code>makeZone</code>/<code>garrisonComposition</code>/<code>RAIDER_TYPES</code> scaling — one table entry per level.</p>
+
+<p><span class="status idea">idea</span> — <strong>Water exploration &amp; expansion.</strong> Zones gain a <code>domain</code> (<code>ground</code> · <code>coast</code> · <code>sea</code>). Some level layouts place a <strong>coastal zone</strong> along the stack; beyond or branching from it lie <strong>sea zones that ground units cannot enter</strong> — the frontier splits into a land road and a sea road.</p>
+<ul>
+  <li><span class="status idea">idea</span> <strong>Shipyard</strong> — buildable only in a coastal zone (real WC2 cost 800g 450w). Acts as the naval hall: trains ships and serves as the <strong>oil depot</strong>. Foundry/Refinery follow later as the naval blacksmith/mill equivalents.</li>
+  <li><span class="status idea">idea</span> <strong>Oil</strong> — the third resource finally in play. Sea zones roll <strong>oil patches</strong> as their nodes; only <strong>Oil Tankers</strong> (the naval peasant, 400g 250w) can harvest them, hauling to the nearest shipyard/refinery — the depot-distance rule already generalizes.</li>
+  <li><span class="status idea">idea</span> <strong>Warships</strong> — ARMY entries with <code>domain: 'sea'</code>: <strong>Destroyer</strong> (700g 350 oil — the naval footman), <strong>Battleship</strong> (siege, the naval ballista), <strong>Transport</strong> (ferries ground units across a sea zone to land beyond, when a level's layout demands it). Domain gates everything existing: sea units station/assault only coast/sea zones, ground units only ground/coast — one filter in the send/assault/explore commands.</li>
+  <li><span class="status idea">idea</span> <strong>Sea threats</strong> — orc destroyers and juggernauts as sea-domain garrison templates guarding oil patches, and sea raids that strike coastal zones (defended only by that zone's ships and towers).</li>
+</ul>
+<div class="note"><strong>Open — sea questions.</strong> Does the sea branch render as a parallel column beside the land stack, or interleave in one stack with wave-tinted bands? Do sea raids threaten home directly or only coastal holdings? Is oil global like gold/lumber (probably yes) and what late-game units besides ships consume it?</div>
+
 <h2>Persistence</h2>
 <p><span class="status idea">idea</span> — autosave to local storage, resume on reload, no explicit load step. Not implemented; every reload is a fresh start.</p>
 

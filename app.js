@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.66';
-const VERSION_TAG = 'dead-code sweep after the zone rework; smoke harness now in tools/';
+const VERSION = '0.67';
+const VERSION_TAG = 'UI tightening: compact stores, tap dips, zone-tagged queue chips, advance readout';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -2243,7 +2243,10 @@ function render() {
   renderGameOver();
   dom.day.textContent = `DAY ${currentDay(game) + 1}`;
   const visibleRaids = game.raids.some(r => r.discovered);
-  dom.raidclock.textContent = visibleRaids ? 'RAID!' : '';
+  // Quiet times show how deep the push has reached; raids take the slot over.
+  dom.raidclock.textContent = visibleRaids
+    ? 'RAID!'
+    : `ADVANCE ${deepestOwned(game).index}/${STRONGHOLD_DEPTH}`;
   dom.raidclock.classList.toggle('alert', visibleRaids);
   renderResources();
   renderQueueStrip();
@@ -2309,10 +2312,12 @@ function scrollToZone(id) {
 
 function renderResources() {
   dom.stores.replaceChildren();
+  // Big stockpiles compact to 12.5k so the four columns never squeeze.
+  const fmtStore = n => (n >= 10000 ? fmtQty(n) : n);
   const rows = [
-    ['gold',   ICONS.gold,   game.resources.gold],
-    ['lumber', ICONS.lumber, game.resources.lumber],
-    ['oil',    ICONS.oil,    game.resources.oil],
+    ['gold',   ICONS.gold,   fmtStore(game.resources.gold)],
+    ['lumber', ICONS.lumber, fmtStore(game.resources.lumber)],
+    ['oil',    ICONS.oil,    fmtStore(game.resources.oil)],
     ['supply', ICONS.supply, `${supplyUsed(game)}/${supplyCap(game)}`]
   ];
 
@@ -2342,6 +2347,17 @@ function jobChip(job) {
     n.className = 'chip-count';
     n.textContent = job.count;
     chip.appendChild(n);
+  }
+  // Jobs running in a forward zone carry its index, so parallel bases'
+  // queues stay tellable apart at a glance.
+  if (job.zoneId != null) {
+    const z = zoneById(game, job.zoneId);
+    if (z && z.index > 0) {
+      const tag = document.createElement('span');
+      tag.className = 'chip-zone';
+      tag.textContent = `z${z.index}`;
+      chip.appendChild(tag);
+    }
   }
   chip.appendChild(radialProgressCanvas(jobProgress(game, job)));
   chip.addEventListener('click', () => {
@@ -2645,8 +2661,9 @@ function entityInfo(state) {
       return `${zone.name} · occupied · ${parts.join(', ')} · ${g.rewardText}`;
     }
     const defs = poolCount(zone.army);
-    const nodes = zone.nodes.length;
-    return `${zone.name} · owned · ${defs} defender${defs === 1 ? '' : 's'} · ${nodes} node${nodes === 1 ? '' : 's'}`;
+    const crew = workersInZone(state, zone).length;
+    const nodes = zone.nodes.filter(n => n.remaining > 0).length;
+    return `${zone.name} · owned · ${defs} defender${defs === 1 ? '' : 's'} · ${crew} worker${crew === 1 ? '' : 's'} · ${nodes} node${nodes === 1 ? '' : 's'}`;
   }
   if (kind === 'army') {
     const zone = zoneById(state, state.selected.id);
