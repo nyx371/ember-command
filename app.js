@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.62';
-const VERSION_TAG = 'selection ring on all zones: blue for owned, light gray for uncharted/occupied';
+const VERSION = '0.63';
+const VERSION_TAG = 'garrison shown as big enemy tiles; raids skip empty zones; dirt terrain; off-screen attack alert bars';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -414,6 +414,7 @@ function makeZone(index, wave = 0) {
   return {
     id, index, discovered: false, status: garrison ? 'occupied' : 'owned',
     name: garrison ? garrison.label : `zone ${index}`,
+    terrain: Math.random() < 0.45 ? 'dirt' : 'grass',   // background variety
     nodes: nodeDefs.map(d => makeNode(d, id)),
     structures: emptyStructures(), structureDamage: emptyDamage(),
     army: emptyArmy(),
@@ -423,7 +424,7 @@ function makeZone(index, wave = 0) {
 
 function createGame() {
   const home = {
-    id: 0, index: 0, discovered: true, status: 'owned', name: 'home',
+    id: 0, index: 0, discovered: true, status: 'owned', name: 'home', terrain: 'grass',
     nodes: [], structures: emptyStructures(), structureDamage: emptyDamage(),
     army: emptyArmy(), garrison: null, strike: null
   };
@@ -476,7 +477,9 @@ const dom = {
   log: document.querySelector('#log'),
   day: document.querySelector('#day'),
   raidclock: document.querySelector('#raidclock'),
-  error: document.querySelector('#error')
+  error: document.querySelector('#error'),
+  raidAlertTop: document.querySelector('#raid-alert-top'),
+  raidAlertBottom: document.querySelector('#raid-alert-bottom')
 };
 
 const game = createGame();
@@ -1351,11 +1354,13 @@ function zoneSubdued(state, zone) {
 }
 
 // Snap a raid's target to the next owned, charted zone at or inward of its
-// current index (raiders skip empty wilderness and enemy-held zones).
+// current index that's actually worth attacking. Raiders march straight past
+// enemy-held zones, uncharted ground, and neutral/empty owned zones (no units,
+// no workers, no buildings) toward the next zone that has something to hit.
 function raidTargetZone(state, raid) {
   while (raid.index >= 0) {
     const z = zoneByIndex(state, raid.index);
-    if (z && z.discovered && z.status === 'owned') return z;
+    if (z && z.discovered && z.status === 'owned' && !zoneSubdued(state, z)) return z;
     raid.index -= 1;
     raid.atZone = false;
     raid.arriveIn = ZONE_MARCH_PER_STEP;
@@ -1407,14 +1412,8 @@ function raidTick(state) {
       raid.foeStrikeIn = raid.foeDelay || RAID_VOLLEY_EVERY;
       return;
     }
-    // Arrived: if the zone is already subdued, march on inward.
-    if (zoneSubdued(state, zone) && zone.index > 0) {
-      raid.index -= 1;
-      raid.atZone = false;
-      raid.arriveIn = ZONE_MARCH_PER_STEP;
-      return;
-    }
-    // Raiders strike back on their offset cadence.
+    // Raiders strike back on their offset cadence. (Subdued zones are skipped
+    // by raidTargetZone before we ever get here.)
     raid.foeStrikeIn -= 1;
     if (raid.foeStrikeIn > 0) return;
     raid.foeStrikeIn = RAID_VOLLEY_EVERY;
@@ -2279,6 +2278,49 @@ function render() {
   if (worldScrollTop) dom.world.scrollTop = worldScrollTop;
   renderOrders();
   renderLog();
+  updateRaidAlerts();
+}
+
+// Zone ids currently under attack (a raid has arrived and is fighting there).
+function attackedZoneIds() {
+  const ids = new Set();
+  game.raids.forEach(r => {
+    if (!r.atZone) return;
+    const z = zoneByIndex(game, r.index);
+    if (z) ids.add(String(z.id));
+  });
+  return ids;
+}
+
+// Show the red edge bars when a zone under attack is scrolled out of view —
+// top bar if it's above the viewport, bottom bar if below. Each remembers the
+// nearest such zone so a tap can jump to it.
+let raidAlertTargets = { top: null, bottom: null };
+function updateRaidAlerts() {
+  const attacked = attackedZoneIds();
+  let topId = null, bottomId = null;
+  if (attacked.size) {
+    const wr = dom.world.getBoundingClientRect();
+    let nearestAbove = -Infinity, nearestBelow = Infinity;
+    dom.world.querySelectorAll('[data-zone-band]').forEach(band => {
+      if (!attacked.has(String(band.dataset.zoneBand))) return;
+      const r = band.getBoundingClientRect();
+      if (r.bottom <= wr.top + 2) {            // fully above the viewport
+        if (r.bottom > nearestAbove) { nearestAbove = r.bottom; topId = band.dataset.zoneBand; }
+      } else if (r.top >= wr.bottom - 2) {     // fully below the viewport
+        if (r.top < nearestBelow) { nearestBelow = r.top; bottomId = band.dataset.zoneBand; }
+      }
+    });
+  }
+  raidAlertTargets = { top: topId, bottom: bottomId };
+  dom.raidAlertTop.hidden = !topId;
+  dom.raidAlertBottom.hidden = !bottomId;
+}
+
+function scrollToZone(id) {
+  if (id == null) return;
+  const band = dom.world.querySelector(`[data-zone-band="${id}"]`);
+  if (band) band.scrollIntoView({ block: 'center', behavior: 'smooth' });
 }
 
 function renderResources() {
@@ -2387,36 +2429,41 @@ function zoneArmyTiles(zone) {
   });
 }
 
-// The garrison header tile of an occupied zone — the whole fight on one big
-// tile: reward badge, garrison chips (guards then towers), our strike chips,
-// and the two hp bars. Veiled until we engage.
-function garrisonTile(zone) {
+// The garrison of an occupied zone shown as big enemy tiles — the guards (and
+// watch towers) large, like a raiding party sitting on the ground, rather than
+// a summary card. We know WHAT is there once the zone is charted, but their
+// counts and hp stay hidden until our own troops are there fighting (engaged).
+function garrisonTiles(zone) {
   const g = zone.garrison;
   const engaged = !!zone.strike;
-  const known = !g.veiled || engaged;
-  const btn = entityButton({
+  const tiles = [];
+  const guard = entityButton({
     kind: 'zone', type: 'head', id: zone.id, zoneId: zone.id, compact: true,
-    icon: 'siteTerrain', label: zone.name, danger: true,
-    hp: known ? garrisonHp(g) : null
+    icon: 'enemy', label: `${zone.name} garrison`, danger: true,
+    countLabel: engaged ? g.guardsLeft : null,
+    hp: engaged ? garrisonHp(g) : null
   });
-  btn.classList.add('site-big');
+  guard.classList.add('site-big');
   const reward = document.createElement('span');
   reward.className = 'site-chip reward';
   reward.appendChild(makeIcon(ICONS[g.rewardIcon], g.rewardText));
-  btn.appendChild(reward);
-  if (known) {
-    const foes = document.createElement('span');
-    foes.className = 'site-chips';
-    if (g.guardsLeft > 0) foes.appendChild(tileChip('enemy', g.guardsLeft));
-    if (g.towersLeft > 0) foes.appendChild(tileChip('orctower', g.towersLeft));
-    if (foes.children.length) btn.appendChild(foes);
-  }
-  if (zone.strike) {
-    btn.appendChild(armyChips(zone.strike));
+  guard.appendChild(reward);
+  if (zone.strike) {   // our besieging force rides on the guard tile
+    guard.appendChild(armyChips(zone.strike));
     const shp = strikeHp(zone);
-    if (shp) btn.appendChild(hpBarEl(shp, 'mine'));
+    if (shp) guard.appendChild(hpBarEl(shp, 'mine'));
   }
-  return btn;
+  tiles.push(guard);
+  if (engaged ? g.towersLeft > 0 : g.towers > 0) {
+    const tower = entityButton({
+      kind: 'zone', type: 'head', id: zone.id, zoneId: zone.id, compact: true,
+      icon: 'orctower', label: `${zone.name} watch towers`, danger: true,
+      countLabel: engaged ? g.towersLeft : null
+    });
+    tower.classList.add('site-big');
+    tiles.push(tower);
+  }
+  return tiles;
 }
 
 function tileRow(scrollKey, tiles) {
@@ -2460,9 +2507,9 @@ function renderZoneBand(zone) {
   const marches = marchTilesTo(zone.id);
 
   if (zone.status === 'occupied') {
-    rows.push(tileRow(`z${zone.id}-head`, [garrisonTile(zone), ...marches]));
+    rows.push(tileRow(`z${zone.id}-head`, [...garrisonTiles(zone), ...marches]));
     if (raids.length) rows.push(tileRow(`z${zone.id}-raids`, raids));
-    return zoneBand(cls, zone.id, rows);
+    return zoneBand(cls, zone.id, rows, zone.terrain);
   }
 
   // Owned zone: defenders (+ inbound columns), workers/nodes and buildings.
@@ -2506,7 +2553,7 @@ function renderZoneBand(zone) {
   });
   rows.push(tileRow(`z${zone.id}-struct`, structTiles));
 
-  return zoneBand(cls, zone.id, rows);
+  return zoneBand(cls, zone.id, rows, zone.terrain);
 }
 
 // The uncharted frontier: a selectable wilderness band at the top of the stack,
@@ -2564,9 +2611,10 @@ function renderWorld() {
 }
 
 // A band of the world; rows stack inside it. `cls` sets the tint.
-function zoneBand(cls, id, rows) {
+function zoneBand(cls, id, rows, terrain) {
   const el = document.createElement('section');
   el.className = `world-zone zone-${cls}`;
+  if (terrain) el.classList.add(`terrain-${terrain}`);
   if (game.selected.kind === 'zone' && String(game.selected.id) === String(id)) {
     el.classList.add('zone-selected');
   }
@@ -2834,6 +2882,16 @@ dom.world.addEventListener('pointerup', event => {
   selectEntity(tap.button.dataset.kind, tap.button.dataset.type, tap.button.dataset.id, zoneId);
 }, { passive: true });
 dom.world.addEventListener('pointercancel', () => { worldTap = null; });
+
+// Off-screen-attack alert bars: tap to jump to the attacked zone; hide/show
+// them as the view scrolls past it.
+dom.raidAlertTop.addEventListener('click', () => scrollToZone(raidAlertTargets.top));
+dom.raidAlertBottom.addEventListener('click', () => scrollToZone(raidAlertTargets.bottom));
+let raidAlertRaf = 0;
+dom.world.addEventListener('scroll', () => {
+  if (raidAlertRaf) return;
+  raidAlertRaf = requestAnimationFrame(() => { raidAlertRaf = 0; updateRaidAlerts(); });
+}, { passive: true });
 
 // Press-and-hold on a command with a runAll (harvest, army moves) transfers
 // everything at once; a quick tap still moves one. The hold timer fires the
