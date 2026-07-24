@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.68';
-const VERSION_TAG = 'late-90s RTS chrome: carved stone, chunky bevels, gold trim';
+const VERSION = '0.70';
+const VERSION_TAG = 'zones stand eight button rows tall';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -30,7 +30,7 @@ const SUPPLY_BASE = 4;
 // scouts arrive) or `occupied` by a garrison that must be cleared before it is
 // yours. Garrisons toughen with depth. The scripted stronghold sits at a fixed
 // depth and ends the game when razed.
-const STRONGHOLD_DEPTH = 8;      // zone index of the final orc stronghold
+const STRONGHOLD_DEPTH = 20;     // zone index of the final orc stronghold
 const ZONE_MARCH_PER_STEP = 6;   // march ticks between adjacent zones
 // Odds a freshly-charted zone (past home) holds a garrison rather than being
 // empty. The stronghold zone is always occupied regardless.
@@ -297,6 +297,7 @@ const ICONS = {
   harvest: 'assets/icons/c_harvest.png',
   axethrower: 'assets/icons/o_unit_axethrower.png',
   orctower: 'assets/icons/o_bld_watchtower.png',
+  pigfarm: 'assets/icons/o_bld_farm.png',
   vision: 'assets/icons/c_cast_vision.png',
   repair: 'assets/icons/c_repair.png',
   deathcoil: 'assets/icons/c_cast_deathcoil.png',
@@ -449,6 +450,8 @@ function makeZone(index, wave = 0) {
     id, index, discovered: false, status: garrison ? 'occupied' : 'owned',
     name: garrison ? garrison.label : `zone ${index}`,
     terrain: Math.random() < 0.45 ? 'dirt' : 'grass',   // background variety
+    // A decorative orc pig farm dots some occupied zones (not the stronghold).
+    pigfarm: !!garrison && index !== STRONGHOLD_DEPTH && Math.random() < 0.4,
     nodes: nodeDefs.map(d => makeNode(d, id)),
     structures: emptyStructures(), structureDamage: emptyDamage(),
     army: emptyArmy(),
@@ -2268,13 +2271,16 @@ function render() {
   updateRaidAlerts();
 }
 
-// Zone ids currently under attack (a raid has arrived and is fighting there).
+// Zone ids a known raid is menacing — the owned zone it's fighting in OR
+// marching on. (Keyed on the raid's target zone, not `atZone`, so the off-view
+// alert stays lit while raiders close in and cross between zones, rather than
+// blinking off in the gaps between combat volleys.)
 function attackedZoneIds() {
   const ids = new Set();
   game.raids.forEach(r => {
-    if (!r.atZone) return;
+    if (!r.discovered) return;
     const z = zoneByIndex(game, r.index);
-    if (z) ids.add(String(z.id));
+    if (z && z.discovered && z.status === 'owned') ids.add(String(z.id));
   });
   return ids;
 }
@@ -2379,15 +2385,18 @@ function renderQueueStrip() {
 }
 
 // A column mid-march to a zone: unit icon, destination badge with the march
-// progress ring. Tapping it recalls the column to where it set out.
+// progress ring. Tapping it recalls the column to where it set out. Pulses
+// in and out while in transit, the same signal incoming raiders use.
 function marchTile(job) {
   const to = zoneById(game, job.to);
-  return entityButton({
+  const btn = entityButton({
     kind: 'march', type: job.mode || 'move', id: job.uid, compact: true,
     icon: ARMY[job.type].icon, label: `${job.count} marching to ${to ? to.name : 'the frontier'} — tap to recall`,
     jobIcon: job.mode === 'assault' ? 'attack' : job.mode === 'explore' ? 'explore' : 'defend',
     jobUid: job.uid, progressBars: [jobProgress(game, job)], countLabel: job.count
   });
+  btn.classList.add('incoming');
+  return btn;
 }
 
 // The defenders of an owned zone: one tile per unit type present (each its own
@@ -2408,34 +2417,47 @@ function zoneArmyTiles(zone) {
   });
 }
 
+// The clear-it-and-claim-it prize, pinned to the top-right corner of an
+// occupied zone band (not any one enemy tile). Non-interactive.
+function zoneRewardChip(g) {
+  const chip = document.createElement('span');
+  chip.className = 'zone-reward';
+  chip.title = g.rewardText;
+  chip.appendChild(makeIcon(ICONS[g.rewardIcon], g.rewardText));
+  return chip;
+}
+
 // The garrison of an occupied zone rendered as ordinary standalone enemy tiles
 // (kind zone/foe) — one per raider type present, plus a watch-towers tile —
 // exactly the size and shape of raiders attacking, with their count beside them.
-// The reward badge sits top-right of the first tile; the combined garrison hp
-// bar shows on it while damaged. Tapping any of them selects the zone.
+// Until our own column engages the zone the garrison's numbers are veiled: the
+// count reads `?` rather than the true strength. The combined garrison hp bar
+// shows on the first tile while damaged. Tapping any of them selects the zone.
 function garrisonTiles(zone) {
   const g = zone.garrison;
+  const engaged = !!zone.strike;   // veil counts until we're assaulting
   const tiles = Object.keys(RAIDER_TYPES).filter(t => g.units[t] > 0).map((t, i) => {
     const btn = entityButton({
       kind: 'zone', type: 'foe', id: zone.id, zoneId: zone.id, compact: true,
-      icon: RAIDER_TYPES[t].icon, label: `${g.units[t]} ${RAIDER_TYPES[t].label} at ${zone.name}`, danger: true,
-      countLabel: g.units[t],
+      icon: RAIDER_TYPES[t].icon, label: `${engaged ? g.units[t] : 'unknown number of'} ${RAIDER_TYPES[t].label} at ${zone.name}`, danger: true,
+      countLabel: engaged ? g.units[t] : '?',
       hp: i === 0 ? garrisonHp(g) : null
     });
     if (RAIDER_TYPES[t].melee) btn.classList.add('melee-attacker');
-    if (i === 0) {
-      const reward = document.createElement('span');
-      reward.className = 'site-chip reward';
-      reward.appendChild(makeIcon(ICONS[g.rewardIcon], g.rewardText));
-      btn.appendChild(reward);
-    }
     return btn;
   });
   if (g.towersLeft > 0) {
     tiles.push(entityButton({
       kind: 'zone', type: 'foe', id: zone.id, zoneId: zone.id, compact: true,
-      icon: 'orctower', label: `${g.towersLeft} watch towers at ${zone.name}`, danger: true,
-      countLabel: g.towersLeft
+      icon: 'orctower', label: `${engaged ? g.towersLeft : 'unknown'} watch towers at ${zone.name}`, danger: true,
+      countLabel: engaged ? g.towersLeft : '?'
+    }));
+  }
+  // A decorative pig farm on some zones — flavour, not a combatant.
+  if (zone.pigfarm) {
+    tiles.push(entityButton({
+      kind: 'zone', type: 'foe', id: zone.id, zoneId: zone.id, compact: true,
+      icon: 'pigfarm', label: `orc pig farm at ${zone.name}`, danger: true
     }));
   }
   return tiles;
@@ -2504,7 +2526,9 @@ function renderZoneBand(zone) {
     const ours = [...strikeTiles(zone), ...marches];               // our force enters from the bottom
     if (ours.length) rows.push(tileRow(`z${zone.id}-strike`, ours));
     if (raids.length) rows.push(tileRow(`z${zone.id}-raids`, raids));
-    return zoneBand(cls, zone.id, rows, zone.terrain);
+    const band = zoneBand(cls, zone.id, rows, zone.terrain);
+    band.appendChild(zoneRewardChip(zone.garrison));   // the prize, top-right of the zone
+    return band;
   }
 
   // Owned zone: defenders (+ inbound columns), workers/nodes and buildings.

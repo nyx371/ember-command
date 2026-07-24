@@ -306,6 +306,7 @@ button { touch-action: manipulation; }
   flex-direction: column;
   gap: 3px;
   padding: 5px;
+  min-height: calc(var(--tile) * 8);   /* every zone stands at least eight button rows tall */
   /* A single grass tile (ripped from the tileset) repeated across the band at
      64px. Nearest-neighbour keeps the pixel-art crisp when scaled up. */
   background: url('assets/tiles/grass.png') top left / 64px repeat;
@@ -316,12 +317,11 @@ button { touch-action: manipulation; }
 .world-zone + .world-zone { border-top: 1px solid rgba(255, 255, 255, 0.12); }
 /* Uncharted ground reads as fog — the grass darkened under a heavy wash. */
 .zone-field {
-  min-height: calc(var(--tile) * 4);
   background:
     linear-gradient(rgba(16, 18, 22, 0.8), rgba(16, 18, 22, 0.8)),
     url('assets/tiles/grass.png') top left / 64px repeat;
 }
-.zone-home  { min-height: calc(var(--tile) * 6); }
+.zone-home  { min-height: calc(var(--tile) * 8); }
 /* Terrain variety: some zones are brown dirt instead of grass. */
 .world-zone.terrain-dirt { background: url('assets/tiles/dirt.png') top left / 64px repeat; }
 /* A selected band gets an inset ring: blue for zones you own, light grey for
@@ -580,14 +580,20 @@ button { touch-action: manipulation; }
 .forecast-group { display: flex; align-items: center; gap: 3px; white-space: nowrap; }
 .forecast-group .icon { width: 16px; height: 16px; }
 
-/* Reward badge top-left: what clearing the site pays. */
-.entity > .site-chip.reward {
+/* Reward badge: what clearing the zone pays, pinned to the zone band's own
+   top-right corner (not to any enemy tile). */
+.zone-reward {
   position: absolute;
-  top: 3px;
-  right: 3px;
+  top: 4px;
+  right: 4px;
+  z-index: 4;
+  display: flex;
   padding: 2px;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 3px;
+  pointer-events: none;
 }
-.site-chip.reward .icon { width: 20px; height: 20px; }
+.zone-reward .icon { width: 20px; height: 20px; object-fit: cover; image-rendering: pixelated; }
 .entity.danger strong { color: var(--danger); }
 .entity-body { min-width: 0; display: grid; gap: 4px; }
 .entity-body strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; line-height: 1; }
@@ -794,8 +800,6 @@ button { touch-action: manipulation; }
   .world-group { min-height: 38px; }
   /* Compact tiles are 36px; zone heights stay whole multiples of them. */
   .world-zone { --tile: 36px; }
-  .zone-field { min-height: calc(var(--tile) * 3); }
-  .zone-home { min-height: calc(var(--tile) * 5); }
   .shell { grid-template-rows: 52px 42px 1fr; gap: 6px; padding-left: 6px; padding-right: 6px; }
   .topbar { padding: 6px; }
   .world { grid-template-rows: 24px 1fr 92px; }
