@@ -268,12 +268,12 @@ button { touch-action: manipulation; }
   flex-direction: column;
   gap: 3px;
   padding: 5px;
-  /* Terrain art scaled to cover the whole band (cropping the overflow), with
-     the tint on top so tiles/text stay legible and each band's status reads.
-     Nearest-neighbour scaling keeps the pixel-art crisp when it's blown up. */
+  /* A single grass tile (ripped from the tileset) repeated across the band,
+     with the per-status tint on top so tiles/text stay legible and each band's
+     status still reads. Nearest-neighbour keeps the pixel-art crisp. */
   background:
     linear-gradient(var(--zone-tint), var(--zone-tint)),
-    url('assets/icons/n_site_terrain.png') center / cover no-repeat;
+    url('assets/tiles/grass.png') top left / auto repeat;
   image-rendering: -webkit-optimize-contrast;
   image-rendering: crisp-edges;
   image-rendering: pixelated;

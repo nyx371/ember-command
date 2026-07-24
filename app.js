@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.57';
-const VERSION_TAG = 'zone terrain scales with nearest-neighbour (pixelated) so it stays crisp';
+const VERSION = '0.58';
+const VERSION_TAG = 'zone bands tiled with a grass tile ripped from tileset.png (repeat, nearest-neighbour)';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
