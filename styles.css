@@ -1,12 +1,17 @@
 :root {
-  --bg: #050505;
-  --panel: #0c0c0c;
-  --panel-2: #141414;
-  --line: #2a2a2a;
+  --bg: #0b0906;
+  --panel: #2b2314;        /* carved stone */
+  --panel-2: #382d1a;
+  --line: #57431f;         /* dull gold trim */
   --text: #e8dfc8;
-  --muted: #8d8678;
-  --accent: #c58b45;
-  --danger: #b85b45;
+  --muted: #a08d5e;
+  --accent: #e2b356;       /* bright gold */
+  --danger: #cc5238;
+  /* Chunky late-90s bevels: light top/left, dark bottom/right (outset);
+     swap the pairs for the pressed/sunken (inset) look. */
+  --bevel-hi: #6b5730;
+  --bevel-lo: #120d05;
+  --slot: #1a1409;         /* sunken button slots / screens */
   color: var(--text);
   background: var(--bg);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
@@ -50,9 +55,10 @@ button { touch-action: manipulation; }
   align-items: center;
   gap: 3px;
   padding: 5px 6px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 10px;
+  background: var(--slot);
+  border: 2px solid;
+  border-color: var(--bevel-lo) var(--bevel-hi) var(--bevel-hi) var(--bevel-lo);   /* sunken tray */
+  border-radius: 3px;
   overflow-x: auto;
   overflow-y: hidden;
   -webkit-overflow-scrolling: touch;
@@ -64,9 +70,10 @@ button { touch-action: manipulation; }
 
 .panel,
 .topbar {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 10px;
+  background: linear-gradient(180deg, var(--panel-2), var(--panel));
+  border: 2px solid;
+  border-color: var(--bevel-hi) var(--bevel-lo) var(--bevel-lo) var(--bevel-hi);
+  border-radius: 3px;
   overflow: hidden;
 }
 
@@ -100,10 +107,11 @@ button { touch-action: manipulation; }
 .resource strong {
   min-width: 0;
   overflow: hidden;
-  color: var(--text);
+  color: var(--accent);
   font-size: 14px;
   line-height: 1;
   text-align: left;
+  text-shadow: 1px 1px 0 #000;
 }
 
 .icon {
@@ -126,14 +134,15 @@ button { touch-action: manipulation; }
   display: grid;
   place-items: center;
   color: var(--accent);
-  background: var(--panel-2);
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  background: linear-gradient(180deg, var(--panel-2), var(--panel));
+  border: 2px solid;
+  border-color: var(--bevel-hi) var(--bevel-lo) var(--bevel-lo) var(--bevel-hi);
+  border-radius: 3px;
   cursor: pointer;
   user-select: none;
 }
 .menu summary { transition: transform 40ms ease, background 40ms ease; }
-.menu summary:active { transform: scale(0.94); background: #1a1a2a; }
+.menu summary:active { transform: scale(0.94); background: var(--slot); border-color: var(--bevel-lo) var(--bevel-hi) var(--bevel-hi) var(--bevel-lo); }
 .menu summary::-webkit-details-marker { display: none; }
 .menu-panel {
   position: fixed;
@@ -144,22 +153,23 @@ button { touch-action: manipulation; }
   max-height: calc(100dvh - 94px - env(safe-area-inset-bottom));
   padding: 12px;
   color: var(--text);
-  background: var(--panel-2);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  overflow: hidden;   /* clips the full-bleed cheat grid to the rounded corners */
+  background: linear-gradient(180deg, var(--panel-2), var(--panel));
+  border: 2px solid;
+  border-color: var(--bevel-hi) var(--bevel-lo) var(--bevel-lo) var(--bevel-hi);
+  border-radius: 3px;
+  overflow: hidden;   /* clips the full-bleed cheat grid to the corners */
   box-shadow: 0 14px 38px rgba(0, 0, 0, 0.42);
 }
 .menu-version {
   margin-bottom: 8px;
   padding-bottom: 6px;
-  border-bottom: 1px solid #242424;
+  border-bottom: 1px solid var(--line);
   color: var(--accent);
   font-size: 14px;
 }
 
 .menu-log { max-height: 150px; overflow-y: auto; touch-action: pan-y; -webkit-overflow-scrolling: touch; }
-.menu-log p { margin: 0; padding: 5px 0; color: var(--muted); border-top: 1px solid #242424; font-size: 14px; line-height: 1.25; }
+.menu-log p { margin: 0; padding: 5px 0; color: var(--muted); border-top: 1px solid rgba(87, 67, 31, 0.5); font-size: 14px; line-height: 1.25; }
 .menu-log p:first-child { color: var(--text); border-top: 0; }
 
 .menu-link {
@@ -167,15 +177,16 @@ button { touch-action: manipulation; }
   margin-top: 10px;
   padding: 9px 10px;
   color: var(--accent);
-  background: var(--panel-2);
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  background: linear-gradient(180deg, var(--panel-2), var(--panel));
+  border: 2px solid;
+  border-color: var(--bevel-hi) var(--bevel-lo) var(--bevel-lo) var(--bevel-hi);
+  border-radius: 3px;
   font-size: 14px;
   font-weight: 600;
   text-align: center;
   text-decoration: none;
 }
-.menu-link:active { background: #1a1a2a; }
+.menu-link:active { background: var(--slot); border-color: var(--bevel-lo) var(--bevel-hi) var(--bevel-hi) var(--bevel-lo); }
 
 /* Full bleed: the grid runs to the panel's edges (negative margins swallow
    the panel padding) and the buttons keep only hairline gaps. */
@@ -186,8 +197,9 @@ button { touch-action: manipulation; }
   min-height: 34px;
   display: grid;
   place-items: center;
-  background: #1a1a2a;
-  border: 0;
+  background: var(--slot);
+  border: 2px solid;
+  border-color: var(--bevel-hi) var(--bevel-lo) var(--bevel-lo) var(--bevel-hi);
   padding: 10px 4px;
   border-radius: 0;
   cursor: pointer;
@@ -196,13 +208,13 @@ button { touch-action: manipulation; }
 .cheat-btn .icon { width: 22px; height: 22px; }
 /* Pressed feedback so it's clear which button was tapped. */
 .cheat-btn:active {
-  background: #3a3a5c;
-  transform: scale(0.92);
+  background: #24190a;
+  border-color: var(--bevel-lo) var(--bevel-hi) var(--bevel-hi) var(--bevel-lo);
+  transform: scale(0.95);
 }
 .cheat-toggle.active {
-  background: #1a2e1a;
-  border-color: #3a6;
-  color: #8d8;
+  background: #243012;
+  border-color: var(--bevel-lo) var(--bevel-hi) var(--bevel-hi) var(--bevel-lo);   /* latched down */
 }
 
 .world {
@@ -218,16 +230,27 @@ button { touch-action: manipulation; }
   align-items: center;
   gap: 8px;
   padding: 7px 9px 0;
-  color: var(--muted);
+  color: var(--accent);
   font-size: 14px;
-  letter-spacing: 0.12em;
+  font-variant: small-caps;
+  letter-spacing: 0.14em;
+  text-shadow: 1px 1px 0 #000;
 }
 .world-head strong { color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #raidclock { color: var(--muted); letter-spacing: 0.06em; }
 #raidclock.alert { color: var(--danger); }
 
 /* Holds the scrollable world plus the off-screen-attack alert bars. */
-.world-viewport { position: relative; min-height: 0; display: flex; flex-direction: column; }
+.world-viewport {
+  position: relative;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  margin: 0 3px;
+  background: var(--slot);
+  border: 2px solid;
+  border-color: var(--bevel-lo) var(--bevel-hi) var(--bevel-hi) var(--bevel-lo);   /* sunken screen */
+}
 .world-viewport > #world { flex: 1 1 auto; }
 /* A thin red→transparent gradient pinned to the top/bottom edge of the world
    when an attack is happening on a zone that's scrolled out of view. Tap it to
@@ -336,8 +359,9 @@ button { touch-action: manipulation; }
   width: 34px;
   height: 34px;
   padding: 0;
-  background: #141414;
-  border: 1px solid var(--line);
+  background: var(--slot);
+  border: 2px solid;
+  border-color: var(--bevel-hi) var(--bevel-lo) var(--bevel-lo) var(--bevel-hi);
   border-radius: 4px;
   cursor: pointer;
   overflow: hidden;
@@ -401,7 +425,7 @@ button { touch-action: manipulation; }
   height: 100%;
   object-fit: cover;
 }
-.entity.selected { outline: 1px solid var(--accent); outline-offset: -1px; }
+.entity.selected { outline: 2px solid var(--accent); outline-offset: -2px; }
 /* Pressed feedback: tiles dip like the buttons do, so every tap reads. */
 .entity { transition: transform 40ms ease; }
 .entity:active { transform: scale(0.94); }
@@ -421,11 +445,17 @@ button { touch-action: manipulation; }
   gap: 10px;
   text-align: center;
   padding: 24px;
-  background: rgba(4, 4, 4, 0.88);
+  background: radial-gradient(ellipse at center, rgba(20, 14, 5, 0.82), rgba(4, 3, 1, 0.95));
   cursor: pointer;
 }
 .game-over.show { display: flex; }
-.game-over strong { font-size: 26px; color: var(--accent); letter-spacing: 0.08em; }
+.game-over strong {
+  font-size: 32px;
+  color: var(--accent);
+  font-variant: small-caps;
+  letter-spacing: 0.12em;
+  text-shadow: 2px 2px 0 #000, 0 0 18px rgba(226, 179, 86, 0.35);
+}
 .game-over p { margin: 0; font-size: 15px; color: var(--text); }
 .game-over .gameover-hint { color: var(--muted); font-size: 14px; margin-top: 14px; }
 
@@ -606,8 +636,8 @@ button { touch-action: manipulation; }
   display: flex;
   flex-direction: column;
   gap: 3px;
-  border-top: 1px solid var(--line);
-  background: #090909;
+  border-top: 2px solid var(--bevel-hi);
+  background: linear-gradient(180deg, var(--panel-2), var(--panel));
   overflow: hidden;
 }
 
@@ -694,20 +724,21 @@ button { touch-action: manipulation; }
   place-items: center;
   padding: 0;
   color: var(--text);
-  background: transparent;
-  border: 0;
-  border-radius: 4px;
+  background: var(--slot);
+  border: 2px solid;
+  border-color: var(--bevel-hi) var(--bevel-lo) var(--bevel-lo) var(--bevel-hi);
+  border-radius: 2px;
   cursor: pointer;
   overflow: hidden;
 }
 .command { transition: transform 40ms ease, background 40ms ease; }
 .command .icon { width: 100%; height: 100%; object-fit: cover; }
 .command:active {
-  outline: 1px solid var(--accent); outline-offset: -1px;
+  border-color: var(--bevel-lo) var(--bevel-hi) var(--bevel-hi) var(--bevel-lo);
   background: rgba(255, 255, 255, 0.08);
-  transform: scale(0.9);
+  transform: scale(0.94);
 }
-.command.active-order { outline: 1px solid var(--accent); outline-offset: -1px; }
+.command.active-order { outline: 2px solid var(--accent); outline-offset: -2px; }
 .command.unavailable { opacity: 0.34; }
 .command-hotkey {
   position: absolute;
@@ -743,10 +774,11 @@ button { touch-action: manipulation; }
   z-index: 30;
   max-width: min(360px, calc(100vw - 24px));
   padding: 8px 14px;
-  background: #3a1416;
-  color: #ffb4a8;
-  border: 1px solid #7a2a24;
-  border-radius: 8px;
+  background: linear-gradient(180deg, #4a1a14, #35120e);
+  color: #ffc4b0;
+  border: 2px solid;
+  border-color: #8a4a34 #200a06 #200a06 #8a4a34;
+  border-radius: 3px;
   font-size: 14px;
   font-weight: 600;
   text-align: center;
