@@ -229,3 +229,20 @@ and more standing-order behaviours. The refactor should make each of those a
   guards that exempt interactive controls, cost badges, cancel chips, radial
   timers, error toast (errors only), `touch-action: manipulation`.
 - Keep cheats working.
+
+
+## 2026-07-24 cleanup pass (v0.66)
+
+After the world-zone rework landed (v0.42–0.65, other session), a dead-code
+sweep removed the last remnants of the retired systems (order pools, sites,
+homeland cards, three-band map): unused functions (frontierZone,
+totalDefenders, exploringCount, moveUnit/moveAllUnits, orderIcon, tileChip,
+armyChips), the ORDERS const, the exploreBadge ring hook, dead ICONS entries
+(siteTerrain, outpost, patrol), and ~10 dead CSS blocks (.site-big/.site-wide,
+.mine-chips/.site-chips containers, .construction-queue, .world-group
+variants, .forecast-group.later) plus stale patrol-era comments.
+
+Iteration: the DOM-stubbed smoke harness is now IN-REPO at `tools/smoke.js`
+(39 assertions against the zone model) instead of living in a session
+scratchpad — run `node tools/smoke.js` after touching combat, zones, jobs,
+or the economy.

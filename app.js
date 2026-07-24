@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.65';
-const VERSION_TAG = 'garrison enemies render as standalone unit tiles w/ counts; our assault enters from the bottom';
+const VERSION = '0.66';
+const VERSION_TAG = 'dead-code sweep after the zone rework; smoke harness now in tools/';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -42,7 +42,7 @@ const RAID_INTERVAL_BASE = 90;  // ticks between raids on day 0
 const RAID_FIRST_DELAY = 150;   // the very first wave holds off a while longer
 const RAID_INTERVAL_SCALE = 5;  // reduce interval by this per day
 const RAID_INTERVAL_MIN = 25;
-const RAID_ARRIVE_TICKS = 10;   // approach window — patrol strikes and scouts it
+const RAID_ARRIVE_TICKS = 10;   // ticks a fresh wave marches before reaching its first zone
 const DEFENSE_VOLLEY_EVERY = 2; // my side strikes every 2 ticks...
 const RAID_VOLLEY_EVERY = 3;    // ...raiders every 3 — offset cadences, not lockstep
 // Enemy roster: each wave spawns one party per type whose fromWave has
@@ -62,9 +62,8 @@ const RAIDER_TYPES = {
 };
 const WORKER_HP = 30;
 const REPAIR_HP_PER_TICK = 20;  // how fast one worker patches a building up
-// Regen per tick — only defenders resting between fights heal (never while a
-// raid is at the base, never on patrol or in the field), so pulling wounded
-// units back to defend has a real benefit.
+// Regen per tick — a zone's defenders heal only while no raid is fighting
+// there, so rotating wounded units to a quiet zone has a real benefit.
 const HEAL_DEFEND_PER_TICK = 1;
 const WORKER_HEAL_PER_TICK = 1;   // very slow, and only while not under attack
 // Moving units between zones is a timed march: TRANSFER_BASE_TICKS plus one
@@ -256,13 +255,6 @@ const ARMY = {
   ballistas: { icon: 'ballista', label: 'ballistas', singular: 'ballista', hp: 110, dmg: 25, attack: 0.50 }
 };
 
-// Standing "orders" left in the model: a unit either holds a zone (defend) or
-// is out charting the frontier (explore). Patrol is gone — in the world-zone
-// model a stationed unit simply defends wherever it stands, and raids are
-// intercepted by whichever zone they march through. Attacking a garrison is a
-// site/zone assault, not an order.
-const ORDERS = ['defend', 'explore'];
-
 const GUARD_TOWER = { cost: { gold: 500, lumber: 150 }, time: 140 };
 const CANNON_TOWER = { cost: { gold: 1000, lumber: 300 }, time: 190 };
 // Hall tiers: Town Hall → Keep → Castle. The hall keeps its structure key —
@@ -299,14 +291,12 @@ const ICONS = {
   attack: 'assets/icons/c_sword1.png',
   stop: 'assets/icons/c_stop.png',
   defend: 'assets/icons/c_hshield1.png',
-  patrol: 'assets/icons/c_hpatrol.png',
   explore: 'assets/icons/c_cast_vision.png',
   move: 'assets/icons/c_hmove.png',
   build: 'assets/icons/c_build.png',
   harvest: 'assets/icons/c_harvest.png',
   axethrower: 'assets/icons/o_unit_axethrower.png',
   orctower: 'assets/icons/o_bld_watchtower.png',
-  siteTerrain: 'assets/icons/n_site_terrain.png',
   vision: 'assets/icons/c_cast_vision.png',
   repair: 'assets/icons/c_repair.png',
   deathcoil: 'assets/icons/c_cast_deathcoil.png',
@@ -320,7 +310,6 @@ const ICONS = {
   knight: 'assets/icons/h_unit_knight.png',
   ogre: 'assets/icons/o_unit_ogre.png',
   catapult: 'assets/icons/o_unit_catapult.png',
-  outpost: 'assets/icons/o_bld_greathall.png',
   stronghold: 'assets/icons/o_bld_fortress.png',
   axe2: 'assets/icons/c_axe2.png',
   axe3: 'assets/icons/c_axe3.png',
@@ -591,11 +580,6 @@ function homeZone(state) {
 
 function ownedZones(state) {
   return state.zones.filter(z => z.discovered && z.status === 'owned');
-}
-
-// Deepest charted (discovered) zone.
-function frontierZone(state) {
-  return state.zones.filter(z => z.discovered).reduce((a, b) => (b.index > a.index ? b : a), state.zones[0]);
 }
 
 // Deepest zone we actually own — the springboard we explore and assault from.
@@ -1113,19 +1097,6 @@ function harvestYield(state, resource) {
     : HARVEST_YIELD;
 }
 
-// Total stationed defenders across every zone.
-function totalDefenders(state) {
-  return state.zones.reduce((sum, z) => sum + poolCount(z.army), 0);
-}
-
-// Units currently marching out to chart the next (undiscovered) zone.
-function exploringCount(state) {
-  const z = chartingZone(state);
-  if (!z) return 0;
-  return state.jobs.filter(j => j.kind === 'transfer' && String(j.to) === String(z.id))
-    .reduce((s, j) => s + j.count, 0);
-}
-
 // Segmented-hp payloads for entityButton: one segment per unit, the last one
 // drained by accumulated wounds; `total` drives the collapsed horde bar.
 function recentlyHit(at) {
@@ -1249,15 +1220,6 @@ function startTransfer(state, fromId, toId, type, count, mode = 'move') {
   writeLog(state, `${moved} ${moved === 1 ? ARMY[type].singular : ARMY[type].label} marching ${dest}.`);
 }
 
-function moveUnit(state, fromId, toId, type, mode) {
-  startTransfer(state, fromId, toId, type, 1, mode);
-}
-
-function moveAllUnits(state, fromId, toId, type, mode) {
-  const from = zoneById(state, fromId);
-  startTransfer(state, fromId, toId, type, from ? from.army[type] : 0, mode);
-}
-
 // Send units out from `fromId` to chart the next zone (fromId's index + 1).
 // Creates the zone if needed (content hidden until arrival) and marches there.
 function exploreFrom(state, fromId, type, count) {
@@ -1270,10 +1232,9 @@ function exploreFrom(state, fromId, type, count) {
 }
 
 // ── Raid combat ────────────────────────────────────────────────────────────
-// Raiding parties are real: grunts with hp/damage arrive, exchange volleys
-// every VOLLEY_EVERY ticks, and target defenders first, then workers, then
-// buildings. Units on attack/explore are away from the base and neither fight
-// raiders nor get targeted.
+// Raiding parties are real: they spawn beyond the deepest owned zone and
+// march inward zone by zone, exchanging volleys with each owned zone's
+// defenders and towers; a subdued zone (nothing left) is passed through.
 
 // Damage a pool of ARMY units deals per volley.
 function poolDamage(state, pool) {
@@ -2195,7 +2156,7 @@ function hpBarEl(hp, extraClass) {
   return bar;
 }
 
-function entityButton({ kind, type, id, zoneId, icon, label, count, meta, danger, compact, jobIcon, badgeBlink, progressBars, nodeId, jobUid, exploreBadge, countLabel, countIcon, hp, dimmed }) {
+function entityButton({ kind, type, id, zoneId, icon, label, count, meta, danger, compact, jobIcon, badgeBlink, progressBars, nodeId, jobUid, countLabel, countIcon, hp, dimmed }) {
   const button = document.createElement('button');
   const classes = ['entity'];
   if (danger)  classes.push('danger');
@@ -2238,7 +2199,6 @@ function entityButton({ kind, type, id, zoneId, icon, label, count, meta, danger
     badge.className = badgeBlink ? 'job-badge badge-blink' : 'job-badge';
     if (nodeId) badge.dataset.nodeId = nodeId;
     if (jobUid) badge.dataset.jobUid = jobUid;
-    if (exploreBadge) badge.dataset.exploreRing = '1';
     if (jobIcon) badge.appendChild(makeIcon(ICONS[jobIcon], meta || jobIcon));
     if (hasProgress) {
       progressBars.forEach((p, i) => badge.appendChild(radialProgressCanvas(p, progressBars.length, i === 0)));
@@ -2275,10 +2235,6 @@ function entityButton({ kind, type, id, zoneId, icon, label, count, meta, danger
     button.appendChild(body);
   }
   return button;
-}
-
-function orderIcon(order) {
-  return { defend: 'defend', patrol: 'patrol', explore: 'explore', attack: 'attack', idle: 'stop' }[order] || 'stop';
 }
 
 // ── Render ─────────────────────────────────────────────────────────────────
@@ -2404,27 +2360,6 @@ function renderQueueStrip() {
   game.jobs.filter(j => ['train', 'construct', 'upgrade'].includes(j.kind))
     .forEach(job => dom.queue.appendChild(jobChip(job)));
   if (scrollLeft) dom.queue.scrollLeft = scrollLeft;
-}
-
-// Small chip: an icon plus a count (garrison guards, our columns, etc.).
-function tileChip(icon, n) {
-  const chip = document.createElement('span');
-  chip.className = 'site-chip';
-  chip.appendChild(makeIcon(ICONS[icon], icon));
-  const count = document.createElement('span');
-  count.textContent = n;
-  chip.appendChild(count);
-  return chip;
-}
-
-// One chip per unit type present in a column, stacked bottom-left.
-function armyChips(counts, blink) {
-  const wrap = document.createElement('span');
-  wrap.className = blink ? 'mine-chips badge-blink' : 'mine-chips';
-  Object.keys(ARMY).forEach(k => {
-    if (counts[k] > 0) wrap.appendChild(tileChip(ARMY[k].icon, counts[k]));
-  });
-  return wrap;
 }
 
 // A column mid-march to a zone: unit icon, destination badge with the march

@@ -226,10 +226,6 @@ button { touch-action: manipulation; }
 #raidclock { color: var(--muted); letter-spacing: 0.06em; }
 #raidclock.alert { color: var(--danger); }
 
-/* Vertically scrollable battlefield, split into three zones that read as
-   distance from home — far field (scouts, attack columns, freshly spawned
-   raids), near base (patrols and the raids they intercept), base (defenders,
-   workers, buildings, raiders that got through). The whole stack scrolls. */
 /* Holds the scrollable world plus the off-screen-attack alert bars. */
 .world-viewport { position: relative; min-height: 0; display: flex; flex-direction: column; }
 .world-viewport > #world { flex: 1 1 auto; }
@@ -313,15 +309,6 @@ button { touch-action: manipulation; }
   box-shadow: inset 0 0 0 2px rgba(220, 222, 228, 0.8);
 }
 
-.world-group.away { align-content: start; }
-/* Grows with its content (tiles + in-flight job chips); the base min-height
-   holds it open when empty. */
-.world-group.structures { align-content: end; }
-
-.world-group.enemies,
-.world-group.patrol,
-.world-group.defend { align-content: start; }
-
 /* Horizontally scrolling tile strip: four tiles visible, overflow scrolls,
    no wrapping. Same sizing as the workers/nodes row. */
 .tile-row {
@@ -343,36 +330,6 @@ button { touch-action: manipulation; }
   width: calc((100% - 9px) / 4);
 }
 
-/* Resource nodes + idle-worker tile: a single horizontally scrollable row so
-   more nodes can be added without shrinking the tiles or wrapping. */
-.world-group.workers {
-  display: flex;
-  flex-wrap: nowrap;
-  align-items: center;
-  gap: 3px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  -webkit-overflow-scrolling: touch;
-  touch-action: pan-x pan-y;
-  scrollbar-width: none;
-}
-.world-group.workers::-webkit-scrollbar { display: none; }
-.world-group.workers > .entity {
-  flex: 0 0 auto;
-  /* Match a building button exactly: same width as one cell of the 4-column
-     structures grid (3 × 3px gaps), height from .entity.compact's min-height
-     so the small-screen media query applies to both alike. Overflowing tiles
-     scroll horizontally. */
-  width: calc((100% - 9px) / 4);
-}
-
-.construction-queue {
-  grid-column: 1 / -1;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 3px;
-  padding-top: 2px;
-}
 .construction-chip {
   position: relative;
   flex: 0 0 auto;
@@ -542,32 +499,6 @@ button { touch-action: manipulation; }
 .entity.danger .hp-bar.mine { bottom: 6px; }
 .entity.danger .hp-bar.mine .hp-seg i { background: #7cbf6a; }
 
-/* Conquerable sites: double-size tiles (2 tile widths + the gap between,
-   2 tile heights) with the whole fight on the button — garrison chips down
-   the right edge, our assault chip bottom-left. */
-.tile-row > .entity.site-big {
-  width: calc((100% - 9px) / 2 + 3px);
-  min-height: 84px;
-}
-/* Homeland target card: full-row wide, regular tile height. Its chips lay
-   out horizontally to fit the flat card. */
-.tile-row > .entity.site-wide {
-  width: 100%;
-  min-height: 42px;
-}
-.entity.site-wide .site-chips { flex-direction: row; top: auto; bottom: 8px; }
-.entity.site-wide > .mine-chips { flex-direction: row; bottom: 8px; }
-.entity.site-wide .job-badge { display: none; }
-.site-chips {
-  position: absolute;
-  top: 3px;
-  right: 3px;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  align-items: flex-end;
-  pointer-events: none;
-}
 .site-chip {
   display: flex;
   align-items: center;
@@ -601,20 +532,7 @@ button { touch-action: manipulation; }
 .forecast > .icon { width: 16px; height: 16px; }
 .forecast-group { display: flex; align-items: center; gap: 3px; white-space: nowrap; }
 .forecast-group .icon { width: 16px; height: 16px; }
-.forecast-group.later { opacity: 0.55; }
 
-/* Our column at a site / scouts out exploring: one chip per unit type,
-   stacked upward from the bottom-left corner. */
-.entity > .mine-chips {
-  position: absolute;
-  left: 3px;
-  bottom: 10px;
-  display: flex;
-  flex-direction: column-reverse;
-  gap: 2px;
-  align-items: flex-start;
-  pointer-events: none;
-}
 /* Reward badge top-left: what clearing the site pays. */
 .entity > .site-chip.reward {
   position: absolute;
@@ -650,9 +568,6 @@ button { touch-action: manipulation; }
 }
 /* The exploring tile's vision badge sits bottom-right instead (same size as
    order icons), its ring following it down. */
-.entity.site-big .job-badge { top: auto; bottom: 0; }
-.entity.site-big .job-badge .icon { top: auto; bottom: 2px; }
-.entity.site-big .job-badge .radial-progress { top: auto; bottom: -3px; }
 @keyframes badge-blink {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.3; }
@@ -827,8 +742,7 @@ button { touch-action: manipulation; }
 
 @media (max-height: 760px) {
   /* Compact tiles are 36px, so the reserved row height comes down to match. */
-  .world-group,
-  .world-group.structures { min-height: 38px; }
+  .world-group { min-height: 38px; }
   /* Compact tiles are 36px; zone heights stay whole multiples of them. */
   .world-zone { --tile: 36px; }
   .zone-field { min-height: calc(var(--tile) * 3); }
@@ -840,7 +754,5 @@ button { touch-action: manipulation; }
   .entity { min-height: 48px; grid-template-columns: 36px 1fr; padding: 1px; gap: 3px; }
   .entity .icon { width: 36px; height: 36px; }
   .entity.compact { min-height: 36px; padding: 0; grid-template-columns: 1fr; }
-  .entity.compact > .icon { width: 100%; height: 100%; }
-  .tile-row > .entity.site-big { min-height: 72px; }
-  .command-bar { padding: 3px; gap: 3px; }
+  .entity.compact > .icon { width: 100%; height: 100%; }  .command-bar { padding: 3px; gap: 3px; }
 }

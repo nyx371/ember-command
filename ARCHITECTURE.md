@@ -36,15 +36,15 @@ its own `nodes`, `structures`, `structureDamage`, defenders (`zone.army`, one
 pool per zone with per-type counts + shared `wounds`), and — while `status`
 is `'occupied'` — a `garrison` plus our attacking `strike` column. The zone
 accessors (`zoneById`, `zoneByIndex`, `homeZone`, `ownedZones`,
-`deepestOwned`, `chartingZone`, `frontierZone`, `nodeZone`,
-`totalStructures`) are the only sanctioned way to reach zone contents.
+`deepestOwned`, `chartingZone`, `nodeZone`, `totalStructures`) are the only sanctioned way to reach zone contents.
 
 `makeZone(index, wave)` rolls a new zone: 1–2 nodes from `ZONE_NODE_POOL`
 (zone 1 is always neutral with gold + lumber via `goldAndLumberNodes`), and a
 garrison from `GARRISON_POOL` at `ZONE_OCCUPY_CHANCE` (60%) — except
 `STRONGHOLD_DEPTH` (8), which always holds the scripted `STRONGHOLD`; razing
-it wins. `scaleGuards` toughens garrisons with both depth and the raid-wave
-counter at generation time. `ensureFrontier` keeps exactly one uncharted zone
+it wins. `garrisonComposition` toughens garrisons with both depth and the raid-wave
+counter at generation time, mixing in axethrowers and ogres at depth
+(garrisons hold per-raider-type `units` + `stats`, not a single guard blob). `ensureFrontier` keeps exactly one uncharted zone
 past the deepest owned one; its contents are rolled immediately but hidden
 (`discovered: false`) until scouts arrive. Charted empty zones flip straight
 to `owned`; occupied ones must be assaulted.
@@ -77,11 +77,11 @@ to `owned`; occupied ones must be assaulted.
 Times/costs are real WC2 values; every duration is multiplied by
 `TIME_SCALE` via `scaledTime` when a job starts.
 
-### Orders
-`ORDERS = ['defend', 'explore']` — patrol and attack are gone. A stationed
-unit defends the zone it stands in; exploring is marching to chart the next
-zone; attacking a garrison is a zone assault. There are no order pools —
-`zone.army` is the defend pool of that zone.
+### No standing orders
+Patrol and attack (and the old ORDERS list) are gone. A stationed unit
+defends the zone it stands in (`zone.army` is that zone's defend pool);
+exploring is marching to chart the next zone; attacking a garrison is a
+zone assault.
 
 ### Economy (per zone)
 A worker belongs to a zone (`worker.zoneId`) and pins to a node there until
@@ -201,10 +201,9 @@ red under `.danger`); payloads from `poolHp` / `nodeHp` / `buildingHp` /
 
 ### Progress rings
 `radialProgressCanvas(p, siblings)` draws one ring. The 100ms animator has
-exactly three branches: anything carrying `data-job-uid` (queue chips and
-march-tile badges), `.job-badge[data-node-id]` (harvest rings), and
-`.job-badge[data-explore-ring]`. Reuse these data attributes — never add a
-fourth lookup scheme.
+exactly two branches: anything carrying `data-job-uid` (queue chips and
+march-tile badges) and `.job-badge[data-node-id]` (harvest rings). Reuse
+these data attributes — never add a third lookup scheme.
 
 ## Recipes
 
@@ -233,9 +232,12 @@ fourth lookup scheme.
 
 ## Testing
 
-No test files in-repo. The DOM-stubbed smoke harness used through v0.41
-(stub `document`/`performance`, `eval` app.js, drive `gameTick`/
-`runCommand`/`selectEntity`) predates the world-zone rework and its
-assertions no longer match the model — rebuild it against zones before
-trusting it. The user verifies visually — don't spin up headless browsers
-for routine tweaks.
+`node tools/smoke.js` — a DOM-stubbed smoke harness for the zone model
+(39 assertions): boot, harvest, train/cancel, zone build menu, barracks
+gating, exploring/claiming zone 1, cross-zone worker moves, a deterministic
+garrison assault + conquest, a raid repelled at the frontier, repair,
+TIME_SCALE, and the stronghold victory. Zones it relies on are overwritten
+with deterministic contents right after creation (makeZone rolls randomly).
+Run it after any change to combat, zones, jobs, or the economy, and
+recalibrate its bounds when balance shifts. The user verifies visuals
+themselves — don't spin up headless browsers for routine tweaks.
