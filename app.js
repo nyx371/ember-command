@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.53';
-const VERSION_TAG = 'apply gray-out vs hide rule: hide inapplicable buttons (defend w/ one zone, idle-move w/ no idlers)';
+const VERSION = '0.54';
+const VERSION_TAG = 'approaching raiders pulse until they arrive; melee units lunge harder when attacking';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -55,9 +55,9 @@ const RAID_VOLLEY_EVERY = 3;    // ...raiders every 3 — offset cadences, not l
 // buildings from beyond tower range (towers can't shoot back; only warriors
 // can stop them).
 const RAIDER_TYPES = {
-  grunt:      { icon: 'enemy',      label: 'grunts',      hp: 60,  dmg: 7,  hpPerWave: 4, dmgPerWave: 0.5, baseSize: 1, sizePerWave: 1,   fromWave: 0,  bounty: 30 },
+  grunt:      { icon: 'enemy',      label: 'grunts',      hp: 60,  dmg: 7,  hpPerWave: 4, dmgPerWave: 0.5, baseSize: 1, sizePerWave: 1,   fromWave: 0,  bounty: 30, melee: true },
   axethrower: { icon: 'axethrower', label: 'axethrowers', hp: 40,  dmg: 9,  hpPerWave: 3, dmgPerWave: 0.5, baseSize: 1, sizePerWave: 1,   fromWave: 5,  bounty: 40 },
-  ogre:       { icon: 'ogre',       label: 'ogres',       hp: 110, dmg: 12, hpPerWave: 4, dmgPerWave: 0.5, baseSize: 1, sizePerWave: 0.5, fromWave: 9,  bounty: 60 },
+  ogre:       { icon: 'ogre',       label: 'ogres',       hp: 110, dmg: 12, hpPerWave: 4, dmgPerWave: 0.5, baseSize: 1, sizePerWave: 0.5, fromWave: 9,  bounty: 60, melee: true },
   catapult:   { icon: 'catapult',   label: 'catapults',   hp: 110, dmg: 25, hpPerWave: 3, dmgPerWave: 1,   baseSize: 1, sizePerWave: 0.5, fromWave: 12, bounty: 80, siege: true }
 };
 const WORKER_HP = 30;
@@ -250,8 +250,8 @@ const UNITS = {
 // within a pool); `attack` is siege dps. Units live in a per-zone defend pool
 // (zone.army) plus transient marching columns (see transfers/assaults).
 const ARMY = {
-  footmen:   { icon: 'footman',  label: 'footmen',   singular: 'footman',  hp: 60,  dmg: 7,  attack: 0.10 },
-  knights:   { icon: 'knight',   label: 'knights',   singular: 'knight',   hp: 90,  dmg: 10, attack: 0.15 },
+  footmen:   { icon: 'footman',  label: 'footmen',   singular: 'footman',  hp: 60,  dmg: 7,  attack: 0.10, melee: true },
+  knights:   { icon: 'knight',   label: 'knights',   singular: 'knight',   hp: 90,  dmg: 10, attack: 0.15, melee: true },
   archers:   { icon: 'archer',   label: 'archers',   singular: 'archer',   hp: 40,  dmg: 5,  attack: 0.06 },
   ballistas: { icon: 'ballista', label: 'ballistas', singular: 'ballista', hp: 110, dmg: 25, attack: 0.50 }
 };
@@ -2375,12 +2375,16 @@ function marchTile(job) {
 function zoneArmyTiles(zone) {
   const pool = zone.army;
   const types = Object.keys(ARMY).filter(k => pool[k] > 0);
-  return types.map((k, i) => entityButton({
-    kind: 'army', type: k, id: zone.id, zoneId: zone.id, compact: true,
-    icon: ARMY[k].icon, label: `${ARMY[k].label} at ${zone.name}`,
-    jobIcon: 'defend', countLabel: pool[k],
-    hp: i === 0 ? poolHp(pool) : null
-  }));
+  return types.map((k, i) => {
+    const btn = entityButton({
+      kind: 'army', type: k, id: zone.id, zoneId: zone.id, compact: true,
+      icon: ARMY[k].icon, label: `${ARMY[k].label} at ${zone.name}`,
+      jobIcon: 'defend', countLabel: pool[k],
+      hp: i === 0 ? poolHp(pool) : null
+    });
+    if (ARMY[k].melee) btn.classList.add('melee-attacker');   // bigger attack lunge
+    return btn;
+  });
 }
 
 // The garrison header tile of an occupied zone — the whole fight on one big
@@ -2428,12 +2432,18 @@ function tileRow(scrollKey, tiles) {
 
 // Raids currently at (or marching on) a given zone index.
 function raidTilesAt(index) {
-  return game.raids.filter(r => r.discovered && r.index === index).map(raid =>
-    entityButton({
+  return game.raids.filter(r => r.discovered && r.index === index).map(raid => {
+    const btn = entityButton({
       kind: 'enemy', type: 'raid', id: raid.id, compact: true,
       icon: raid.icon, label: raid.label, danger: true,
       countLabel: raid.size, hp: raidHp(raid)
-    }));
+    });
+    // Approaching (not yet arrived): pulse in and out until they land in the
+    // zone and start attacking. Melee raiders lunge harder when they strike.
+    if (!raid.atZone) btn.classList.add('incoming');
+    if (RAIDER_TYPES[raid.kind] && RAIDER_TYPES[raid.kind].melee) btn.classList.add('melee-attacker');
+    return btn;
+  });
 }
 
 // Marching columns whose destination is this zone.

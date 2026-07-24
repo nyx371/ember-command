@@ -457,8 +457,27 @@ button { touch-action: manipulation; }
   0%, 100% { transform: translateY(0); }
   30% { transform: translateY(3px); }
 }
+/* Melee units throw their whole weight into a strike — a deeper lunge. */
+@keyframes tile-lunge-up-strong {
+  0%, 100% { transform: translateY(0); }
+  35% { transform: translateY(-10px); }
+}
+@keyframes tile-lunge-down-strong {
+  0%, 100% { transform: translateY(0); }
+  35% { transform: translateY(10px); }
+}
 .entity.flash-attack { animation: tile-lunge-up 0.35s ease-out; animation-delay: var(--shake-delay, 0ms); }
 .entity.danger.flash-attack { animation-name: tile-lunge-down; }
+.entity.melee-attacker.flash-attack { animation-name: tile-lunge-up-strong; animation-duration: 0.42s; }
+.entity.danger.melee-attacker.flash-attack { animation-name: tile-lunge-down-strong; }
+
+/* Enemies still marching into a zone pulse in and out until they arrive and
+   start attacking (at which point .incoming is dropped). */
+@keyframes incoming-fade {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 1; }
+}
+.entity.incoming { animation: incoming-fade 1s ease-in-out infinite; }
 
 /* Segmented hp bar along a tile's bottom edge: one segment per unit, drained
    left-to-right; collapses to one continuous bar for hordes (>20). */
