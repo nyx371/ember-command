@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.71';
-const VERSION_TAG = 'instant zone movement for both sides — no marches, no fade-in';
+const VERSION = '0.72';
+const VERSION_TAG = 'charting the frontier takes time again — more scouts, faster';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -20,6 +20,10 @@ const TRAVEL_PER_DISTANCE = 2;                     // extra ticks per distance u
 // hall (for gold or lumber) or a lumber mill (for lumber). Harvesting far from
 // any depot is slow, so building a forward hall/mill in a remote zone pays off.
 const HARVEST_DEPOT_TRAVEL = 3;
+
+// Charting the next zone takes real time: one scout needs EXPLORE_TICKS, and a
+// party of N drains it N times as fast (see exploreFrom / job.rate).
+const EXPLORE_TICKS = 18;
 
 const QUEUE_MAX = 5;            // queued units allowed per producing structure
 const SUPPLY_BASE = 4;
@@ -977,6 +981,12 @@ function cancelJob(state, uid) {
   state.jobs = state.jobs.filter(j => j !== job);
   refund(state, job.cost);
   if (job.kind === 'construct') releaseBuilder(state, job.workerId, job.zoneId);
+  if (job.kind === 'explore') {
+    const home = zoneById(state, job.from);
+    if (home) Object.keys(job.scouts).forEach(t => { home.army[t] += job.scouts[t]; });
+    writeLog(state, `${job.label}: scouts recalled.`);
+    return;
+  }
   writeLog(state, `${job.label}: cancelled, refunded.`);
 }
 
@@ -987,7 +997,7 @@ function jobProgress(state, job) {
       && !trainJobs(state, job.producer, job.zoneId).slice(0, producerCapacity(state, job.producer, job.zoneId)).includes(job)) {
     return 0;
   }
-  const step = state.cheats.fastTrain ? CHEAT_SPEED : 1;
+  const step = (state.cheats.fastTrain ? CHEAT_SPEED : 1) * (job.rate || 1);
   return Math.min(1, ((job.duration - job.remaining) + tickFraction(step)) / job.duration);
 }
 
@@ -1001,7 +1011,7 @@ function advanceJobs(state) {
       if (advanced >= producerCapacity(state, job.producer, job.zoneId)) return;
       advancedPerProducer[gkey] = advanced + 1;
     }
-    job.remaining -= step;
+    job.remaining -= step * (job.rate || 1);   // `rate` > 1 = extra hands (scouting parties)
   });
   const done = state.jobs.filter(j => j.remaining <= 0);
   state.jobs = state.jobs.filter(j => j.remaining > 0);
@@ -1015,7 +1025,9 @@ function advanceJobs(state) {
 
 function supplyUsed(state) {
   const stationed = state.zones.reduce((sum, z) => sum + poolCount(z.army) + strikeCount(z.strike), 0);
-  return state.workers.length + stationed;
+  const scouting = state.jobs.filter(j => j.kind === 'explore')
+    .reduce((sum, j) => sum + poolCount(j.scouts), 0);
+  return state.workers.length + stationed + scouting;
 }
 
 function hallTierBonus(state, field) {
@@ -1055,7 +1067,7 @@ function clampGame(state) {
 // ── Army ───────────────────────────────────────────────────────────────────
 
 function poolCount(pool) {
-  return Object.keys(ARMY).reduce((n, k) => n + pool[k], 0);
+  return Object.keys(ARMY).reduce((n, k) => n + (pool[k] || 0), 0);
 }
 
 // Tech-adjusted combat stats and harvest yield.
@@ -1184,15 +1196,51 @@ function startTransfer(state, fromId, toId, type, count) {
   arriveColumn(state, to, type, moved);
 }
 
+// The scouting party charting a given uncharted zone, if one is out.
+function exploreJob(state, zoneId) {
+  return state.jobs.find(j => j.kind === 'explore' && String(j.to) === String(zoneId)) || null;
+}
+
 // Send units out from `fromId` to chart the next zone (fromId's index + 1).
-// Creates the zone if needed (content hidden until arrival) and marches there.
+// Unlike a plain move, charting takes time: the scouts leave their zone and
+// work on a shared `explore` job whose ring drains once per scout per tick, so
+// a bigger party finishes sooner and reinforcing one mid-way speeds it up.
+// Creating the zone rolls its contents, which stay hidden until the party
+// arrives (arriveColumn reveals it — empty ground is claimed, a garrison is
+// stormed). Recalling the party (tap its tile) sends everyone home unharmed.
 function exploreFrom(state, fromId, type, count) {
   const from = zoneById(state, fromId);
   if (!from) return;
   let target = zoneByIndex(state, from.index + 1);
   if (!target) { target = makeZone(from.index + 1, state.raid.wave); state.zones.push(target); }
   if (target.discovered) return;   // already charted
-  startTransfer(state, fromId, target.id, type, count);
+  const sent = Math.min(count, from.army[type]);
+  if (sent <= 0) return;
+  from.army[type] -= sent;
+  if (poolCount(from.army) === 0) from.army.wounds = 0;
+
+  const job = exploreJob(state, target.id);
+  if (job) {
+    job.scouts[type] = (job.scouts[type] || 0) + sent;
+    job.rate = poolCount(job.scouts);       // the party got faster
+    writeLog(state, `${sent} more ${ARMY[type].label} join the scouts.`);
+    return;
+  }
+  const party = {
+    uid: nextId(), kind: 'explore', to: target.id, from: fromId,
+    scouts: { [type]: sent }, rate: sent,
+    icon: ARMY[type].icon, label: `scouting ${target.name}`,
+    duration: EXPLORE_TICKS, remaining: EXPLORE_TICKS, cost: {},
+    complete: s => {
+      const zone = zoneById(s, target.id);
+      if (!zone) return;
+      Object.keys(ARMY).forEach(t => {
+        if (party.scouts[t] > 0) arriveColumn(s, zone, t, party.scouts[t]);
+      });
+    }
+  };
+  state.jobs.push(party);
+  writeLog(state, `${sent} ${sent === 1 ? ARMY[type].singular : ARMY[type].label} set out to chart new ground.`);
 }
 
 // ── Raid combat ────────────────────────────────────────────────────────────
@@ -2498,11 +2546,29 @@ function renderZoneBand(zone) {
   return zoneBand(cls, zone.id, rows, zone.terrain);
 }
 
+// The scouting party out on the frontier: one tile per unit type in it, each
+// carrying the party's shared charting ring (which drains faster the more
+// scouts are out). Tapping one recalls the whole party.
+function scoutTiles(zone) {
+  const job = exploreJob(game, zone.id);
+  if (!job) return [];
+  const progress = jobProgress(game, job);
+  return Object.keys(ARMY).filter(t => job.scouts[t] > 0).map(t => entityButton({
+    kind: 'scout', type: t, id: job.uid, compact: true,
+    icon: ARMY[t].icon, label: `${job.scouts[t]} scouting ${zone.name} — tap to recall`,
+    jobIcon: 'explore', jobUid: job.uid, progressBars: [progress],
+    countLabel: job.scouts[t]
+  }));
+}
+
 // The uncharted frontier: a selectable wilderness band at the top of the stack,
 // standing in for the next zone to chart. Tapping the band selects that zone so
-// you can send scouts from the zone behind it.
+// you can send scouts from the zone behind it; the party out charting it shows
+// as tiles in the band.
 function unchartedBand(charting) {
   const rows = [];
+  const scouts = scoutTiles(charting);
+  if (scouts.length) rows.push(tileRow(`z${charting.id}-scouts`, scouts));
   rows.push(forecastStrip());
   return zoneBand('field', charting.id, rows);
 }
@@ -2800,7 +2866,7 @@ dom.world.addEventListener('pointerup', event => {
       executeMoveOne(game, arm, destZone, destNode);
     } else if (destZone && !destZone.discovered && arm.kind === 'army') {
       const from = zoneById(game, arm.fromZoneId);
-      if (from && from.army[arm.type] > 0) startTransfer(game, from.id, destZone.id, arm.type, 1);
+      if (from && from.army[arm.type] > 0) exploreFrom(game, from.id, arm.type, 1);
     }
     render();
     return;
@@ -2812,6 +2878,12 @@ dom.world.addEventListener('pointerup', event => {
     return;
   }
   if (tap.button.dataset.kind === 'enemy' || tap.button.dataset.kind === 'frontier') return;
+  // A scout tile recalls the whole party to the zone it set out from.
+  if (tap.button.dataset.kind === 'scout') {
+    cancelJob(game, Number(tap.button.dataset.id));
+    render();
+    return;
+  }
   const zoneId = tap.button.dataset.zone != null ? tap.button.dataset.zone : undefined;
   selectEntity(tap.button.dataset.kind, tap.button.dataset.type, tap.button.dataset.id, zoneId);
 }, { passive: true });

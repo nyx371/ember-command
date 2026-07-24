@@ -103,8 +103,13 @@ the source zone's pool and `arriveColumn` delivers them into the destination
 in the same beat. No travel time, no distance cost, no in-transit state.
 `arriveColumn` decides what arrival means: an unrevealed zone is charted,
 empty ground is claimed as `owned` (units become its defenders), an occupied
-zone takes them as its `strike` column. `exploreFrom` sends units at the
-uncharted zone (creating it if needed) and it is revealed on the spot. The
+zone takes them as its `strike` column. **Exploring is the exception** — it takes time. `exploreFrom` pulls the
+units out of their zone and puts them on a shared `explore` job (one per
+uncharted zone, `exploreJob(state, zoneId)`) whose `rate` equals the number
+of scouts, so `EXPLORE_TICKS` is divided by party size and reinforcing a
+party mid-way speeds it up. On completion `arriveColumn` delivers the whole
+party and reveals the zone; tapping a scout tile (`scoutTiles`, rendered in
+the frontier band) cancels the job and sends everyone home. The
 **move arm**
 (`game.moveArm`) is the one-at-a-time flow: a Move command arms a source
 (worker crew / idle worker / unit type), then each tap on a destination zone
@@ -148,7 +153,11 @@ cost, complete }` plus:
 - `kind: 'construct'` → `{ workerId, zoneId, returnTo, repairKey? }`.
 - `kind: 'upgrade'` → `{ tag, source }` (`tag` blocks duplicate tracks,
   `source` enforces one research per source building). Never takes a worker.
-(Unit movement is *not* a job — it resolves instantly, see above.)
+- `kind: 'explore'` → `{ to, from, scouts, rate }` (zone ids; `scouts` is a
+  sparse ARMY-key map). Cancelling returns the scouts to `from`.
+Any job may carry `rate` (default 1) — ticks are multiplied by it, which is
+how a bigger scouting party finishes sooner.
+(Plain unit movement is *not* a job — it resolves instantly, see above.)
 One `advanceJobs`, one `cancelJob` (refund + builder release), one
 `jobProgress`, one `jobChip`. Chips live in the fixed-height
 `#queue` strip under the resource bar (`renderQueueStrip`). Don't add

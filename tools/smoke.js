@@ -114,13 +114,24 @@ X.runCommand('train-footman');
 for (let i = 0; i < 20; i++) X.gameTick();
 assert(home.army.footmen === 2, 'footman joins the home zone defenders');
 
-// ── Explore: chart zone 1 (always neutral, gold + lumber) ─────────────────
+// ── Explore: charting takes time, and a bigger party charts faster ───────
 X.exploreFrom(X.game, home.id, 'footmen', 1);
 assert(home.army.footmen === 1, 'scout left the home pool');
-for (let i = 0; i < 10; i++) X.gameTick();   // 2 + 1×6 = 8-tick march
+for (let i = 0; i < 6; i++) X.gameTick();
 const z1 = X.zoneByIndex(X.game, 1);
-assert(z1 && z1.discovered && z1.status === 'owned', 'zone 1 charted and claimed');
-assert(z1.army.footmen === 1, 'the scout settled as zone 1 defender');
+assert(z1 && !z1.discovered, 'one scout has not charted zone 1 yet');
+const party = X.game.jobs.find(j => j.kind === 'explore');
+assert(party && party.rate === 1, 'a lone scout charts at one tick per tick');
+const remainingBefore = party.remaining;
+home.army.footmen += 3;                      // stage reinforcements
+X.exploreFrom(X.game, home.id, 'footmen', 3);
+assert(party.rate === 4, 'reinforcements join the party and speed it up');
+X.gameTick();
+assert(remainingBefore - party.remaining === 4, 'four scouts chart four times as fast');
+let chartGuard = 0;
+while (!z1.discovered && chartGuard++ < 30) X.gameTick();
+assert(z1.discovered && z1.status === 'owned', 'zone 1 charted and claimed');
+assert(z1.army.footmen === 4, 'the whole party settled as zone 1 defenders');
 assert(z1.nodes.some(n => n.type === 'gold') && z1.nodes.some(n => n.type === 'lumber'),
   'zone 1 always offers gold and lumber');
 
@@ -141,10 +152,10 @@ z2.strike = null;
 z2.garrison = X.makeGarrison(X.GARRISON_POOL[0], 2, 0);   // raider camp, index 2, wave 0
 const campGold = X.game.resources.gold;
 z1.army.footmen += 11;   // stage a 12-footman assault force in zone 1
-X.startTransfer(X.game, z1.id, z2.id, 'footmen', 12, 'assault');
-for (let i = 0; i < 10; i++) X.gameTick();
+X.startTransfer(X.game, z1.id, z2.id, 'footmen', 12);
 assert(z2.discovered, 'assault column revealed the occupied zone');
 assert(z2.strike && z2.strike.footmen === 12, 'column became the strike force');
+for (let i = 0; i < 10; i++) X.gameTick();
 let guard = 0;
 while (z2.status === 'occupied' && guard++ < 60) X.gameTick();
 assert(z2.status === 'owned', 'garrison cleared — zone conquered');
