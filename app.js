@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.63';
-const VERSION_TAG = 'garrison shown as big enemy tiles; raids skip empty zones; dirt terrain; off-screen attack alert bars';
+const VERSION = '0.64';
+const VERSION_TAG = 'garrisons are multi-type (grunts/axethrowers/ogres), shown as separate enemy unit tiles';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -361,25 +361,70 @@ function makeNode(def, zoneId) {
 // Garrisons toughen both with depth (index) and with how far into the game we
 // are when they're generated (wave) — the deeper and later you push, the harder
 // the ground you find.
-function scaleGuards(def, index, wave) {
-  return {
-    count: def.guards.count + Math.floor(index * 0.6 + wave * 0.3),
-    hp: def.guards.hp + index * 5 + wave * 3,
-    dmg: def.guards.dmg + index * 0.4 + wave * 0.2
-  };
+// A garrison is a mix of raider types (like a raiding party), scaled by depth +
+// wave — grunts at the core, with axethrowers and ogres joining the deeper and
+// later you push. Base guards use the pool entry's own hp/dmg; extra types read
+// from RAIDER_TYPES. Returns per-type counts and combat stats.
+function garrisonComposition(def, index, wave) {
+  const L = index + Math.floor(wave / 2);
+  const units = {}, stats = {};
+  const bump = n => n + Math.floor(index * 0.4 + wave * 0.2);
+  const stat = (hp, dmg) => ({ hp: hp + index * 4 + wave * 2, dmg: dmg + index * 0.3 + wave * 0.15 });
+  units.grunt = Math.max(1, bump(def.guards.count));
+  stats.grunt = stat(def.guards.hp, def.guards.dmg);
+  if (L >= 5) { units.axethrower = 1 + Math.floor((L - 5) / 5); stats.axethrower = stat(RAIDER_TYPES.axethrower.hp, RAIDER_TYPES.axethrower.dmg); }
+  if (L >= 9) { units.ogre = 1 + Math.floor((L - 9) / 6); stats.ogre = stat(RAIDER_TYPES.ogre.hp, RAIDER_TYPES.ogre.dmg); }
+  return { units, stats };
 }
 
 function makeGarrison(def, index, wave) {
-  const guards = scaleGuards(def, index, wave);
+  const { units, stats } = garrisonComposition(def, index, wave);
+  const maxPool = Object.keys(units).reduce((s, t) => s + units[t] * stats[t].hp, 0)
+                + def.towers * SITE_TOWER.hp;
   return {
     key: def.key, label: def.label, rewardIcon: def.rewardIcon, rewardText: def.rewardText,
     reward: def.reward || {}, final: !!def.final,
-    guards, guardsLeft: guards.count, guardPool: guards.count * guards.hp,
+    units, stats, wounds: 0, maxPool,
     towers: def.towers, towersLeft: def.towers, towerHp: SITE_TOWER.hp,
     veiled: true, reinforce: GARRISON_REINFORCE, reinforceIn: 0,
     myStrikeIn: DEFENSE_VOLLEY_EVERY, foeStrikeIn: RAID_VOLLEY_EVERY,
     lastHitAt: 0, strikeHitAt: 0
   };
+}
+
+// Total live guards across all types.
+function garrisonCount(g) {
+  return Object.keys(g.units).reduce((n, t) => n + g.units[t], 0);
+}
+
+// Remaining guard hp (all types) after accumulated wounds.
+function garrisonGuardHp(g) {
+  return Object.keys(g.units).reduce((s, t) => s + g.units[t] * g.stats[t].hp, 0) - (g.wounds || 0);
+}
+
+// Damage the garrison deals per volley: every guard type plus the towers.
+function garrisonOutgoing(g) {
+  const guardDmg = Object.keys(g.units).reduce((s, t) => s + g.units[t] * g.stats[t].dmg, 0);
+  return guardDmg + g.towersLeft * SITE_TOWER.dmg;
+}
+
+// Our volley into a garrison: guards soak first (in roster order), then towers.
+function damageGarrison(g, dmg) {
+  g.wounds = (g.wounds || 0) + dmg;
+  let type = Object.keys(RAIDER_TYPES).find(t => g.units[t] > 0);
+  while (type && g.wounds >= g.stats[type].hp) {
+    g.wounds -= g.stats[type].hp;
+    g.units[type] -= 1;
+    type = Object.keys(RAIDER_TYPES).find(t => g.units[t] > 0);
+  }
+  if (!type) {   // guards gone — leftover chews the watch towers
+    while (g.wounds > 0 && g.towersLeft > 0) {
+      const hit = Math.min(g.wounds, g.towerHp);
+      g.towerHp -= hit; g.wounds -= hit;
+      if (g.towerHp <= 0) { g.towersLeft -= 1; g.towerHp = SITE_TOWER.hp; }
+    }
+    g.wounds = 0;
+  }
 }
 
 // A gold and a lumber node, guaranteed — used for the first zone so the opening
@@ -1140,19 +1185,14 @@ function raidHp(raid) {
   };
 }
 
-// Garrison bar for an occupied zone: one segment per remaining guard or tower,
-// only while damaged (or just hit). Guards soak before towers.
+// Combined garrison hp bar (all guard types + towers), only while damaged.
 function garrisonHp(g) {
-  const full = g.guards.count * g.guards.hp + g.towers * SITE_TOWER.hp;
-  const left = g.guardPool
-    + (g.towersLeft > 0 ? (g.towersLeft - 1) * SITE_TOWER.hp + g.towerHp : 0);
-  if (left >= full && !recentlyHit(g.lastHitAt)) return null;
-  const segments = g.guardsLeft + g.towersLeft;
+  const towerLeft = g.towersLeft > 0 ? (g.towersLeft - 1) * SITE_TOWER.hp + g.towerHp : 0;
+  const left = garrisonGuardHp(g) + towerLeft;
+  if (left >= g.maxPool && !recentlyHit(g.lastHitAt)) return null;
+  const segments = garrisonCount(g) + g.towersLeft;
   if (segments === 0) return null;
-  const partial = g.guardsLeft > 0
-    ? (g.guardPool - (g.guardsLeft - 1) * g.guards.hp) / g.guards.hp
-    : g.towerHp / SITE_TOWER.hp;
-  return { segments, partial, total: left / full };
+  return { segments, partial: 1, total: left / g.maxPool };
 }
 
 // A zone's assault column bar — only the fighting strike force takes damage.
@@ -1505,45 +1545,32 @@ function garrisonTick(state) {
   state.zones.forEach(zone => {
     const g = zone.garrison;
     if (!g || zone.status !== 'occupied') return;
-    // Muster reinforcements while our strike force is fighting.
+    // Muster reinforcements (a fresh grunt) while our strike force is fighting.
     if (zone.strike && g.reinforce) {
       g.reinforceIn -= 1;
       if (g.reinforceIn <= 0) {
         g.reinforceIn = g.reinforce.every;
-        if (g.guardsLeft < g.reinforce.cap) {
-          g.guardsLeft += 1;
-          g.guardPool += g.guards.hp;
+        if (garrisonCount(g) < g.reinforce.cap) {
+          g.units.grunt += 1;
           flashTile(`zone:head:${zone.id}`, 'spawn');
           writeLog(state, `Reinforcements muster at ${zone.name}.`);
         }
       }
     }
     if (!zone.strike) return;
-    // Our volley: guards soak first, then towers fall one by one.
+    // Our volley: guards soak first (all types), then towers fall.
     g.myStrikeIn -= 1;
     if (g.myStrikeIn <= 0) {
       g.myStrikeIn = DEFENSE_VOLLEY_EVERY;
-      let dealt = Object.keys(ARMY).reduce((sum, k) => sum + (zone.strike[k] || 0) * unitDmg(state, k), 0);
+      const dealt = Object.keys(ARMY).reduce((sum, k) => sum + (zone.strike[k] || 0) * unitDmg(state, k), 0);
       if (dealt > 0) {
         flashTile(`zone:head:${zone.id}`, 'damage');
         g.lastHitAt = performance.now();
+        const towersBefore = g.towersLeft;
+        damageGarrison(g, dealt);
+        if (g.towersLeft < towersBefore) writeLog(state, `Watch tower at ${zone.name} destroyed.`);
       }
-      if (g.guardsLeft > 0) {
-        g.guardPool = Math.max(0, g.guardPool - dealt);
-        g.guardsLeft = Math.ceil(g.guardPool / g.guards.hp);
-      } else {
-        while (dealt > 0 && g.towersLeft > 0) {
-          const hit = Math.min(dealt, g.towerHp);
-          g.towerHp -= hit;
-          dealt -= hit;
-          if (g.towerHp <= 0) {
-            g.towersLeft -= 1;
-            g.towerHp = SITE_TOWER.hp;
-            writeLog(state, `Watch tower at ${zone.name} destroyed.`);
-          }
-        }
-      }
-      if (g.guardsLeft <= 0 && g.towersLeft <= 0) {
+      if (garrisonCount(g) <= 0 && g.towersLeft <= 0) {
         conquerZone(state, zone);
         return;
       }
@@ -1552,7 +1579,7 @@ function garrisonTick(state) {
     g.foeStrikeIn -= 1;
     if (g.foeStrikeIn > 0) return;
     g.foeStrikeIn = RAID_VOLLEY_EVERY;
-    const dmg = g.guardsLeft * g.guards.dmg + g.towersLeft * SITE_TOWER.dmg;
+    const dmg = garrisonOutgoing(g);
     if (dmg > 0) {
       flashTile(`zone:head:${zone.id}`, 'attack');
       damageStrike(state, zone, dmg);
@@ -2429,31 +2456,37 @@ function zoneArmyTiles(zone) {
   });
 }
 
-// The garrison of an occupied zone shown as big enemy tiles — the guards (and
-// watch towers) large, like a raiding party sitting on the ground, rather than
-// a summary card. We know WHAT is there once the zone is charted, but their
-// counts and hp stay hidden until our own troops are there fighting (engaged).
+// The garrison of an occupied zone shown as big enemy tiles — one per raider
+// type present (plus watch towers), sitting on the ground like a raiding party
+// rather than a summary card. We know WHAT is there once charted, but counts and
+// the hp bar stay hidden until our own troops are there fighting (engaged). The
+// reward badge, combined garrison hp, and our besieging chips ride the first tile.
 function garrisonTiles(zone) {
   const g = zone.garrison;
   const engaged = !!zone.strike;
   const tiles = [];
-  const guard = entityButton({
-    kind: 'zone', type: 'head', id: zone.id, zoneId: zone.id, compact: true,
-    icon: 'enemy', label: `${zone.name} garrison`, danger: true,
-    countLabel: engaged ? g.guardsLeft : null,
-    hp: engaged ? garrisonHp(g) : null
+  Object.keys(RAIDER_TYPES).filter(t => g.units[t] > 0).forEach((t, i) => {
+    const btn = entityButton({
+      kind: 'zone', type: 'head', id: zone.id, zoneId: zone.id, compact: true,
+      icon: RAIDER_TYPES[t].icon, label: `${RAIDER_TYPES[t].label} at ${zone.name}`, danger: true,
+      countLabel: engaged ? g.units[t] : null,
+      hp: (engaged && i === 0) ? garrisonHp(g) : null
+    });
+    btn.classList.add('site-big');
+    if (RAIDER_TYPES[t].melee) btn.classList.add('melee-attacker');
+    if (i === 0) {
+      const reward = document.createElement('span');
+      reward.className = 'site-chip reward';
+      reward.appendChild(makeIcon(ICONS[g.rewardIcon], g.rewardText));
+      btn.appendChild(reward);
+      if (zone.strike) {   // our besieging force rides on the first tile
+        btn.appendChild(armyChips(zone.strike));
+        const shp = strikeHp(zone);
+        if (shp) btn.appendChild(hpBarEl(shp, 'mine'));
+      }
+    }
+    tiles.push(btn);
   });
-  guard.classList.add('site-big');
-  const reward = document.createElement('span');
-  reward.className = 'site-chip reward';
-  reward.appendChild(makeIcon(ICONS[g.rewardIcon], g.rewardText));
-  guard.appendChild(reward);
-  if (zone.strike) {   // our besieging force rides on the guard tile
-    guard.appendChild(armyChips(zone.strike));
-    const shp = strikeHp(zone);
-    if (shp) guard.appendChild(hpBarEl(shp, 'mine'));
-  }
-  tiles.push(guard);
   if (engaged ? g.towersLeft > 0 : g.towers > 0) {
     const tower = entityButton({
       kind: 'zone', type: 'head', id: zone.id, zoneId: zone.id, compact: true,
@@ -2659,11 +2692,11 @@ function entityInfo(state) {
     }
     if (zone.status === 'occupied') {
       const g = zone.garrison;
-      const engaged = !!zone.strike;
-      const gar = (g.veiled && !engaged) ? 'garrison unknown'
-        : [`${g.guardsLeft} guards`, g.towersLeft > 0 ? `${g.towersLeft} tower${g.towersLeft === 1 ? '' : 's'}` : null]
-          .filter(Boolean).join(', ');
-      return `${zone.name} · occupied · ${gar} · ${g.rewardText}`;
+      const engaged = !!zone.strike;   // counts shown only once we're fighting there
+      const parts = Object.keys(RAIDER_TYPES).filter(t => g.units[t] > 0)
+        .map(t => engaged ? `${g.units[t]} ${RAIDER_TYPES[t].label}` : RAIDER_TYPES[t].label);
+      if (g.towersLeft > 0) parts.push(engaged ? `${g.towersLeft} watch tower${g.towersLeft === 1 ? '' : 's'}` : 'watch towers');
+      return `${zone.name} · occupied · ${parts.join(', ')} · ${g.rewardText}`;
     }
     const defs = poolCount(zone.army);
     const nodes = zone.nodes.length;
