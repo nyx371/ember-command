@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.54';
-const VERSION_TAG = 'approaching raiders pulse until they arrive; melee units lunge harder when attacking';
+const VERSION = '0.55';
+const VERSION_TAG = 'zone bands use the terrain texture (tiled at native size, cropped) under a per-status tint';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
