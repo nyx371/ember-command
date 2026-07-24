@@ -269,10 +269,14 @@ button { touch-action: manipulation; }
   gap: 3px;
   padding: 5px;
   /* Terrain art scaled to cover the whole band (cropping the overflow), with
-     the tint on top so tiles/text stay legible and each band's status reads. */
+     the tint on top so tiles/text stay legible and each band's status reads.
+     Nearest-neighbour scaling keeps the pixel-art crisp when it's blown up. */
   background:
     linear-gradient(var(--zone-tint), var(--zone-tint)),
     url('assets/icons/n_site_terrain.png') center / cover no-repeat;
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: crisp-edges;
+  image-rendering: pixelated;
 }
 .world-zone + .world-zone { border-top: 1px solid rgba(255, 255, 255, 0.12); }
 .zone-field    { --zone-tint: rgba(8, 9, 14, 0.74); min-height: calc(var(--tile) * 4); }
