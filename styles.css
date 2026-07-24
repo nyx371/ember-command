@@ -243,6 +243,11 @@ button { touch-action: manipulation; }
   scrollbar-width: none;
 }
 .world-canvas::-webkit-scrollbar { display: none; }
+/* Keep home (the last/bottom band) near the bottom of the screen: when the
+   stack is shorter than the viewport it sits at the bottom, so you only ever
+   scroll UP to reach the zones you've explored. Collapses to 0 once the stack
+   overflows, so the top stays reachable. */
+.world-canvas > :first-child { margin-top: auto; }
 
 .world-group {
   display: grid;
@@ -274,7 +279,13 @@ button { touch-action: manipulation; }
   image-rendering: pixelated;
 }
 .world-zone + .world-zone { border-top: 1px solid rgba(255, 255, 255, 0.12); }
-.zone-field { min-height: calc(var(--tile) * 4); }
+/* Uncharted ground reads as fog — the grass darkened under a heavy wash. */
+.zone-field {
+  min-height: calc(var(--tile) * 4);
+  background:
+    linear-gradient(rgba(16, 18, 22, 0.8), rgba(16, 18, 22, 0.8)),
+    url('assets/tiles/grass.png') top left / 64px repeat;
+}
 .zone-home  { min-height: calc(var(--tile) * 6); }
 /* The selected zone gets an inset ring so it's clear the whole band is picked. */
 .world-zone.zone-selected { box-shadow: inset 0 0 0 2px rgba(120, 190, 255, 0.75); }
