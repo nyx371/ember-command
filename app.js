@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.64';
-const VERSION_TAG = 'garrisons are multi-type (grunts/axethrowers/ogres), shown as separate enemy unit tiles';
+const VERSION = '0.65';
+const VERSION_TAG = 'garrison enemies render as standalone unit tiles w/ counts; our assault enters from the bottom';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -1552,7 +1552,7 @@ function garrisonTick(state) {
         g.reinforceIn = g.reinforce.every;
         if (garrisonCount(g) < g.reinforce.cap) {
           g.units.grunt += 1;
-          flashTile(`zone:head:${zone.id}`, 'spawn');
+          flashTile(`zone:foe:${zone.id}`, 'spawn');
           writeLog(state, `Reinforcements muster at ${zone.name}.`);
         }
       }
@@ -1564,7 +1564,8 @@ function garrisonTick(state) {
       g.myStrikeIn = DEFENSE_VOLLEY_EVERY;
       const dealt = Object.keys(ARMY).reduce((sum, k) => sum + (zone.strike[k] || 0) * unitDmg(state, k), 0);
       if (dealt > 0) {
-        flashTile(`zone:head:${zone.id}`, 'damage');
+        flashTile(`zone:foe:${zone.id}`, 'damage');    // enemies take the hit
+        flashTile(`zone:head:${zone.id}`, 'attack');   // our units lunge in
         g.lastHitAt = performance.now();
         const towersBefore = g.towersLeft;
         damageGarrison(g, dealt);
@@ -1581,7 +1582,7 @@ function garrisonTick(state) {
     g.foeStrikeIn = RAID_VOLLEY_EVERY;
     const dmg = garrisonOutgoing(g);
     if (dmg > 0) {
-      flashTile(`zone:head:${zone.id}`, 'attack');
+      flashTile(`zone:foe:${zone.id}`, 'attack');   // enemies lunge at our force
       damageStrike(state, zone, dmg);
     }
   });
@@ -2456,47 +2457,55 @@ function zoneArmyTiles(zone) {
   });
 }
 
-// The garrison of an occupied zone shown as big enemy tiles — one per raider
-// type present (plus watch towers), sitting on the ground like a raiding party
-// rather than a summary card. We know WHAT is there once charted, but counts and
-// the hp bar stay hidden until our own troops are there fighting (engaged). The
-// reward badge, combined garrison hp, and our besieging chips ride the first tile.
+// The garrison of an occupied zone rendered as ordinary standalone enemy tiles
+// (kind zone/foe) — one per raider type present, plus a watch-towers tile —
+// exactly the size and shape of raiders attacking, with their count beside them.
+// The reward badge sits top-right of the first tile; the combined garrison hp
+// bar shows on it while damaged. Tapping any of them selects the zone.
 function garrisonTiles(zone) {
   const g = zone.garrison;
-  const engaged = !!zone.strike;
-  const tiles = [];
-  Object.keys(RAIDER_TYPES).filter(t => g.units[t] > 0).forEach((t, i) => {
+  const tiles = Object.keys(RAIDER_TYPES).filter(t => g.units[t] > 0).map((t, i) => {
     const btn = entityButton({
-      kind: 'zone', type: 'head', id: zone.id, zoneId: zone.id, compact: true,
-      icon: RAIDER_TYPES[t].icon, label: `${RAIDER_TYPES[t].label} at ${zone.name}`, danger: true,
-      countLabel: engaged ? g.units[t] : null,
-      hp: (engaged && i === 0) ? garrisonHp(g) : null
+      kind: 'zone', type: 'foe', id: zone.id, zoneId: zone.id, compact: true,
+      icon: RAIDER_TYPES[t].icon, label: `${g.units[t]} ${RAIDER_TYPES[t].label} at ${zone.name}`, danger: true,
+      countLabel: g.units[t],
+      hp: i === 0 ? garrisonHp(g) : null
     });
-    btn.classList.add('site-big');
     if (RAIDER_TYPES[t].melee) btn.classList.add('melee-attacker');
     if (i === 0) {
       const reward = document.createElement('span');
       reward.className = 'site-chip reward';
       reward.appendChild(makeIcon(ICONS[g.rewardIcon], g.rewardText));
       btn.appendChild(reward);
-      if (zone.strike) {   // our besieging force rides on the first tile
-        btn.appendChild(armyChips(zone.strike));
-        const shp = strikeHp(zone);
-        if (shp) btn.appendChild(hpBarEl(shp, 'mine'));
-      }
     }
-    tiles.push(btn);
+    return btn;
   });
-  if (engaged ? g.towersLeft > 0 : g.towers > 0) {
-    const tower = entityButton({
-      kind: 'zone', type: 'head', id: zone.id, zoneId: zone.id, compact: true,
-      icon: 'orctower', label: `${zone.name} watch towers`, danger: true,
-      countLabel: engaged ? g.towersLeft : null
-    });
-    tower.classList.add('site-big');
-    tiles.push(tower);
+  if (g.towersLeft > 0) {
+    tiles.push(entityButton({
+      kind: 'zone', type: 'foe', id: zone.id, zoneId: zone.id, compact: true,
+      icon: 'orctower', label: `${g.towersLeft} watch towers at ${zone.name}`, danger: true,
+      countLabel: g.towersLeft
+    }));
   }
   return tiles;
+}
+
+// Our units assaulting a garrison, as standalone tiles that enter from the
+// bottom of the zone — one per type in the strike column, with the strike's hp
+// bar on the first. (kind zone/head so a tap selects the zone.)
+function strikeTiles(zone) {
+  const col = zone.strike;
+  if (!col) return [];
+  return Object.keys(ARMY).filter(k => col[k] > 0).map((k, i) => {
+    const btn = entityButton({
+      kind: 'zone', type: 'head', id: zone.id, zoneId: zone.id, compact: true,
+      icon: ARMY[k].icon, label: `${col[k]} ${ARMY[k].label} assaulting ${zone.name}`,
+      countLabel: col[k],
+      hp: i === 0 ? strikeHp(zone) : null
+    });
+    if (ARMY[k].melee) btn.classList.add('melee-attacker');
+    return btn;
+  });
 }
 
 function tileRow(scrollKey, tiles) {
@@ -2540,7 +2549,9 @@ function renderZoneBand(zone) {
   const marches = marchTilesTo(zone.id);
 
   if (zone.status === 'occupied') {
-    rows.push(tileRow(`z${zone.id}-head`, [...garrisonTiles(zone), ...marches]));
+    rows.push(tileRow(`z${zone.id}-foes`, garrisonTiles(zone)));   // enemies up top
+    const ours = [...strikeTiles(zone), ...marches];               // our force enters from the bottom
+    if (ours.length) rows.push(tileRow(`z${zone.id}-strike`, ours));
     if (raids.length) rows.push(tileRow(`z${zone.id}-raids`, raids));
     return zoneBand(cls, zone.id, rows, zone.terrain);
   }
