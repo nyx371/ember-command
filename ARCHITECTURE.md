@@ -173,9 +173,14 @@ adding a fifth row breaks the "nothing moves" guarantee.
 ### HP bars
 One bar per stack, `{ total }` only — `stackHp(current, peak)` clamps it.
 `hpBarEl` remembers each tile's last drawn width (`hpShown`, keyed by the
-tile's flash key) and CSS-transitions from it, taking the damage flash's own
-delay and duration — so the bar drains as the blows land instead of dropping
-a beat before the projectile that caused it arrives.
+tile's flash key; a tile with no bar yet starts from FULL so the first hit
+visibly drains) and animates from it with the damage flash's own delay and
+duration, so the bar empties as the blows land instead of dropping a beat
+before the projectile that caused it arrives. Use a keyframe animation with
+`both` fill, never a transition: every render rebuilds these nodes, and a
+transition on a brand-new element depends on the engine resolving its
+initial style first. The bar sits at `z-index: 1`, above the damage-flash
+overlay, so it stays readable while being hit.
 `peak` is the stack's combined hp when the fight started (`pool.hpPeak` /
 `strike.hpPeak` stamped by `damagePool`/`damageStrike` on the first hit,
 `raid.hpMax` at spawn, `g.maxPool` for garrisons). Never measure against the

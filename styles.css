@@ -538,7 +538,10 @@ button { touch-action: manipulation; }
   left: 2px;
   right: 2px;
   bottom: 1px;
-  height: 3px;
+  height: 4px;
+  /* Above the damage-flash overlay (which covers the whole tile), so the bar
+     stays readable at exactly the moment it matters — while it's being hit. */
+  z-index: 1;
   display: flex;
   gap: 1px;
   pointer-events: none;
@@ -554,6 +557,16 @@ button { touch-action: manipulation; }
   display: block;
   height: 100%;
   background: #7cbf6a;
+}
+/* Drains from the width it was last drawn at to the new one, held back by the
+   strike's delay so it empties as the blows land. `both` keeps it parked at
+   --hp-from during the delay and at --hp-to afterwards. */
+@keyframes hp-drain {
+  from { width: var(--hp-from); }
+  to   { width: var(--hp-to); }
+}
+.hp-seg i.draining {
+  animation: hp-drain var(--hp-span, 220ms) linear var(--hp-delay, 0ms) both;
 }
 .entity.danger .hp-seg i { background: #e0503a; }
 /* The strike force's own bar on a site tile — green, sitting just above the
