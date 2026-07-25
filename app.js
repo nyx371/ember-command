@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.83';
-const VERSION_TAG = 'hp bar fill is a plain scaleX, set on every render';
+const VERSION = '0.84';
+const VERSION_TAG = 'hp bars are canvases now — painted pixels, like the rings';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -2359,23 +2359,24 @@ function nodeProgressBars(state, node) {
     .map(w => Math.min(1, ((cd - w.cooldown) + tickFraction(step)) / cd));
 }
 
-// One continuous bar per group, showing the pool's combined hp — no per-unit
-// segmentation, no animation: the fill is set to the current value on every
-// render and that is the whole mechanism.
-//
-// The fill is sized with transform: scaleX, NOT a percentage width. The track
-// is a flex child with an indefinite width, and a percentage on a child of one
-// of those is the kind of thing engines resolve differently — a transform is
-// unambiguous everywhere and needs no layout at all.
-function hpBarEl(hp, extraClass) {
-  const bar = document.createElement('span');
-  bar.className = extraClass ? `hp-bar ${extraClass}` : 'hp-bar';
-  const seg = document.createElement('span');
-  seg.className = 'hp-seg';
-  const fill = document.createElement('i');
-  fill.style.transform = `scaleX(${Math.max(0, Math.min(1, hp.total)).toFixed(3)})`;
-  seg.appendChild(fill);
-  bar.appendChild(seg);
+// One continuous bar per group, showing the pool's combined hp. Drawn on a
+// CANVAS — the same primitive as the radial progress rings, which are proven
+// to render and update on every device this game runs on, inside these same
+// buttons. No CSS layout is involved in showing the value: no percentage
+// widths, no flex tracks, no transforms, no transitions — the fill is pixels
+// painted at creation, and render() recreates the canvas every tick.
+function hpBarEl(hp, danger) {
+  const bar = document.createElement('canvas');
+  bar.className = 'hp-bar';
+  bar.width = 200;
+  bar.height = 8;
+  const ctx = bar.getContext('2d');
+  if (ctx) {
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.22)';
+    ctx.fillRect(0, 0, 200, 8);
+    ctx.fillStyle = danger ? '#e0503a' : '#7cbf6a';
+    ctx.fillRect(0, 0, Math.round(Math.max(0, Math.min(1, hp.total)) * 200), 8);
+  }
   return bar;
 }
 
@@ -2449,7 +2450,7 @@ function entityButton({ kind, type, id, zoneId, unit, icon, label, count, meta, 
   // Segmented hp bar: one segment per unit, the last partially drained by the
   // pool's accumulated wounds; collapses to one bar for hordes. Appended last
   // so it paints above the badges.
-  if (hp) button.appendChild(hpBarEl(hp));
+  if (hp) button.appendChild(hpBarEl(hp, danger));
 
   if (!compact) {
     const body = document.createElement('span');

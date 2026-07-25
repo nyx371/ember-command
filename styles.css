@@ -531,42 +531,22 @@ button { touch-action: manipulation; }
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.75));
 }
 
-/* Segmented hp bar along a tile's bottom edge: one segment per unit, drained
-   left-to-right; collapses to one continuous bar for hordes (>20). */
+/* Combined hp bar along a tile's bottom edge: a CANVAS, painted in app.js
+   (hpBarEl) — track and fill are pixels, so nothing here decides how full it
+   looks. This block only places and sizes it. Replaced elements need the
+   explicit width; left+right alone would fall back to the canvas's intrinsic
+   200px. */
 .hp-bar {
   position: absolute;
   left: 2px;
-  right: 2px;
   bottom: 1px;
+  width: calc(100% - 4px);
   height: 4px;
   /* Above the damage-flash overlay (which covers the whole tile), so the bar
      stays readable at exactly the moment it matters — while it's being hit. */
   z-index: 1;
-  display: flex;
-  gap: 1px;
   pointer-events: none;
 }
-.hp-seg {
-  position: relative;
-  flex: 1;
-  min-width: 0;
-  background: rgba(255, 255, 255, 0.16);
-  border-radius: 1px;
-  overflow: hidden;
-}
-/* Fill spans the whole track and is squeezed from the left by an inline
-   scaleX — no percentage width to resolve, no transition, no animation. */
-.hp-seg i {
-  position: absolute;
-  inset: 0;
-  transform-origin: left center;
-  background: #7cbf6a;
-}
-.entity.danger .hp-seg i { background: #e0503a; }
-/* The strike force's own bar on a site tile — green, sitting just above the
-   garrison's red one. */
-.entity.danger .hp-bar.mine { bottom: 6px; }
-.entity.danger .hp-bar.mine .hp-seg i { background: #7cbf6a; }
 
 .site-chip {
   display: flex;

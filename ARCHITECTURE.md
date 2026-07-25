@@ -172,13 +172,14 @@ adding a fifth row breaks the "nothing moves" guarantee.
 
 ### HP bars
 One bar per stack, `{ total }` only — `stackHp(current, peak)` clamps it.
-`hpBarEl` just sets the fill to the current value on every render — no
-transition, no animation, no remembered previous value. The fill is sized by
-an inline `transform: scaleX(...)` over an absolutely-positioned fill, NOT a
-percentage width: the track is a flex child with an indefinite width, and
-percentages against those resolve differently across engines. The bar sits at
-`z-index: 1`, above the damage-flash overlay, so it stays readable while the
-tile is being hit.
+`hpBarEl` returns a CANVAS with the track and fill painted as pixels — the
+same primitive as the radial progress rings, which are proven on every
+device. render() recreates it each tick; no CSS layout (percentage widths,
+flex tracks, transforms, transitions) is involved in showing the value, and
+none should ever be reintroduced — three CSS-based fills in a row rendered
+fine in Chromium and sat frozen on iOS. CSS only places it: absolute, 4px
+tall, explicit `width: calc(100% - 4px)` (a replaced element ignores
+left+right sizing), `z-index: 1` so it rides above the damage flash.
 `peak` is the stack's combined hp when the fight started (`pool.hpPeak` /
 `strike.hpPeak` stamped by `damagePool`/`damageStrike` on the first hit,
 `raid.hpMax` at spawn, `g.maxPool` for garrisons). Never measure against the
