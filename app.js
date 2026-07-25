@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.73';
-const VERSION_TAG = 'fog of war on empty zones; forward halls keep the hall icon';
+const VERSION = '0.74';
+const VERSION_TAG = 'stables unlocks knights at the barracks';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -205,7 +205,7 @@ const BUILDINGS = {
   stables: {
     icon: 'stables', label: 'stables', hp: 500,
     build: { cost: { gold: 1000, lumber: 300 }, time: 150, requiresTier: 1 },
-    blurb: 'Stables · trains knights'
+    blurb: 'Stables · unlocks knights at the barracks'
   }
 };
 
@@ -233,14 +233,15 @@ const UNITS = {
     requires: ['lumbermill'],
     done: (s, zone) => { zone.army.archers += 1; flashTile(`army:defend:${zone.id}`, 'spawn'); writeLog(s, 'Archer ready.'); }
   },
+  knight: {
+    icon: 'knight', label: 'knight', producer: 'barracks', time: 90, cost: { gold: 800, lumber: 100 },
+    requires: ['stables'],
+    done: (s, zone) => { zone.army.knights += 1; flashTile(`army:defend:${zone.id}`, 'spawn'); writeLog(s, 'Knight ready.'); }
+  },
   ballista: {
     icon: 'ballista', label: 'ballista', producer: 'barracks', time: 250, cost: { gold: 900, lumber: 300 },
     requires: ['blacksmith'],
     done: (s, zone) => { zone.army.ballistas += 1; flashTile(`army:defend:${zone.id}`, 'spawn'); writeLog(s, 'Ballista ready.'); }
-  },
-  knight: {
-    icon: 'knight', label: 'knight', producer: 'stables', time: 90, cost: { gold: 800, lumber: 100 },
-    done: (s, zone) => { zone.army.knights += 1; flashTile(`army:defend:${zone.id}`, 'spawn'); writeLog(s, 'Knight ready.'); }
   }
 };
 

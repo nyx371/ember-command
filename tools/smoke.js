@@ -110,6 +110,8 @@ assert(home.structures.barracks === 1, 'barracks completed');
 X.selectEntity('structure', 'barracks', home.id, home.id);
 const archerCmd = X.selectedCommands(X.game).find(c => c.id === 'train-archer');
 assert(archerCmd && !archerCmd.enabled(X.game), 'archer blocked without lumber mill');
+const knightCmd = X.selectedCommands(X.game).find(c => c.id === 'train-knight');
+assert(knightCmd && !knightCmd.enabled(X.game), 'knight sits on the barracks card, gated on stables');
 X.runCommand('train-footman');
 for (let i = 0; i < 20; i++) X.gameTick();
 assert(home.army.footmen === 2, 'footman joins the home zone defenders');

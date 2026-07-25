@@ -99,7 +99,7 @@
   <tr><td><img class="icon" src="assets/icons/h_bld_lumbermill.png" alt="">Lumber Mill</td><td>600g 450w</td><td>150s</td><td>Unlocks archers + towers; lumber-yield upgrades (2 tiers)</td><td><span class="status done">done</span></td></tr>
   <tr><td><img class="icon" src="assets/icons/h_bld_blacksmith.png" alt="">Blacksmith</td><td>800g 450w</td><td>200s</td><td>Weapon upgrades (+2 dmg) and armor upgrades (+10 hp), 2 tiers each</td><td><span class="status done">done</span></td></tr>
   <tr><td><img class="icon" src="assets/icons/h_bld_tower.png" alt="">Tower</td><td>550g 200w</td><td>60s</td><td>Shoots raiders (3 dmg/volley); needs Lumber Mill; upgradable</td><td><span class="status done">done</span></td></tr>
-  <tr><td><img class="icon" src="assets/icons/h_bld_stables.png" alt="">Stables</td><td>1000g 300w</td><td>150s</td><td>Trains knights; needs Keep</td><td><span class="status done">done</span></td></tr>
+  <tr><td><img class="icon" src="assets/icons/h_bld_stables.png" alt="">Stables</td><td>1000g 300w</td><td>150s</td><td>Unlocks knights at the barracks; needs Keep</td><td><span class="status done">done</span></td></tr>
   <tr><td><img class="icon" src="assets/icons/h_bld_cannontower.png" alt="">Cannon Tower</td><td>1000g 300w</td><td>190s</td><td>Tower upgrade (needs Blacksmith), 14 dmg/volley</td><td><span class="status done">done</span></td></tr>
   <tr><td><img class="icon" src="assets/icons/h_bld_watchtower.png" alt="">Guard Tower</td><td>500g 150w</td><td>140s</td><td>Tower upgrade (needs Lumber Mill), 8 dmg/volley</td><td><span class="status done">done</span></td></tr>
 </table></div>
@@ -111,7 +111,7 @@
   <tr><th>Unit</th><th>Cost</th><th>Time</th><th>Role</th></tr>
   <tr><td><img class="icon" src="assets/icons/h_unit_peasant.png" alt="">Worker (Peasant)</td><td>400g</td><td>45s</td><td>Harvest &amp; build — auto-managed per zone</td></tr>
   <tr><td><img class="icon" src="assets/icons/h_unit_footman.png" alt="">Footman</td><td>600g</td><td>60s</td><td>Melee — power 7, soaks first</td></tr>
-  <tr><td><img class="icon" src="assets/icons/h_unit_knight.png" alt="">Knight</td><td>800g 100w</td><td>90s</td><td>Elite melee — power 10, needs Stables (Keep tier)</td></tr>
+  <tr><td><img class="icon" src="assets/icons/h_unit_knight.png" alt="">Knight</td><td>800g 100w</td><td>90s</td><td>Elite melee — power 10, trained at the barracks once a Stables stands (Keep tier)</td></tr>
   <tr><td><img class="icon" src="assets/icons/h_unit_archer.png" alt="">Archer</td><td>500g 50w</td><td>70s</td><td>Ranged — power 5, needs Lumber Mill</td></tr>
   <tr><td><img class="icon" src="assets/icons/h_unit_ballista.png" alt="">Ballista</td><td>900g 300w</td><td>250s</td><td>Siege — power 25, needs Blacksmith</td></tr>
 </table></div>
@@ -129,7 +129,7 @@
 <p><span class="status done">done</span> — Tech upgrades follow the guard-tower pattern: one button on the source structure, timed, cancellable with refund, never consuming a worker. <strong>One research at a time per source building</strong> — a second blacksmith unlocks a second parallel slot. Implemented: <strong>lumber harvesting</strong> (Lumber Mill, 2 tiers, +25% yield each), <strong>weapons</strong> (Blacksmith, 2 tiers, +2 dmg per unit), <strong>armor</strong> (Blacksmith, 2 tiers, +10 hp per unit), <strong>ballista engineering</strong> (Blacksmith, 2 tiers, +10 dmg per ballista) — the player's counter-curve to daily raid scaling.</p>
 <ul>
   <li><span class="status idea">idea</span> <strong>Gold mining efficiency</strong> (Town Hall)</li>
-  <li><span class="status done">done</span> <strong>Hall tiers</strong>: Town Hall → Keep (2000g 1000w, needs Barracks) → Castle (2500g 1200w, needs Stables) — each tier +600 hall hp and +4 supply; the Keep gates the Stables (and so Knights)</li>
+  <li><span class="status done">done</span> <strong>Hall tiers</strong>: Town Hall → Keep (2000g 1000w, needs Barracks) → Castle (2500g 1200w, needs Stables) — each tier +600 hall hp and +4 supply; the Keep gates the Stables, which unlocks Knights at the barracks</li>
 </ul>
 
 <div class="note"><strong>Open — Raid posture.</strong> Army granularity is resolved (arbitrary per-type headcount splits across orders). Still open: a separate <code>Raid</code> posture (harass enemy economy) distinct from <code>Attack</code> (kill the base).</div>
@@ -178,7 +178,7 @@
 <h2>Late Game (day 10+) — Candidate Directions</h2>
 <p>The economy, posture play, and sites carry a run to roughly day 15–17; past that the content flattens. Candidates for the next step, all WC2-native. <strong>Sea combat is deliberately deferred</strong> — oil, shipyards, and naval maps stay off the table for now.</p>
 <ul>
-  <li><span class="status done">done</span> <strong>Castle tier + Stables + Knights.</strong> Hall tier 2 (Castle) gates the Stables; Knights are the tier-2 melee elite (fast, expensive, hp ~90/dmg ~10). The player's late-game power spike, mirroring the wave ramp. Cheapest to build: one BUILDINGS row, one UNITS row, one ARMY row.</li>
+  <li><span class="status done">done</span> <strong>Castle tier + Stables + Knights.</strong> The Keep gates the Stables, which unlocks Knights at the barracks rather than training them itself; Knights are the tier-2 melee elite (fast, expensive, hp ~90/dmg ~10). The player's late-game power spike, mirroring the wave ramp. Cheapest to build: one BUILDINGS row, one UNITS row, one ARMY row.</li>
   <li><span class="status done">done</span> <strong>Enemy escalation variety: ogres and catapults.</strong> Ogres join waves ~10+ as a heavy third party; catapult parties (~12+) ignore units and shell buildings from range — towers can't answer them, only a sortie can, breaking the tower-turtle equilibrium.</li>
   <li><span class="status done">done</span> <strong>Stronghold campaign</strong> — evolved into the world-zone stack (v0.47): the road to the stronghold at depth 8 <em>is</em> the campaign, garrison zone by garrison zone.</li>
   <li><span class="status idea">idea</span> <strong>Magic tier: Church + Mage Tower.</strong> Paladins (heal the defend pool between volleys) and Mages (splash volley vs whole raids) as Castle-tier casters — WC2's late-game texture, and a gold sink for the deep economy.</li>
