@@ -51,7 +51,8 @@ const src = fs.readFileSync(appPath, 'utf8');
 const exports_ = ['game', 'gameTick', 'runCommand', 'selectEntity', 'selectedCommands',
   'cancelJob', 'supplyCap', 'supplyUsed', 'zoneById', 'zoneByIndex', 'makeZone',
   'makeGarrison', 'GARRISON_POOL', 'STRONGHOLD', 'exploreFrom', 'startTransfer',
-  'executeMoveOne', 'spawnRaid', 'poolCount', 'poolDamage', 'splashFactor'];
+  'executeMoveOne', 'spawnRaid', 'poolCount', 'poolDamage', 'splashFactor',
+  'damagePool', 'poolHp'];
 eval(src + '\n;globalThis.__X = {' + exports_.join(',') + '};');
 const X = globalThis.__X;
 
@@ -229,6 +230,22 @@ assert(repairs.length === 2, 'repair-all queued both damaged buildings');
 repairs.forEach(j => X.cancelJob(X.game, j.uid));
 home.structureDamage.hall = 0;
 home.structureDamage.barracks = 0;
+
+// ── The hp bar keeps draining as a stack loses units ─────────────────────
+// Regression: measured against the CURRENT count, a death removed both the
+// wound and the unit, so the bar snapped back toward full mid-fight.
+home.army.footmen = 3;
+home.army.wounds = 0;
+home.army.hpPeak = 0;
+X.damagePool(X.game, home, 50);                       // 3 footmen, 180 hp total
+const hpAfterFirst = X.poolHp(X.game, home.army).total;
+assert(Math.abs(hpAfterFirst - 130 / 180) < 1e-9, 'bar shows the stack\'s combined hp');
+X.damagePool(X.game, home, 40);                       // 90 wounds -> one falls
+assert(home.army.footmen === 2, 'a footman fell');
+const hpAfterDeath = X.poolHp(X.game, home.army).total;
+assert(hpAfterDeath < hpAfterFirst, 'bar keeps draining across a death');
+assert(Math.abs(hpAfterDeath - 90 / 180) < 1e-9, 'bar still measures against the stack at full strength');
+home.army.wounds = 0;
 
 // ── Stronghold falls -> victory (shrunken for test speed) ─────────────────
 let z3 = X.zoneByIndex(X.game, 3) || (X.game.zones.push(X.makeZone(3, 0)), X.zoneByIndex(X.game, 3));

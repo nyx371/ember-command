@@ -166,13 +166,24 @@ ground / built — mounted whether or not they hold tiles, and `.world-zone`
 is `min-height: calc(var(--tile) * 4)`. Add content to an existing row;
 adding a fifth row breaks the "nothing moves" guarantee.
 
+### HP bars
+One bar per stack, `{ total }` only — `stackHp(current, peak)` clamps it.
+`peak` is the stack's combined hp when the fight started (`pool.hpPeak` /
+`strike.hpPeak` stamped by `damagePool`/`damageStrike` on the first hit,
+`raid.hpMax` at spawn, `g.maxPool` for garrisons). Never measure against the
+current count: a death removes its wound along with the unit, so the bar
+would snap back toward full mid-fight. Reinforcements arriving mid-fight
+raise `hpPeak` instead of pinning the bar to full.
+
 ### Combat feedback (flashes, strikes, projectiles)
 `flashTile(key, kind, hits, hold)` — `hits` draws one strike per attacker (up
 to `HIT_MAX`, `HIT_SPAN_MS` apart, via `--hits`/`--hit-span` on the tile);
 `hold` delays the first one so a victim's hurt flash lands WITH the blow —
 `MELEE_LAND_MS` for a swing, `PROJECTILE_MS` for a shot. Keep
 `hold + span × hits` under one tick or the next render restarts it.
-Ranged attackers carry `shot: '<icon>'` (ARMY / RAIDER_TYPES / BUILDINGS
+Only melee tiles lunge (`.melee-attacker`); ranged units and towers hold
+still (`.ranged-attacker`, no structure attack flash). Ranged attackers
+carry `shot: '<icon>'` (ARMY / RAIDER_TYPES / BUILDINGS
 towers); combat code calls `queueShot(fromSel, toSel, icon, hits)` and
 `launchShots()` (end of `render()`) flies the sprite tile-to-tile with WAAPI
 over `PROJECTILE_MS`. Endpoints are selectors over the data attributes tiles

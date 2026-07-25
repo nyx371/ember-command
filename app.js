@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.78';
-const VERSION_TAG = 'four fixed rows per zone; ranged units hold still';
+const VERSION = '0.79';
+const VERSION_TAG = 'hp bars drain properly; towers hold still too';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -994,12 +994,14 @@ function arriveColumn(state, zone, type, count, wounds = 0) {
     const strike = zone.strike || emptyArmy();
     strike[type] = (strike[type] || 0) + count;
     strike.wounds = (strike.wounds || 0) + wounds;
+    if (strike.hpPeak) strike.hpPeak += count * unitHp(state, type);
     zone.strike = strike;
     flashTile(`zone:head:${zone.id}`, 'spawn');
     writeLog(state, `${count} ${count === 1 ? ARMY[type].singular : ARMY[type].label} storm ${zone.name}!`);
   } else {
     zone.army[type] += count;
     zone.army.wounds += wounds;
+    if (zone.army.hpPeak) zone.army.hpPeak += count * unitHp(state, type);
     zone.status = 'owned';
     flashTile(`army:defend:${zone.id}`, 'spawn');
     writeLog(state, `${count} ${count === 1 ? ARMY[type].singular : ARMY[type].label} arrive at ${zone.name}.`);
@@ -1132,17 +1134,26 @@ function recentlyHit(at) {
   return !!at && performance.now() - at < HP_BAR_LINGER_MS;
 }
 
-function poolHp(pool) {
-  const count = poolCount(pool);
-  if (count === 0) return null;
+// Combined hp of everything in a stack right now.
+function poolMaxHp(state, pool) {
+  return Object.keys(ARMY).reduce((sum, k) => sum + (pool[k] || 0) * unitHp(state, k), 0);
+}
+
+// A stack's bar is its combined hp measured against how strong the stack was
+// when this fight started (`hpPeak`, stamped by the damage helpers on the first
+// hit). Measuring against the CURRENT count instead would snap the bar back to
+// full every time a unit died — the wound that killed it leaves with it — so a
+// group being ground down would look untouched. Against the peak it drains
+// honestly from full to empty.
+function stackHp(current, peak) {
+  if (!peak || peak <= 0) return null;
+  return { total: Math.max(0, Math.min(1, current / peak)) };
+}
+
+function poolHp(state, pool) {
+  if (poolCount(pool) === 0) return null;
   if (pool.wounds === 0 && !recentlyHit(pool.lastHitAt)) return null;
-  const type = Object.keys(ARMY).find(k => pool[k] > 0);
-  const maxHp = Object.keys(ARMY).reduce((sum, k) => sum + pool[k] * ARMY[k].hp, 0);
-  return {
-    segments: count,
-    partial: 1 - pool.wounds / ARMY[type].hp,
-    total: (maxHp - pool.wounds) / maxHp
-  };
+  return stackHp(poolMaxHp(state, pool) - pool.wounds, pool.hpPeak || poolMaxHp(state, pool));
 }
 
 // Node crews: one segment per worker, shown only while the crew is damaged.
@@ -1154,11 +1165,7 @@ function nodeHp(state, node) {
   if (state.workerWounds === 0 && !recentlyHit(state.workerLastHitAt)) return null;
   const victim = state.workers.filter(w => w.job !== 'building').pop();
   if (!victim || String(victim.nodeId) !== String(node.id)) return null;
-  return {
-    segments: count,
-    partial: 1 - state.workerWounds / WORKER_HP,
-    total: (count * WORKER_HP - state.workerWounds) / (count * WORKER_HP)
-  };
+  return stackHp(count * WORKER_HP - state.workerWounds, state.workerHpPeak || count * WORKER_HP);
 }
 
 // Structure tiles: bar whenever a zone's building carries unrepaired damage.
@@ -1166,23 +1173,16 @@ function buildingHp(state, zone, key) {
   const dmg = zone.structureDamage[key];
   if (!dmg || dmg <= 0) return null;
   const full = buildingMaxHp(state, key);
-  const segments = zone.structures[key];
-  if (segments <= 0) return null;
-  return {
-    segments,
-    partial: (full - dmg) / full,
-    total: ((segments - 1) * full + (full - dmg)) / (segments * full)
-  };
+  const standing = zone.structures[key];
+  if (standing <= 0) return null;
+  // Damage lands on one instance at a time; the bar covers all of them.
+  return stackHp(standing * full - dmg, standing * full);
 }
 
 function raidHp(raid) {
   if (raid.size === 0) return null;
-  if (raid.hpPool >= raid.size * raid.grunt.hp && !recentlyHit(raid.lastHitAt)) return null;
-  return {
-    segments: raid.size,
-    partial: (raid.hpPool - (raid.size - 1) * raid.grunt.hp) / raid.grunt.hp,
-    total: raid.hpPool / (raid.size * raid.grunt.hp)
-  };
+  if (raid.hpPool >= raid.hpMax && !recentlyHit(raid.lastHitAt)) return null;
+  return stackHp(raid.hpPool, raid.hpMax);
 }
 
 // Combined garrison hp bar (all guard types + towers), only while damaged.
@@ -1190,26 +1190,17 @@ function garrisonHp(g) {
   const towerLeft = g.towersLeft > 0 ? (g.towersLeft - 1) * SITE_TOWER.hp + g.towerHp : 0;
   const left = garrisonGuardHp(g) + towerLeft;
   if (left >= g.maxPool && !recentlyHit(g.lastHitAt)) return null;
-  const segments = garrisonCount(g) + g.towersLeft;
-  if (segments === 0) return null;
-  return { segments, partial: 1, total: left / g.maxPool };
+  if (garrisonCount(g) + g.towersLeft === 0) return null;
+  return stackHp(left, g.maxPool);
 }
 
 // A zone's assault column bar — only the fighting strike force takes damage.
-function strikeHp(zone) {
+function strikeHp(state, zone) {
   const col = zone.strike;
-  if (!col) return null;
-  const count = strikeCount(col);
-  if (count === 0) return null;
+  if (!col || strikeCount(col) === 0) return null;
   const hitAt = zone.garrison ? zone.garrison.strikeHitAt : 0;
   if (!col.wounds && !recentlyHit(hitAt)) return null;
-  const type = Object.keys(ARMY).find(k => col[k] > 0);
-  const maxHp = Object.keys(ARMY).reduce((sum, k) => sum + (col[k] || 0) * ARMY[k].hp, 0);
-  return {
-    segments: count,
-    partial: 1 - col.wounds / ARMY[type].hp,
-    total: (maxHp - col.wounds) / maxHp
-  };
+  return stackHp(poolMaxHp(state, col) - col.wounds, col.hpPeak || poolMaxHp(state, col));
 }
 
 // Moving units between zones is instant: they leave the source zone's pool and
@@ -1326,6 +1317,8 @@ function queueZoneShots(state, zone, targetSel, towersFire = true) {
 function damagePool(state, zone, dmg, hits = 1, hold = 0) {
   const pool = zone.army;
   flashTile(`army:defend:${zone.id}`, 'damage', hits, hold);
+  // First hit of a fresh fight fixes what "full" means for the hp bar.
+  if (pool.wounds === 0) pool.hpPeak = poolMaxHp(state, pool);
   pool.lastHitAt = performance.now();
   pool.wounds += dmg;
   let type = Object.keys(ARMY).find(k => pool[k] > 0);
@@ -1343,6 +1336,9 @@ function workersInZoneLive(state, zone) {
 }
 
 function damageWorkers(state, zone, dmg, hits = 1, hold = 0) {
+  if (state.workerWounds === 0) {
+    state.workerHpPeak = workersInZoneLive(state, zone).length * WORKER_HP;
+  }
   state.workerLastHitAt = performance.now();
   state.workerWounds += dmg;
   const here = () => workersInZoneLive(state, zone).filter(w => w.job !== 'building');
@@ -1413,7 +1409,7 @@ function spawnRaid(state) {
     const foeDelay = RAID_VOLLEY_EVERY + party;
     state.raids.push({
       id: nextId(), kind: key, icon: t.icon, label: t.label, siege: !!t.siege,
-      size, grunt, hpPool: size * grunt.hp, discovered: true,
+      size, grunt, hpPool: size * grunt.hp, hpMax: size * grunt.hp, discovered: true,
       index: startIndex, atIndex: null,
       myStrikeIn: DEFENSE_VOLLEY_EVERY, foeStrikeIn: foeDelay, foeDelay,
       targetType: null
@@ -1473,9 +1469,7 @@ function raidTick(state) {
         flashTile(`enemy:raid:${raid.id}`, 'damage', defenders + towers,
           flew ? PROJECTILE_MS : MELEE_LAND_MS);
         flashTile(`army:defend:${zone.id}`, 'attack', defenders);
-        RAID_TOWER_TARGETS.forEach(k => {
-          if (!raid.siege && zone.structures[k] > 0) flashTile(`structure:${k}:${zone.id}`, 'attack', zone.structures[k]);
-        });
+        // Towers don't move when they fire — the shot leaving them is the tell.
         raid.lastHitAt = performance.now();
       }
       const sizeBefore = raid.size;
@@ -1545,6 +1539,7 @@ function strikeCount(col) {
 function damageStrike(state, zone, dmg, hits = 1, hold = 0) {
   const g = zone.garrison;
   const strike = zone.strike;
+  if (!strike.wounds) strike.hpPeak = poolMaxHp(state, strike);
   strike.wounds = (strike.wounds || 0) + dmg;
   g.strikeHitAt = performance.now();
   flashTile(`zone:head:${zone.id}`, 'damage', hits, hold);
@@ -2411,7 +2406,7 @@ function entityButton({ kind, type, id, zoneId, unit, icon, label, count, meta, 
   // Segmented hp bar: one segment per unit, the last partially drained by the
   // pool's accumulated wounds; collapses to one bar for hordes. Appended last
   // so it paints above the badges.
-  if (hp && hp.segments > 0) button.appendChild(hpBarEl(hp));
+  if (hp) button.appendChild(hpBarEl(hp));
 
   if (!compact) {
     const body = document.createElement('span');
@@ -2584,7 +2579,7 @@ function zoneArmyTiles(zone) {
       kind: 'army', type: k, id: zone.id, zoneId: zone.id, compact: true,
       icon: ARMY[k].icon, label: `${ARMY[k].label} at ${zone.name}`,
       jobIcon: 'defend', countLabel: pool[k],
-      hp: i === 0 ? poolHp(pool) : null
+      hp: i === 0 ? poolHp(game, pool) : null
     });
     // Melee tiles lunge harder when they strike; ranged tiles don't move at
     // all — their shot is the tell.
@@ -2650,7 +2645,7 @@ function strikeTiles(zone) {
       kind: 'zone', type: 'head', id: zone.id, zoneId: zone.id, unit: k, compact: true,
       icon: ARMY[k].icon, label: `${col[k]} ${ARMY[k].label} assaulting ${zone.name}`,
       countLabel: col[k],
-      hp: i === 0 ? strikeHp(zone) : null
+      hp: i === 0 ? strikeHp(game, zone) : null
     });
     btn.classList.add(ARMY[k].melee ? 'melee-attacker' : 'ranged-attacker');
     return btn;
