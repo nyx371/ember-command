@@ -125,8 +125,9 @@ on and fight the same tick (`raid.atIndex` tracks the last announced zone so
 arrival flashes/logs fire once). That zone's defenders + towers fire
 (`defenseDamage`; siege parties are immune to towers), raiders answer on
 their cadence with targeting defenders → towers → workers → buildings
-(`RAID_TARGET_ORDER`, home hall's fall = defeat; `siege` parties shell
-buildings only). A zone with no defenders, workers, or buildings is
+(`razeOrder()` = `RAID_TARGET_PRIORITY` then every other non-tower building
+from `BUILDINGS`, hall last — derived so no building is unhittable; home
+hall's fall = defeat; `siege` parties shell buildings only). A zone with no defenders, workers, or buildings is
 "subdued" and the raid moves on inward immediately. Killed raiders drop `bounty`
 plunder. Spawn interval shrinks per day but every once-occupied zone we
 cleared (`zone.wasOccupied`) adds `RAID_OUTPOST_RELIEF` back. Defender regen

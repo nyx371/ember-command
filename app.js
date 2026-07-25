@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.74';
-const VERSION_TAG = 'stables unlocks knights at the barracks';
+const VERSION = '0.75';
+const VERSION_TAG = 'fix: raiders no longer stall on buildings they cannot target';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -72,7 +72,9 @@ const HP_BAR_LINGER_MS = 3000;  // keep a combat hp bar visible across volleys
 // Raider targeting: warriors first, then the towers shooting at them, then
 // workers, then the remaining buildings — the town hall falls last.
 const RAID_TOWER_TARGETS = ['cannontower', 'guardtower', 'tower'];
-const RAID_TARGET_ORDER = ['farm', 'barracks', 'lumbermill', 'blacksmith', 'hall'];
+// Priority hint only — `razeOrder()` fills in every other building behind it,
+// so nothing in BUILDINGS can end up unhittable.
+const RAID_TARGET_PRIORITY = ['farm', 'barracks', 'lumbermill', 'blacksmith'];
 
 // Home zone's fixed resource nodes. Nodes now belong to a zone (not a global
 // list) and never move; `distance` is local travel within the zone (harvest
@@ -1307,6 +1309,16 @@ function damageWorkers(state, zone, dmg) {
   if (state.workers.length === 0) state.workerWounds = 0;
 }
 
+// Everything raiders will raze, in the order they do it: the priority list
+// first, then every other non-tower building (derived from BUILDINGS, so adding
+// a building can never leave it unhittable — which would strand a raid razing
+// a zone that can never go quiet), with the town hall always last.
+function razeOrder() {
+  const rest = Object.keys(BUILDINGS)
+    .filter(k => k !== 'hall' && !RAID_TARGET_PRIORITY.includes(k) && !RAID_TOWER_TARGETS.includes(k));
+  return [...RAID_TARGET_PRIORITY, ...rest, 'hall'];
+}
+
 // Raiders razing a zone's buildings: damage accumulates on the building type
 // (persisting until repaired), destroying one instance when it exceeds its hp.
 function damageBuildings(state, zone, raid, dmg, order) {
@@ -1426,13 +1438,13 @@ function raidTick(state) {
     flashTile(`enemy:raid:${raid.id}`, 'attack');
     const towersStanding = RAID_TOWER_TARGETS.some(k => zone.structures[k] > 0);
     if (raid.siege) {
-      damageBuildings(state, zone, raid, dmg, towersStanding ? RAID_TOWER_TARGETS : RAID_TARGET_ORDER);
+      damageBuildings(state, zone, raid, dmg, towersStanding ? RAID_TOWER_TARGETS : razeOrder());
       return;
     }
     if (poolCount(zone.army) > 0) damagePool(state, zone, dmg);
     else if (towersStanding) damageBuildings(state, zone, raid, dmg, RAID_TOWER_TARGETS);
     else if (workersInZoneLive(state, zone).length > 0) damageWorkers(state, zone, dmg);
-    else damageBuildings(state, zone, raid, dmg, RAID_TARGET_ORDER);
+    else damageBuildings(state, zone, raid, dmg, razeOrder());
   });
   state.raids = state.raids.filter(r => r.size > 0);
 }

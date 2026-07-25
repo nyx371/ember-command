@@ -175,6 +175,25 @@ assert(X.game.raids.length === 0, 'raid repelled by zone defenders');
 assert(home.structures.hall === 1, 'home untouched behind the frontier');
 X.game.raid.nextIn = 1e9;
 
+// ── A zone holding only an "off-list" building is still razed, not a dead end ─
+// Regression: stables were in neither target list, so a raid sat on the zone
+// forever — never razing it, never counting it subdued, never advancing.
+z2.army.footmen = 0;
+z2.army.wounds = 0;
+z2.structures.stables = 1;
+X.game.raid.wave = 2;
+X.spawnRaid(X.game);
+guard = 0;
+while (z2.structures.stables > 0 && guard++ < 400) X.gameTick();
+assert(z2.structures.stables === 0, 'raiders raze a stables (off the priority list)');
+guard = 0;
+while (X.game.raids.length && X.game.raids[0].index === 2 && guard++ < 200) X.gameTick();
+assert(!X.game.raids.length || X.game.raids[0].index < 2, 'raid advances once the zone is subdued');
+X.game.raids = [];
+X.game.raid.nextIn = 1e9;
+z2.army.footmen = 9;   // re-garrison zone 2 for the stronghold assault below
+z2.army.wounds = 0;
+
 // ── Repair a damaged building ─────────────────────────────────────────────
 home.structureDamage.hall = 100;
 X.selectEntity('structure', 'hall', home.id, home.id);
