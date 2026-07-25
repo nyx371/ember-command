@@ -547,26 +547,20 @@ button { touch-action: manipulation; }
   pointer-events: none;
 }
 .hp-seg {
+  position: relative;
   flex: 1;
   min-width: 0;
   background: rgba(255, 255, 255, 0.16);
   border-radius: 1px;
   overflow: hidden;
 }
+/* Fill spans the whole track and is squeezed from the left by an inline
+   scaleX — no percentage width to resolve, no transition, no animation. */
 .hp-seg i {
-  display: block;
-  height: 100%;
+  position: absolute;
+  inset: 0;
+  transform-origin: left center;
   background: #7cbf6a;
-}
-/* Drains from the width it was last drawn at to the new one, held back by the
-   strike's delay so it empties as the blows land. `both` keeps it parked at
-   --hp-from during the delay and at --hp-to afterwards. */
-@keyframes hp-drain {
-  from { width: var(--hp-from); }
-  to   { width: var(--hp-to); }
-}
-.hp-seg i.draining {
-  animation: hp-drain var(--hp-span, 220ms) linear var(--hp-delay, 0ms) both;
 }
 .entity.danger .hp-seg i { background: #e0503a; }
 /* The strike force's own bar on a site tile — green, sitting just above the

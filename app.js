@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.82';
-const VERSION_TAG = 'hp bar drain is a keyframe animation, drawn above the flash';
+const VERSION = '0.83';
+const VERSION_TAG = 'hp bar fill is a plain scaleX, set on every render';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -2359,43 +2359,21 @@ function nodeProgressBars(state, node) {
     .map(w => Math.min(1, ((cd - w.cooldown) + tickFraction(step)) / cd));
 }
 
-// The width each tile's bar was last drawn at, so a rebuilt bar can start
-// where the old one ended and drain to the new value instead of teleporting.
-// A tile that has no bar yet starts from full, so the very first hit on a
-// group is a visible drain rather than a bar appearing already part-empty.
-const hpShown = new Map();
-
 // One continuous bar per group, showing the pool's combined hp — no per-unit
-// segmentation. `flash` is the tile's damage-flash entry (if any): the drain
-// borrows its delay and duration, so the bar empties as the blows land rather
-// than a beat before the projectile that caused it has even arrived.
+// segmentation, no animation: the fill is set to the current value on every
+// render and that is the whole mechanism.
 //
-// The drain is a CSS animation with `both` fill (NOT a transition): every
-// render rebuilds these elements from scratch, and a transition on a
-// brand-new node depends on the browser resolving its initial style before
-// the value changes — which is exactly the kind of thing that works in one
-// engine and silently no-ops in another. An animation with a from/to pair is
-// declarative and starts correctly on a freshly inserted element, the same
-// way the damage flash and the attack lunge do.
-function hpBarEl(hp, extraClass, key, flash) {
+// The fill is sized with transform: scaleX, NOT a percentage width. The track
+// is a flex child with an indefinite width, and a percentage on a child of one
+// of those is the kind of thing engines resolve differently — a transform is
+// unambiguous everywhere and needs no layout at all.
+function hpBarEl(hp, extraClass) {
   const bar = document.createElement('span');
   bar.className = extraClass ? `hp-bar ${extraClass}` : 'hp-bar';
   const seg = document.createElement('span');
   seg.className = 'hp-seg';
   const fill = document.createElement('i');
-  const pct = v => `${Math.round(Math.max(0, Math.min(1, v)) * 100)}%`;
-  const target = Math.max(0, Math.min(1, hp.total));
-  const prev = key != null && hpShown.has(key) ? hpShown.get(key) : 1;
-  if (key != null) hpShown.set(key, target);
-  fill.style.width = pct(target);
-  if (prev !== target) {
-    const hurt = flash && flash.kind === 'damage';
-    fill.classList.add('draining');
-    fill.style.setProperty('--hp-from', pct(prev));
-    fill.style.setProperty('--hp-to', pct(target));
-    fill.style.setProperty('--hp-delay', `${hurt ? flash.delay : 0}ms`);
-    fill.style.setProperty('--hp-span', `${hurt ? flash.span * flash.strikes : 220}ms`);
-  }
+  fill.style.transform = `scaleX(${Math.max(0, Math.min(1, hp.total)).toFixed(3)})`;
   seg.appendChild(fill);
   bar.appendChild(seg);
   return bar;
@@ -2471,7 +2449,7 @@ function entityButton({ kind, type, id, zoneId, unit, icon, label, count, meta, 
   // Segmented hp bar: one segment per unit, the last partially drained by the
   // pool's accumulated wounds; collapses to one bar for hordes. Appended last
   // so it paints above the badges.
-  if (hp) button.appendChild(hpBarEl(hp, null, flashKey, flash && flash.overlay));
+  if (hp) button.appendChild(hpBarEl(hp));
 
   if (!compact) {
     const body = document.createElement('span');
