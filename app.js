@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.77';
-const VERSION_TAG = 'siege splash, repair-all, header threat clock, tower cheat';
+const VERSION = '0.78';
+const VERSION_TAG = 'four fixed rows per zone; ranged units hold still';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -2586,7 +2586,9 @@ function zoneArmyTiles(zone) {
       jobIcon: 'defend', countLabel: pool[k],
       hp: i === 0 ? poolHp(pool) : null
     });
-    if (ARMY[k].melee) btn.classList.add('melee-attacker');   // bigger attack lunge
+    // Melee tiles lunge harder when they strike; ranged tiles don't move at
+    // all — their shot is the tell.
+    btn.classList.add(ARMY[k].melee ? 'melee-attacker' : 'ranged-attacker');
     return btn;
   });
 }
@@ -2617,7 +2619,7 @@ function garrisonTiles(zone) {
       countLabel: engaged ? g.units[t] : '?',
       hp: i === 0 ? garrisonHp(g) : null
     });
-    if (RAIDER_TYPES[t].melee) btn.classList.add('melee-attacker');
+    btn.classList.add(RAIDER_TYPES[t].melee ? 'melee-attacker' : 'ranged-attacker');
     return btn;
   });
   if (g.towersLeft > 0) {
@@ -2650,7 +2652,7 @@ function strikeTiles(zone) {
       countLabel: col[k],
       hp: i === 0 ? strikeHp(zone) : null
     });
-    if (ARMY[k].melee) btn.classList.add('melee-attacker');
+    btn.classList.add(ARMY[k].melee ? 'melee-attacker' : 'ranged-attacker');
     return btn;
   });
 }
@@ -2674,8 +2676,10 @@ function raidTilesAt(index) {
       icon: raid.icon, label: raid.label, danger: true,
       countLabel: raid.size, hp: raidHp(raid)
     });
-    // Melee raiders lunge harder when they strike.
-    if (RAIDER_TYPES[raid.kind] && RAIDER_TYPES[raid.kind].melee) btn.classList.add('melee-attacker');
+    // Melee raiders lunge harder when they strike; ranged ones stand still and
+    // let the projectile do the talking.
+    btn.classList.add(RAIDER_TYPES[raid.kind] && RAIDER_TYPES[raid.kind].melee
+      ? 'melee-attacker' : 'ranged-attacker');
     return btn;
   });
 }
@@ -2690,68 +2694,64 @@ function zoneFogged(state, zone) {
     && Object.keys(BUILDINGS).every(k => zone.structures[k] === 0);
 }
 
-// Render one zone as a stacked, tappable band (tapping empty band area selects
-// the whole zone; tapping a tile selects that tile).
-function renderZoneBand(zone) {
-  const cls = zone.status === 'occupied' ? 'occupied' : (zone.index === 0 ? 'home' : 'owned');
-  const fogged = zoneFogged(game, zone);
-  const rows = [];
-  const raids = raidTilesAt(zone.index);
-
-  if (zone.status === 'occupied') {
-    rows.push(tileRow(`z${zone.id}-foes`, garrisonTiles(zone)));   // enemies up top
-    const ours = strikeTiles(zone);                                // our force enters from the bottom
-    if (ours.length) rows.push(tileRow(`z${zone.id}-strike`, ours));
-    if (raids.length) rows.push(tileRow(`z${zone.id}-raids`, raids));
-    const band = zoneBand(cls, zone.id, rows, zone.terrain, fogged);
-    band.appendChild(zoneRewardChip(zone.garrison));   // the prize, top-right of the zone
-    return band;
-  }
-
-  // Owned zone: defenders, workers/nodes and buildings.
-  // No header tile or caption — tap the band to select it.
-  if (raids.length) rows.push(tileRow(`z${zone.id}-raids`, raids));
-  rows.push(tileRow(`z${zone.id}-army`, zoneArmyTiles(zone)));
-
-  // Live resource nodes with their crews (idle-workers tile when none live).
+// The zone's resource nodes with their crews — or an idle-workers tile when
+// nothing is left to work.
+function nodeTiles(zone) {
   const liveNodes = zone.nodes.filter(n => n.remaining > 0);
-  const nodeTiles = [];
   if (liveNodes.length === 0) {
     const idle = workersInZone(game, zone).filter(w => w.job === 'idle').length;
-    nodeTiles.push(entityButton({
+    return [entityButton({
       kind: 'workerGroup', type: 'idle', id: zone.id, zoneId: zone.id,
       icon: 'worker', label: 'idle workers', compact: true,
       countLabel: idle > 0 ? idle : null, dimmed: idle === 0
-    }));
+    })];
   }
-  liveNodes.forEach(node => {
-    const crew = workersAtNode(game, node).length;
-    nodeTiles.push(entityButton({
-      kind: 'node', type: node.type, id: node.id, zoneId: zone.id,
-      icon: node.icon, label: node.label, compact: true,
-      progressBars: nodeProgressBars(game, node), nodeId: node.id,
-      countLabel: crew > 0 ? crew : null, countIcon: crew > 0 ? 'worker' : null,
-      hp: nodeHp(game, node)
-    }));
-  });
-  rows.push(tileRow(`z${zone.id}-nodes`, nodeTiles));
+  return liveNodes.map(node => entityButton({
+    kind: 'node', type: node.type, id: node.id, zoneId: zone.id,
+    icon: node.icon, label: node.label, compact: true,
+    progressBars: nodeProgressBars(game, node), nodeId: node.id,
+    countLabel: workersAtNode(game, node).length || null,
+    countIcon: workersAtNode(game, node).length ? 'worker' : null,
+    hp: nodeHp(game, node)
+  }));
+}
 
-  const structTiles = [];
-  Object.keys(BUILDINGS).forEach(key => {
-    if (zone.structures[key] <= 0) return;
-    structTiles.push(entityButton({
-      kind: 'structure', type: key, id: zone.id, zoneId: zone.id, compact: true,
-      // Only home's hall wears the tier (keep/castle) — forward halls built
-      // afterwards are plain town halls, icon and all.
-      icon: key === 'hall' && zone.index === 0 ? hallTierIcon(game) : BUILDINGS[key].icon,
-      label: key === 'hall' && zone.index === 0 ? hallTierName(game) : BUILDINGS[key].label,
-      countLabel: zone.structures[key] > 1 ? zone.structures[key] : null,
-      hp: buildingHp(game, zone, key)
-    }));
-  });
-  rows.push(tileRow(`z${zone.id}-struct`, structTiles));
+// Our buildings standing in the zone, one tile per type.
+function structTiles(zone) {
+  return Object.keys(BUILDINGS).filter(key => zone.structures[key] > 0).map(key => entityButton({
+    kind: 'structure', type: key, id: zone.id, zoneId: zone.id, compact: true,
+    // Only home's hall wears the tier (keep/castle) — forward halls built
+    // afterwards are plain town halls, icon and all.
+    icon: key === 'hall' && zone.index === 0 ? hallTierIcon(game) : BUILDINGS[key].icon,
+    label: key === 'hall' && zone.index === 0 ? hallTierName(game) : BUILDINGS[key].label,
+    countLabel: zone.structures[key] > 1 ? zone.structures[key] : null,
+    hp: buildingHp(game, zone, key)
+  }));
+}
 
-  return zoneBand(cls, zone.id, rows, zone.terrain, fogged);
+// Render one zone as a tappable band (tapping empty band area selects the whole
+// zone; tapping a tile selects that tile).
+//
+// Every band carries the SAME FOUR ROWS in the same order, whether or not they
+// hold anything, so a zone is always four buttons tall and nothing below it
+// shifts when a fight starts or a pool empties out:
+//   1  theirs   — raiders standing here, plus an enemy zone's garrison and its
+//                 watch towers
+//   2  ours     — our defenders, or our assault column on an enemy zone
+//   3  ground   — resource nodes and their crews (ours to work once the zone is)
+//   4  built    — our buildings
+function renderZoneBand(zone) {
+  const cls = zone.status === 'occupied' ? 'occupied' : (zone.index === 0 ? 'home' : 'owned');
+  const occupied = zone.status === 'occupied';
+  const rows = [
+    tileRow(`z${zone.id}-foes`, [...raidTilesAt(zone.index), ...(occupied ? garrisonTiles(zone) : [])]),
+    tileRow(`z${zone.id}-army`, occupied ? strikeTiles(zone) : zoneArmyTiles(zone)),
+    tileRow(`z${zone.id}-nodes`, occupied ? [] : nodeTiles(zone)),
+    tileRow(`z${zone.id}-struct`, occupied ? [] : structTiles(zone))
+  ];
+  const band = zoneBand(cls, zone.id, rows, zone.terrain, zoneFogged(game, zone));
+  if (occupied) band.appendChild(zoneRewardChip(zone.garrison));   // the prize, top-right
+  return band;
 }
 
 // The scouting party out on the frontier: one tile per unit type in it, each
@@ -2774,10 +2774,9 @@ function scoutTiles(zone) {
 // you can send scouts from the zone behind it; the party out charting it shows
 // as tiles in the band.
 function unchartedBand(charting) {
-  const rows = [];
-  const scouts = scoutTiles(charting);
-  if (scouts.length) rows.push(tileRow(`z${charting.id}-scouts`, scouts));
-  rows.push(forecastStrip());
+  // Scout row always mounted (like every other band's rows) so sending a party
+  // out doesn't shove the world down a notch.
+  const rows = [tileRow(`z${charting.id}-scouts`, scoutTiles(charting)), forecastStrip()];
   return zoneBand('field', charting.id, rows);
 }
 

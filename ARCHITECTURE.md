@@ -160,6 +160,12 @@ and by the tower term in `defenseDamage` — anything flagged `splash: true`
 (ballistas, cannon towers) scales with the size of the stack it fires into.
 `foes` is the raid's `size`, or `garrisonCount(g)` when assaulting.
 
+### Zone bands (fixed four rows)
+`renderZoneBand` always emits the same four `tileRow`s — theirs / ours /
+ground / built — mounted whether or not they hold tiles, and `.world-zone`
+is `min-height: calc(var(--tile) * 4)`. Add content to an existing row;
+adding a fifth row breaks the "nothing moves" guarantee.
+
 ### Combat feedback (flashes, strikes, projectiles)
 `flashTile(key, kind, hits, hold)` — `hits` draws one strike per attacker (up
 to `HIT_MAX`, `HIT_SPAN_MS` apart, via `--hits`/`--hit-span` on the tile);

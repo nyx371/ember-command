@@ -291,7 +291,7 @@ button { touch-action: manipulation; }
   /* Every section stays mounted even when it has no tiles, so rows never jump
      as pools fill and empty. This reserves one tile's worth of height. */
   flex: 0 0 auto;
-  min-height: 44px;
+  min-height: var(--tile);
 }
 
 /* The three bands of the map: far field, near base, base. Each is tinted a
@@ -307,7 +307,10 @@ button { touch-action: manipulation; }
   flex-direction: column;
   gap: 3px;
   padding: 5px;
-  min-height: calc(var(--tile) * 8);   /* every zone stands at least eight button rows tall */
+  /* Every zone is exactly four button rows tall: theirs, ours, the ground,
+     our buildings (see renderZoneBand). The rows are always mounted, so the
+     stack never shifts as pools fill and empty. */
+  min-height: calc(var(--tile) * 4);
   /* A single grass tile (ripped from the tileset) repeated across the band at
      64px. Nearest-neighbour keeps the pixel-art crisp when scaled up. */
   background: url('assets/tiles/grass.png') top left / 64px repeat;
@@ -330,7 +333,6 @@ button { touch-action: manipulation; }
   background: rgba(4, 6, 12, 0.62);
   pointer-events: none;
 }
-.zone-home  { min-height: calc(var(--tile) * 8); }
 /* Terrain variety: some zones are brown dirt instead of grass. */
 .world-zone.terrain-dirt { background: url('assets/tiles/dirt.png') top left / 64px repeat; }
 /* A selected band gets an inset ring: blue for zones you own, light grey for
@@ -512,6 +514,9 @@ button { touch-action: manipulation; }
 .entity.danger.flash-attack { animation-name: tile-lunge-down; }
 .entity.melee-attacker.flash-attack { animation-name: tile-lunge-up-strong; }
 .entity.danger.melee-attacker.flash-attack { animation-name: tile-lunge-down-strong; }
+/* Ranged units hold their ground — the projectile they loose is the tell, so a
+   lunge on top of it just reads as noise. (Towers still recoil as they fire.) */
+.entity.ranged-attacker.flash-attack { animation: none; }
 
 /* Placeholder projectiles: a sprite per shot, flown from the shooter's tile to
    its target's by app.js (WAAPI) and removed on landing. Decorative only — it
