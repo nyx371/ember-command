@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.75';
-const VERSION_TAG = 'fix: raiders no longer stall on buildings they cannot target';
+const VERSION = '0.76';
+const VERSION_TAG = 'strike-by-strike volleys and flying projectiles';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -58,9 +58,9 @@ const RAID_VOLLEY_EVERY = 3;    // ...raiders every 3 — offset cadences, not l
 // can stop them).
 const RAIDER_TYPES = {
   grunt:      { icon: 'enemy',      label: 'grunts',      hp: 60,  dmg: 7,  hpPerWave: 4, dmgPerWave: 0.5, baseSize: 1, sizePerWave: 1,   fromWave: 0,  bounty: 30, melee: true },
-  axethrower: { icon: 'axethrower', label: 'axethrowers', hp: 40,  dmg: 9,  hpPerWave: 3, dmgPerWave: 0.5, baseSize: 1, sizePerWave: 1,   fromWave: 5,  bounty: 40 },
+  axethrower: { icon: 'axethrower', label: 'axethrowers', hp: 40,  dmg: 9,  hpPerWave: 3, dmgPerWave: 0.5, baseSize: 1, sizePerWave: 1,   fromWave: 5,  bounty: 40, shot: 'thrownaxe' },
   ogre:       { icon: 'ogre',       label: 'ogres',       hp: 110, dmg: 12, hpPerWave: 4, dmgPerWave: 0.5, baseSize: 1, sizePerWave: 0.5, fromWave: 9,  bounty: 60, melee: true },
-  catapult:   { icon: 'catapult',   label: 'catapults',   hp: 110, dmg: 25, hpPerWave: 3, dmgPerWave: 1,   baseSize: 1, sizePerWave: 0.5, fromWave: 12, bounty: 80, siege: true }
+  catapult:   { icon: 'catapult',   label: 'catapults',   hp: 110, dmg: 25, hpPerWave: 3, dmgPerWave: 1,   baseSize: 1, sizePerWave: 0.5, fromWave: 12, bounty: 80, siege: true, shot: 'boulder' }
 };
 const WORKER_HP = 30;
 const REPAIR_HP_PER_TICK = 20;  // how fast one worker patches a building up
@@ -69,6 +69,17 @@ const REPAIR_HP_PER_TICK = 20;  // how fast one worker patches a building up
 const HEAL_DEFEND_PER_TICK = 1;
 const WORKER_HEAL_PER_TICK = 1;   // very slow, and only while not under attack
 const HP_BAR_LINGER_MS = 3000;  // keep a combat hp bar visible across volleys
+// Combat animation. A volley is drawn as one strike per attacker (up to
+// HIT_MAX), HIT_SPAN_MS apart, so five footmen read as five slashes in quick
+// succession rather than one nudge. The victim's hurt flash is held back to
+// land WITH the strike that caused it: a swing connects after MELEE_LAND_MS, a
+// projectile after PROJECTILE_MS — which is also how long its sprite spends in
+// the air. Total (hold + jitter + span×hits) must stay under one tick, or the
+// next render restarts the animation mid-sequence.
+const HIT_SPAN_MS = 100;
+const HIT_MAX = 5;
+const MELEE_LAND_MS = 110;
+const PROJECTILE_MS = 260;
 // Raider targeting: warriors first, then the towers shooting at them, then
 // workers, then the remaining buildings — the town hall falls last.
 const RAID_TOWER_TARGETS = ['cannontower', 'guardtower', 'tower'];
@@ -190,18 +201,18 @@ const BUILDINGS = {
     blurb: s => `Blacksmith · weapons ${s.tech.weapons}/2 · armor ${s.tech.armor}/2`
   },
   tower: {
-    icon: 'tower', label: 'tower', hp: 100, dmg: 3,
+    icon: 'tower', label: 'tower', hp: 100, dmg: 3, shot: 'arrow',
     build: { cost: { gold: 550, lumber: 200 }, time: 60, requires: ['lumbermill'] },
     blurb: 'Tower · upgradable to guard tower'
   },
   guardtower: {
     icon: 'guardtower', label: 'guard tower',   // via tower upgrade, not the build menu
-    hp: 130, dmg: 8,
+    hp: 130, dmg: 8, shot: 'arrow',
     blurb: 'Guard Tower · base defense'
   },
   cannontower: {
     icon: 'cannontower', label: 'cannon tower',   // via tower upgrade, needs blacksmith
-    hp: 160, dmg: 14,
+    hp: 160, dmg: 14, shot: 'cannonball',
     blurb: 'Cannon Tower · heavy base defense'
   },
   stables: {
@@ -253,8 +264,8 @@ const UNITS = {
 const ARMY = {
   footmen:   { icon: 'footman',  label: 'footmen',   singular: 'footman',  hp: 60,  dmg: 7,  attack: 0.10, melee: true },
   knights:   { icon: 'knight',   label: 'knights',   singular: 'knight',   hp: 90,  dmg: 10, attack: 0.15, melee: true },
-  archers:   { icon: 'archer',   label: 'archers',   singular: 'archer',   hp: 40,  dmg: 5,  attack: 0.06 },
-  ballistas: { icon: 'ballista', label: 'ballistas', singular: 'ballista', hp: 110, dmg: 25, attack: 0.50 }
+  archers:   { icon: 'archer',   label: 'archers',   singular: 'archer',   hp: 40,  dmg: 5,  attack: 0.06, shot: 'arrow' },
+  ballistas: { icon: 'ballista', label: 'ballistas', singular: 'ballista', hp: 110, dmg: 25, attack: 0.50, shot: 'bolt' }
 };
 
 const GUARD_TOWER = { cost: { gold: 500, lumber: 150 }, time: 140 };
@@ -314,6 +325,11 @@ const ICONS = {
   ogre: 'assets/icons/o_unit_ogre.png',
   catapult: 'assets/icons/o_unit_catapult.png',
   stronghold: 'assets/icons/o_bld_fortress.png',
+  arrow: 'assets/icons/c_arrow1.png',
+  bolt: 'assets/icons/c_arrow3.png',
+  cannonball: 'assets/icons/c_hcannon1.png',
+  thrownaxe: 'assets/icons/c_axe1.png',
+  boulder: 'assets/icons/c_ocannon1.png',
   axe2: 'assets/icons/c_axe2.png',
   axe3: 'assets/icons/c_axe3.png',
   sword2: 'assets/icons/c_sword2.png',
@@ -1265,11 +1281,31 @@ function defenseDamage(state, zone, raid) {
   return poolDamage(state, zone.army) + towerDmg;
 }
 
+// Send the sprites for one volley fired out of `zone` — its ranged defenders,
+// and its towers unless the target sits beyond their reach. Returns true if
+// anything is in the air, which is what holds the target's hurt flash back.
+function queueZoneShots(state, zone, targetSel, towersFire = true) {
+  let flew = false;
+  Object.keys(ARMY).forEach(t => {
+    if (!ARMY[t].shot || zone.army[t] <= 0) return;
+    queueShot(selArmy(zone.id, t), targetSel, ARMY[t].shot, zone.army[t]);
+    flew = true;
+  });
+  if (towersFire) {
+    RAID_TOWER_TARGETS.forEach(k => {
+      if (!BUILDINGS[k].shot || zone.structures[k] <= 0) return;
+      queueShot(selStruct(zone.id, k), targetSel, BUILDINGS[k].shot, zone.structures[k]);
+      flew = true;
+    });
+  }
+  return flew;
+}
+
 // Damage flows into a zone's defenders' wounds; every full hp's worth kills one
 // unit (footmen soak before archers).
-function damagePool(state, zone, dmg) {
+function damagePool(state, zone, dmg, hits = 1, hold = 0) {
   const pool = zone.army;
-  flashTile(`army:defend:${zone.id}`, 'damage');
+  flashTile(`army:defend:${zone.id}`, 'damage', hits, hold);
   pool.lastHitAt = performance.now();
   pool.wounds += dmg;
   let type = Object.keys(ARMY).find(k => pool[k] > 0);
@@ -1286,12 +1322,12 @@ function workersInZoneLive(state, zone) {
   return state.workers.filter(w => String(w.zoneId) === String(zone.id));
 }
 
-function damageWorkers(state, zone, dmg) {
+function damageWorkers(state, zone, dmg, hits = 1, hold = 0) {
   state.workerLastHitAt = performance.now();
   state.workerWounds += dmg;
   const here = () => workersInZoneLive(state, zone).filter(w => w.job !== 'building');
   const target = here().pop();
-  if (target && target.nodeId) flashTile(`node:${target.job}:${target.nodeId}`, 'damage');
+  if (target && target.nodeId) flashTile(`node:${target.job}:${target.nodeId}`, 'damage', hits, hold);
   while (state.workerWounds >= WORKER_HP && workersInZoneLive(state, zone).length > 0) {
     state.workerWounds -= WORKER_HP;
     // Builders die last; a dead builder takes its construction down with it.
@@ -1321,13 +1357,13 @@ function razeOrder() {
 
 // Raiders razing a zone's buildings: damage accumulates on the building type
 // (persisting until repaired), destroying one instance when it exceeds its hp.
-function damageBuildings(state, zone, raid, dmg, order) {
+function damageBuildings(state, zone, raid, dmg, order, hits = 1, hold = 0) {
   if (!raid.targetType || !order.includes(raid.targetType) || zone.structures[raid.targetType] <= 0) {
     raid.targetType = order.find(k => zone.structures[k] > 0) || null;
   }
   if (!raid.targetType) return;   // nothing left standing here
   const key = raid.targetType;
-  flashTile(`structure:${key}:${zone.id}`, 'damage');
+  flashTile(`structure:${key}:${zone.id}`, 'damage', hits, hold);
   zone.structureDamage[key] += dmg;
   if (zone.structureDamage[key] >= buildingMaxHp(state, key)) {
     zone.structures[key] -= 1;
@@ -1408,10 +1444,17 @@ function raidTick(state) {
       const peers = state.raids.filter(r => r.index === raid.index).length || 1;
       const dealt = defenseDamage(state, zone, raid) / peers;
       if (dealt > 0) {
-        flashTile(`enemy:raid:${raid.id}`, 'damage');
-        flashTile(`army:defend:${zone.id}`, 'attack');
+        // One strike drawn per defender (and per firing tower); anything with a
+        // `shot` sends a sprite, and the raid's hurt flash waits for it to land.
+        const defenders = poolCount(zone.army);
+        const towers = raid.siege ? 0
+          : RAID_TOWER_TARGETS.reduce((n, k) => n + zone.structures[k], 0);
+        const flew = queueZoneShots(state, zone, selRaid(raid.id), !raid.siege);
+        flashTile(`enemy:raid:${raid.id}`, 'damage', defenders + towers,
+          flew ? PROJECTILE_MS : MELEE_LAND_MS);
+        flashTile(`army:defend:${zone.id}`, 'attack', defenders);
         RAID_TOWER_TARGETS.forEach(k => {
-          if (zone.structures[k] > 0) flashTile(`structure:${k}:${zone.id}`, 'attack');
+          if (!raid.siege && zone.structures[k] > 0) flashTile(`structure:${k}:${zone.id}`, 'attack', zone.structures[k]);
         });
         raid.lastHitAt = performance.now();
       }
@@ -1435,16 +1478,32 @@ function raidTick(state) {
     if (raid.foeStrikeIn > 0) return;
     raid.foeStrikeIn = RAID_VOLLEY_EVERY;
     const dmg = raid.size * raid.grunt.dmg;
-    flashTile(`enemy:raid:${raid.id}`, 'attack');
+    const shot = RAIDER_TYPES[raid.kind].shot;
+    const hits = raid.size;
+    const land = shot ? PROJECTILE_MS : MELEE_LAND_MS;
+    flashTile(`enemy:raid:${raid.id}`, 'attack', hits);
     const towersStanding = RAID_TOWER_TARGETS.some(k => zone.structures[k] > 0);
+    const atStructure = () => {
+      if (raid.targetType) queueShot(selRaid(raid.id), selStruct(zone.id, raid.targetType), shot, hits);
+    };
     if (raid.siege) {
-      damageBuildings(state, zone, raid, dmg, towersStanding ? RAID_TOWER_TARGETS : razeOrder());
+      damageBuildings(state, zone, raid, dmg, towersStanding ? RAID_TOWER_TARGETS : razeOrder(), hits, land);
+      atStructure();
       return;
     }
-    if (poolCount(zone.army) > 0) damagePool(state, zone, dmg);
-    else if (towersStanding) damageBuildings(state, zone, raid, dmg, RAID_TOWER_TARGETS);
-    else if (workersInZoneLive(state, zone).length > 0) damageWorkers(state, zone, dmg);
-    else damageBuildings(state, zone, raid, dmg, razeOrder());
+    if (poolCount(zone.army) > 0) {
+      const front = Object.keys(ARMY).find(k => zone.army[k] > 0);
+      queueShot(selRaid(raid.id), selArmy(zone.id, front), shot, hits);
+      damagePool(state, zone, dmg, hits, land);
+    } else if (towersStanding) {
+      damageBuildings(state, zone, raid, dmg, RAID_TOWER_TARGETS, hits, land);
+      atStructure();
+    } else if (workersInZoneLive(state, zone).length > 0) {
+      damageWorkers(state, zone, dmg, hits, land);
+    } else {
+      damageBuildings(state, zone, raid, dmg, razeOrder(), hits, land);
+      atStructure();
+    }
   });
   state.raids = state.raids.filter(r => r.size > 0);
 }
@@ -1463,12 +1522,12 @@ function strikeCount(col) {
 }
 
 // Damage the garrison deals back into our strike column.
-function damageStrike(state, zone, dmg) {
+function damageStrike(state, zone, dmg, hits = 1, hold = 0) {
   const g = zone.garrison;
   const strike = zone.strike;
   strike.wounds = (strike.wounds || 0) + dmg;
   g.strikeHitAt = performance.now();
-  flashTile(`zone:head:${zone.id}`, 'damage');
+  flashTile(`zone:head:${zone.id}`, 'damage', hits, hold);
   let type = Object.keys(ARMY).find(k => strike[k] > 0);
   while (type && strike.wounds >= unitHp(state, type)) {
     strike.wounds -= unitHp(state, type);
@@ -1541,8 +1600,18 @@ function garrisonTick(state) {
       g.myStrikeIn = DEFENSE_VOLLEY_EVERY;
       const dealt = Object.keys(ARMY).reduce((sum, k) => sum + (zone.strike[k] || 0) * unitDmg(state, k), 0);
       if (dealt > 0) {
-        flashTile(`zone:foe:${zone.id}`, 'damage');    // enemies take the hit
-        flashTile(`zone:head:${zone.id}`, 'attack');   // our units lunge in
+        // One strike per unit in the column; our ranged types loose a sprite at
+        // whatever the garrison is leading with, and the hurt waits for it.
+        const hits = strikeCount(zone.strike);
+        const mark = Object.keys(RAIDER_TYPES).find(t => g.units[t] > 0) || 'tower';
+        let flew = false;
+        Object.keys(ARMY).forEach(k => {
+          if (!ARMY[k].shot || (zone.strike[k] || 0) <= 0) return;
+          queueShot(selStrike(zone.id, k), selFoe(zone.id, mark), ARMY[k].shot, zone.strike[k]);
+          flew = true;
+        });
+        flashTile(`zone:foe:${zone.id}`, 'damage', hits, flew ? PROJECTILE_MS : MELEE_LAND_MS);
+        flashTile(`zone:head:${zone.id}`, 'attack', hits);   // our units lunge in
         g.lastHitAt = performance.now();
         const towersBefore = g.towersLeft;
         damageGarrison(g, dealt);
@@ -1559,8 +1628,16 @@ function garrisonTick(state) {
     g.foeStrikeIn = RAID_VOLLEY_EVERY;
     const dmg = garrisonOutgoing(g);
     if (dmg > 0) {
-      flashTile(`zone:foe:${zone.id}`, 'attack');   // enemies lunge at our force
-      damageStrike(state, zone, dmg);
+      const hits = garrisonCount(g);
+      const front = Object.keys(ARMY).find(k => (zone.strike[k] || 0) > 0);
+      let flew = false;
+      Object.keys(RAIDER_TYPES).forEach(t => {
+        if (!RAIDER_TYPES[t].shot || g.units[t] <= 0 || !front) return;
+        queueShot(selFoe(zone.id, t), selStrike(zone.id, front), RAIDER_TYPES[t].shot, g.units[t]);
+        flew = true;
+      });
+      flashTile(`zone:foe:${zone.id}`, 'attack', hits);   // enemies lunge at our force
+      damageStrike(state, zone, dmg, hits, flew ? PROJECTILE_MS : MELEE_LAND_MS);
     }
   });
 }
@@ -1995,15 +2072,22 @@ function commandFaded(state, command) {
 // (a transform animation) — so a tile can shake from its own volley while
 // flashing red from the one it just took, in parallel.
 const FLASH_MS = 600;
+const LUNGE_MS = 350;
 const tileFlashes = new Map();
 
-function flashTile(key, kind) {
-  // Combat flashes get a per-tile 50–100ms stagger (via CSS animation-delay)
-  // so simultaneous volleys don't all strike in the same frame.
-  const delay = kind === 'spawn' ? 0 : 50 + Math.round(Math.random() * 50);
+// `hits` = how many individual strikes to draw (one per attacker, capped);
+// `hold` = how long before the first one lands (flight/swing time). Combat
+// flashes also get a small per-tile jitter so simultaneous volleys don't all
+// begin in the same frame.
+function flashTile(key, kind, hits = 1, hold = 0) {
+  const strikes = Math.max(1, Math.min(HIT_MAX, Math.round(hits || 1)));
+  const span = strikes > 1 ? HIT_SPAN_MS : (kind === 'attack' ? LUNGE_MS : FLASH_MS);
+  const jitter = kind === 'spawn' ? 0
+    : strikes > 1 ? 20 + Math.round(Math.random() * 30) : 50 + Math.round(Math.random() * 50);
+  const delay = (kind === 'spawn' ? 0 : hold) + jitter;
   const entry = tileFlashes.get(key) || {};
   entry[kind === 'attack' ? 'attack' : 'overlay'] =
-    { kind, delay, until: performance.now() + FLASH_MS + delay };
+    { kind, delay, strikes, span, until: performance.now() + delay + span * strikes + 60 };
   tileFlashes.set(key, entry);
 }
 
@@ -2019,6 +2103,60 @@ function tileFlash(key) {
     return null;
   }
   return entry;
+}
+
+// ── Projectiles ────────────────────────────────────────────────────────────
+// A ranged volley queues shots; the next render flies a placeholder sprite from
+// the shooter's tile to its target's over PROJECTILE_MS — exactly as long as
+// that target's hurt flash is held back, so the flash lands with the impact.
+// Endpoints are CSS selectors over the data attributes tiles already carry, so
+// nothing needs to be threaded through the render.
+const selArmy   = (zoneId, type) => `.entity[data-kind="army"][data-type="${type}"][data-zone="${zoneId}"]`;
+const selStruct = (zoneId, key)  => `.entity[data-kind="structure"][data-type="${key}"][data-zone="${zoneId}"]`;
+const selRaid   = id             => `.entity[data-kind="enemy"][data-id="${id}"]`;
+const selStrike = (zoneId, type) => `.entity[data-kind="zone"][data-type="head"][data-zone="${zoneId}"][data-unit="${type}"]`;
+const selFoe    = (zoneId, type) => `.entity[data-kind="zone"][data-type="foe"][data-zone="${zoneId}"][data-unit="${type}"]`;
+
+const pendingShots = [];
+
+function queueShot(from, to, icon, hits = 1) {
+  if (!from || !to || !icon || !ICONS[icon]) return;
+  pendingShots.push({ from, to, icon, hits: Math.max(1, Math.min(HIT_MAX, Math.round(hits || 1))) });
+}
+
+// Fire everything queued since the last render. Sprites live in the world
+// canvas (so they scroll with it) and remove themselves on landing; a shot
+// whose shooter or target is no longer on screen is simply dropped.
+function launchShots() {
+  const shots = pendingShots.splice(0, pendingShots.length);
+  if (!shots.length || !dom.world.querySelector) return;
+  const canvas = dom.world.getBoundingClientRect();
+  const point = el => {
+    const r = el.getBoundingClientRect();
+    return {
+      x: r.left + r.width / 2 - canvas.left + dom.world.scrollLeft,
+      y: r.top + r.height / 2 - canvas.top + dom.world.scrollTop
+    };
+  };
+  shots.forEach(shot => {
+    const src = dom.world.querySelector(shot.from);
+    const dst = dom.world.querySelector(shot.to);
+    if (!src || !dst || !src.animate) return;
+    const a = point(src), b = point(dst);
+    for (let i = 0; i < shot.hits; i += 1) {
+      const el = makeIcon(ICONS[shot.icon], 'shot');
+      el.className = 'icon projectile';
+      el.style.left = `${a.x}px`;
+      el.style.top = `${a.y}px`;
+      dom.world.appendChild(el);
+      const flight = el.animate([
+        { transform: 'translate(-50%, -50%)' },
+        { transform: `translate(calc(${Math.round(b.x - a.x)}px - 50%), calc(${Math.round(b.y - a.y)}px - 50%))` }
+      ], { duration: PROJECTILE_MS, delay: i * HIT_SPAN_MS, easing: 'linear', fill: 'backwards' });
+      flight.onfinish = () => el.remove();
+      flight.oncancel = () => el.remove();
+    }
+  });
 }
 
 let errorTimer = null;
@@ -2172,7 +2310,7 @@ function hpBarEl(hp, extraClass) {
   return bar;
 }
 
-function entityButton({ kind, type, id, zoneId, icon, label, count, meta, danger, compact, jobIcon, badgeBlink, progressBars, nodeId, jobUid, countLabel, countIcon, hp, dimmed }) {
+function entityButton({ kind, type, id, zoneId, unit, icon, label, count, meta, danger, compact, jobIcon, badgeBlink, progressBars, nodeId, jobUid, countLabel, countIcon, hp, dimmed }) {
   const button = document.createElement('button');
   const classes = ['entity'];
   if (danger)  classes.push('danger');
@@ -2189,11 +2327,15 @@ function entityButton({ kind, type, id, zoneId, icon, label, count, meta, danger
   }
   if (flash && flash.attack) classes.push('flash-attack');
   button.className = classes.join(' ');
-  if (flash && flash.overlay && flash.overlay.delay) {
+  if (flash && flash.overlay) {
     button.style.setProperty('--flash-delay', `${flash.overlay.delay}ms`);
+    button.style.setProperty('--flash-span', `${flash.overlay.span}ms`);
+    button.style.setProperty('--flash-hits', flash.overlay.strikes);
   }
-  if (flash && flash.attack && flash.attack.delay) {
+  if (flash && flash.attack) {
     button.style.setProperty('--shake-delay', `${flash.attack.delay}ms`);
+    button.style.setProperty('--hit-span', `${flash.attack.span}ms`);
+    button.style.setProperty('--hits', flash.attack.strikes);
   }
   const zoneMatch = zoneId == null || String(game.selected.zoneId) === String(zoneId);
   if (game.selected.kind === kind && game.selected.type === type && String(game.selected.id) === String(id) && zoneMatch) {
@@ -2203,6 +2345,9 @@ function entityButton({ kind, type, id, zoneId, icon, label, count, meta, danger
   button.dataset.type = type;
   button.dataset.id = id;
   if (zoneId != null) button.dataset.zone = zoneId;
+  // Strike columns and garrisons share one kind/type per zone, so the unit tag
+  // is what tells their per-type tiles apart (projectile endpoints, below).
+  if (unit) button.dataset.unit = unit;
   button.title = label;
   button.setAttribute('aria-label', label);
 
@@ -2279,6 +2424,7 @@ function render() {
     if (scrollPos[el.dataset.scroll]) el.scrollLeft = scrollPos[el.dataset.scroll];
   });
   if (worldScrollTop) dom.world.scrollTop = worldScrollTop;
+  launchShots();   // the tiles exist now, so ranged volleys can fly
   renderOrders();
   renderLog();
   updateRaidAlerts();
@@ -2430,7 +2576,7 @@ function garrisonTiles(zone) {
   const engaged = !!zone.strike;   // veil counts until we're assaulting
   const tiles = Object.keys(RAIDER_TYPES).filter(t => g.units[t] > 0).map((t, i) => {
     const btn = entityButton({
-      kind: 'zone', type: 'foe', id: zone.id, zoneId: zone.id, compact: true,
+      kind: 'zone', type: 'foe', id: zone.id, zoneId: zone.id, unit: t, compact: true,
       icon: RAIDER_TYPES[t].icon, label: `${engaged ? g.units[t] : 'unknown number of'} ${RAIDER_TYPES[t].label} at ${zone.name}`, danger: true,
       countLabel: engaged ? g.units[t] : '?',
       hp: i === 0 ? garrisonHp(g) : null
@@ -2440,7 +2586,7 @@ function garrisonTiles(zone) {
   });
   if (g.towersLeft > 0) {
     tiles.push(entityButton({
-      kind: 'zone', type: 'foe', id: zone.id, zoneId: zone.id, compact: true,
+      kind: 'zone', type: 'foe', id: zone.id, zoneId: zone.id, unit: 'tower', compact: true,
       icon: 'orctower', label: `${engaged ? g.towersLeft : 'unknown'} watch towers at ${zone.name}`, danger: true,
       countLabel: engaged ? g.towersLeft : '?'
     }));
@@ -2463,7 +2609,7 @@ function strikeTiles(zone) {
   if (!col) return [];
   return Object.keys(ARMY).filter(k => col[k] > 0).map((k, i) => {
     const btn = entityButton({
-      kind: 'zone', type: 'head', id: zone.id, zoneId: zone.id, compact: true,
+      kind: 'zone', type: 'head', id: zone.id, zoneId: zone.id, unit: k, compact: true,
       icon: ARMY[k].icon, label: `${col[k]} ${ARMY[k].label} assaulting ${zone.name}`,
       countLabel: col[k],
       hp: i === 0 ? strikeHp(zone) : null

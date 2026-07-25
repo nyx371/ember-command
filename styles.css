@@ -266,6 +266,7 @@ button { touch-action: manipulation; }
 @keyframes raid-alert-pulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
 
 .world-canvas {
+  position: relative;   /* projectiles are absolutely placed in here */
   min-height: 0;
   padding: 5px;
   display: flex;
@@ -470,18 +471,22 @@ button { touch-action: manipulation; }
   inset: 0;
   pointer-events: none;
   border-radius: 4px;
-  /* Hidden until its (per-tile staggered) delay elapses, then pops and fades —
-     simultaneous volleys land 50–100ms apart instead of as one frame. */
+  /* Hidden until its delay elapses (the swing/flight time of the strike that
+     caused it, plus a small per-tile jitter), then pops and fades. A volley of
+     several attackers repeats the pop once per strike, --hit-span apart, so
+     five hits read as five distinct flashes rather than one long smear. */
   opacity: 0;
-  animation: flash-fade 0.6s ease-out forwards;
+  animation: flash-fade var(--flash-span, 0.6s) ease-out forwards;
   animation-delay: var(--flash-delay, 0ms);
+  animation-iteration-count: var(--flash-hits, 1);
 }
 .entity.flash-damage::after { background: rgba(214, 58, 40, 0.45); }
 .entity.flash-spawn::after  { background: rgba(255, 255, 255, 0.30); }
 
-/* Attackers lunge subtly as their volley lands: my units nudge upward
-   (toward the enemy at the top of the map), enemies nudge downward (toward
-   my base). Pure transforms — no relayout of neighbours. */
+/* Attackers lunge as they strike: my units nudge upward (toward the enemy at
+   the top of the map), enemies nudge downward (toward my base). The lunge
+   repeats once per attacker in the volley (--hits), each --hit-span apart, so a
+   group of five reads as five quick swings. Pure transforms — no relayout. */
 @keyframes tile-lunge-up {
   0%, 100% { transform: translateY(0); }
   30% { transform: translateY(-3px); }
@@ -499,10 +504,26 @@ button { touch-action: manipulation; }
   0%, 100% { transform: translateY(0); }
   35% { transform: translateY(10px); }
 }
-.entity.flash-attack { animation: tile-lunge-up 0.35s ease-out; animation-delay: var(--shake-delay, 0ms); }
+.entity.flash-attack {
+  animation: tile-lunge-up var(--hit-span, 0.35s) ease-out;
+  animation-delay: var(--shake-delay, 0ms);
+  animation-iteration-count: var(--hits, 1);
+}
 .entity.danger.flash-attack { animation-name: tile-lunge-down; }
-.entity.melee-attacker.flash-attack { animation-name: tile-lunge-up-strong; animation-duration: 0.42s; }
+.entity.melee-attacker.flash-attack { animation-name: tile-lunge-up-strong; }
 .entity.danger.melee-attacker.flash-attack { animation-name: tile-lunge-down-strong; }
+
+/* Placeholder projectiles: a sprite per shot, flown from the shooter's tile to
+   its target's by app.js (WAAPI) and removed on landing. Decorative only — it
+   sits above the fog wash and never takes a tap. */
+.projectile {
+  position: absolute;
+  z-index: 3;
+  width: 20px;
+  height: 20px;
+  pointer-events: none;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.75));
+}
 
 /* Segmented hp bar along a tile's bottom edge: one segment per unit, drained
    left-to-right; collapses to one continuous bar for hordes (>20). */

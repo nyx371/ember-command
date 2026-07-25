@@ -153,6 +153,21 @@ adds `.zone-fogged`, whose `::before` washes the band dark. Uncharted bands
 are flat black via `.zone-field`. Presence, not memory: the wash comes back
 the moment a zone empties out.
 
+### Combat feedback (flashes, strikes, projectiles)
+`flashTile(key, kind, hits, hold)` — `hits` draws one strike per attacker (up
+to `HIT_MAX`, `HIT_SPAN_MS` apart, via `--hits`/`--hit-span` on the tile);
+`hold` delays the first one so a victim's hurt flash lands WITH the blow —
+`MELEE_LAND_MS` for a swing, `PROJECTILE_MS` for a shot. Keep
+`hold + span × hits` under one tick or the next render restarts it.
+Ranged attackers carry `shot: '<icon>'` (ARMY / RAIDER_TYPES / BUILDINGS
+towers); combat code calls `queueShot(fromSel, toSel, icon, hits)` and
+`launchShots()` (end of `render()`) flies the sprite tile-to-tile with WAAPI
+over `PROJECTILE_MS`. Endpoints are selectors over the data attributes tiles
+already carry (`selArmy`/`selStruct`/`selRaid`/`selStrike`/`selFoe`) — the
+per-type tiles that share a zone-level kind/type are told apart by
+`data-unit`. There is **no splash/AoE**: damage is a single pooled number per
+volley.
+
 ### Timed jobs (one system)
 `game.jobs` — shared shape `{ uid, kind, icon, label, duration, remaining,
 cost, complete }` plus:
