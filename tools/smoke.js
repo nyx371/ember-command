@@ -51,7 +51,7 @@ const src = fs.readFileSync(appPath, 'utf8');
 const exports_ = ['game', 'gameTick', 'runCommand', 'selectEntity', 'selectedCommands',
   'cancelJob', 'supplyCap', 'supplyUsed', 'zoneById', 'zoneByIndex', 'makeZone',
   'makeGarrison', 'GARRISON_POOL', 'STRONGHOLD', 'exploreFrom', 'startTransfer',
-  'executeMoveOne', 'spawnRaid', 'poolCount'];
+  'executeMoveOne', 'spawnRaid', 'poolCount', 'poolDamage', 'splashFactor'];
 eval(src + '\n;globalThis.__X = {' + exports_.join(',') + '};');
 const X = globalThis.__X;
 
@@ -209,6 +209,26 @@ X.runCommand('train-worker');
 const trainJob = X.game.jobs.find(j => j.kind === 'train');
 assert(trainJob && trainJob.duration === 14, 'train duration scaled by TIME_SCALE (45 × 0.3)');
 X.cancelJob(X.game, trainJob.uid);
+
+// ── Siege splash: a ballista hits harder into a big stack ────────────────
+const soloBallista = X.poolDamage(X.game, { ballistas: 1 }, 1);
+const massBallista = X.poolDamage(X.game, { ballistas: 1 }, 12);
+assert(soloBallista === 25, 'ballista deals its base damage to a lone foe');
+assert(massBallista === 50, 'ballista damage caps at 2x into a big stack');
+assert(X.poolDamage(X.game, { footmen: 3 }, 12) === X.poolDamage(X.game, { footmen: 3 }, 1),
+  'non-siege units get no splash bonus');
+assert(X.splashFactor(1) === 1 && X.splashFactor(3) > 1, 'splash scales from one foe upward');
+
+// ── Repair all: one command patches every damaged building in the zone ────
+home.structureDamage.hall = 120;
+home.structureDamage.barracks = 60;
+X.selectEntity('zone', 'band', home.id, home.id);
+X.runCommand('zone-repair');
+const repairs = X.game.jobs.filter(j => j.kind === 'construct' && j.repairKey);
+assert(repairs.length === 2, 'repair-all queued both damaged buildings');
+repairs.forEach(j => X.cancelJob(X.game, j.uid));
+home.structureDamage.hall = 0;
+home.structureDamage.barracks = 0;
 
 // ── Stronghold falls -> victory (shrunken for test speed) ─────────────────
 let z3 = X.zoneByIndex(X.game, 3) || (X.game.zones.push(X.makeZone(3, 0)), X.zoneByIndex(X.game, 3));

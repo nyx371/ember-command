@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.76';
-const VERSION_TAG = 'strike-by-strike volleys and flying projectiles';
+const VERSION = '0.77';
+const VERSION_TAG = 'siege splash, repair-all, header threat clock, tower cheat';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -76,6 +76,13 @@ const HP_BAR_LINGER_MS = 3000;  // keep a combat hp bar visible across volleys
 // projectile after PROJECTILE_MS — which is also how long its sprite spends in
 // the air. Total (hold + jitter + span×hits) must stay under one tick, or the
 // next render restarts the animation mid-sequence.
+// Siege weapons shell a whole formation rather than one target: their damage
+// grows with how many enemies are packed into the stack they fire into
+// (SPLASH_PER_FOE for each beyond the first, capped at SPLASH_MAX×). Nothing
+// spatial is invented — in this game the size of a stack IS its formation.
+const SPLASH_PER_FOE = 0.15;
+const SPLASH_MAX = 2;
+
 const HIT_SPAN_MS = 100;
 const HIT_MAX = 5;
 const MELEE_LAND_MS = 110;
@@ -212,8 +219,8 @@ const BUILDINGS = {
   },
   cannontower: {
     icon: 'cannontower', label: 'cannon tower',   // via tower upgrade, needs blacksmith
-    hp: 160, dmg: 14, shot: 'cannonball',
-    blurb: 'Cannon Tower · heavy base defense'
+    hp: 160, dmg: 14, shot: 'cannonball', splash: true,
+    blurb: 'Cannon Tower · heavy base defense, hits hardest into a crowd'
   },
   stables: {
     icon: 'stables', label: 'stables', hp: 500,
@@ -252,7 +259,7 @@ const UNITS = {
     done: (s, zone) => { zone.army.knights += 1; flashTile(`army:defend:${zone.id}`, 'spawn'); writeLog(s, 'Knight ready.'); }
   },
   ballista: {
-    icon: 'ballista', label: 'ballista', producer: 'barracks', time: 250, cost: { gold: 900, lumber: 300 },
+    icon: 'ballista', label: 'ballista', producer: 'barracks', time: 250, cost: { gold: 900, lumber: 300 },   // siege: splashes into big stacks
     requires: ['blacksmith'],
     done: (s, zone) => { zone.army.ballistas += 1; flashTile(`army:defend:${zone.id}`, 'spawn'); writeLog(s, 'Ballista ready.'); }
   }
@@ -265,7 +272,7 @@ const ARMY = {
   footmen:   { icon: 'footman',  label: 'footmen',   singular: 'footman',  hp: 60,  dmg: 7,  attack: 0.10, melee: true },
   knights:   { icon: 'knight',   label: 'knights',   singular: 'knight',   hp: 90,  dmg: 10, attack: 0.15, melee: true },
   archers:   { icon: 'archer',   label: 'archers',   singular: 'archer',   hp: 40,  dmg: 5,  attack: 0.06, shot: 'arrow' },
-  ballistas: { icon: 'ballista', label: 'ballistas', singular: 'ballista', hp: 110, dmg: 25, attack: 0.50, shot: 'bolt' }
+  ballistas: { icon: 'ballista', label: 'ballistas', singular: 'ballista', hp: 110, dmg: 25, attack: 0.50, shot: 'bolt', splash: true }
 };
 
 const GUARD_TOWER = { cost: { gold: 500, lumber: 150 }, time: 140 };
@@ -923,6 +930,11 @@ function pendingRepair(state, key, zoneId) {
   return state.jobs.some(j => j.kind === 'construct' && j.repairKey === key && String(j.zoneId) === String(zoneId));
 }
 
+// Damaged buildings in a zone that aren't already being patched up.
+function repairableKeys(state, zone) {
+  return Object.keys(BUILDINGS).filter(k => zone.structureDamage[k] > 0 && !pendingRepair(state, k, zone.id));
+}
+
 function startRepair(state, key, zoneId) {
   const zone = zoneById(state, zoneId);
   if (!zone) return;
@@ -1268,17 +1280,25 @@ function exploreFrom(state, fromId, type, count) {
 // owned zone's defenders and towers; a subdued zone (nothing left) is passed
 // through immediately.
 
-// Damage a pool of ARMY units deals per volley.
-function poolDamage(state, pool) {
-  return Object.keys(ARMY).reduce((sum, k) => sum + pool[k] * unitDmg(state, k), 0);
+// A siege weapon's damage multiplier against a stack of `foes`.
+function splashFactor(foes) {
+  return Math.min(SPLASH_MAX, 1 + SPLASH_PER_FOE * Math.max(0, (foes || 1) - 1));
+}
+
+// Damage a pool of ARMY units deals per volley into a stack of `foes` — siege
+// types (ballistas) scale up with the size of what they're shelling.
+function poolDamage(state, pool, foes = 1) {
+  return Object.keys(ARMY).reduce((sum, k) =>
+    sum + (pool[k] || 0) * unitDmg(state, k) * (ARMY[k].splash ? splashFactor(foes) : 1), 0);
 }
 
 // My side's fire at a raid standing in `zone`: that zone's defenders plus its
 // towers. Siege parties sit beyond tower range (towers deal 0 vs them).
 function defenseDamage(state, zone, raid) {
   const towerDmg = raid.siege ? 0
-    : Object.keys(BUILDINGS).reduce((sum, k) => sum + (BUILDINGS[k].dmg || 0) * zone.structures[k], 0);
-  return poolDamage(state, zone.army) + towerDmg;
+    : Object.keys(BUILDINGS).reduce((sum, k) => sum + (BUILDINGS[k].dmg || 0) * zone.structures[k]
+        * (BUILDINGS[k].splash ? splashFactor(raid.size) : 1), 0);
+  return poolDamage(state, zone.army, raid.size) + towerDmg;
 }
 
 // Send the sprites for one volley fired out of `zone` — its ranged defenders,
@@ -1598,7 +1618,7 @@ function garrisonTick(state) {
     g.myStrikeIn -= 1;
     if (g.myStrikeIn <= 0) {
       g.myStrikeIn = DEFENSE_VOLLEY_EVERY;
-      const dealt = Object.keys(ARMY).reduce((sum, k) => sum + (zone.strike[k] || 0) * unitDmg(state, k), 0);
+      const dealt = poolDamage(state, zone.strike, garrisonCount(g));
       if (dealt > 0) {
         // One strike per unit in the column; our ranged types loose a sprite at
         // whatever the garrison is leading with, and the hurt waits for it.
@@ -1874,8 +1894,19 @@ function zoneCommands(state, zone) {
       runAll: s => pullDefenderAll(s, zone)
     }];
   }
-  // Owned zone: Build + Defend (draw reinforcements from your other zones).
+  // Owned zone: Build + Repair all + Defend (reinforcements from other zones).
   return [
+    { id: 'zone-repair', icon: 'repair', label: `repair everything in ${zone.name}`, cost: '',
+      // Only worth a slot when something in the zone is actually broken.
+      hidden: s => repairableKeys(s, zoneById(s, zone.id) || zone).length === 0,
+      enabled: s => builderWorker(s, zoneById(s, zone.id)) != null,
+      reason: () => 'No worker available',
+      run: s => {
+        const z = zoneById(s, zone.id);
+        if (!z) return;
+        // One worker per repair — take as many as the zone can spare.
+        repairableKeys(s, z).forEach(k => { if (builderWorker(s, z)) startRepair(s, k, z.id); });
+      } },
     { id: 'zone-build', icon: 'build', label: `build in ${zone.name}`, cost: '',
       enabled: s => builderWorker(s, zoneById(s, zone.id)) != null,
       reason: () => 'No worker available',
@@ -2404,11 +2435,16 @@ function render() {
   renderGameOver();
   dom.day.textContent = `DAY ${currentDay(game) + 1}`;
   const visibleRaids = game.raids.some(r => r.discovered);
-  // Quiet times show how deep the push has reached; raids take the slot over.
+  // Quiet times carry the war-signs read (how close the next wave is) alongside
+  // how deep the push has reached, so the threat clock is where you're already
+  // looking instead of scrolled off at the frontier. Raids take the slot over.
+  const eta = raidEta(game);
   dom.raidclock.textContent = visibleRaids
     ? 'RAID!'
-    : `ADVANCE ${deepestOwned(game).index}/${STRONGHOLD_DEPTH}`;
-  dom.raidclock.classList.toggle('alert', visibleRaids);
+    : game.frontierAt > 0
+      ? `RAID ${eta} · ${deepestOwned(game).index}/${STRONGHOLD_DEPTH}`
+      : `ADVANCE ${deepestOwned(game).index}/${STRONGHOLD_DEPTH}`;
+  dom.raidclock.classList.toggle('alert', visibleRaids || (game.frontierAt > 0 && eta === 'imminent'));
   renderResources();
   renderQueueStrip();
   // Full rebuild resets scroll on the horizontal strips and on the world canvas
@@ -2747,14 +2783,21 @@ function unchartedBand(charting) {
 
 // War-signs forecast — a vague read on the next raid wave, shown once we've
 // pushed beyond home. Non-interactive.
+// How close the next wave is, in words — deliberately vague (the design keeps
+// raid timing readable, not countable). Shared by the frontier war-signs strip
+// and the world header, so they can never disagree.
+function raidEta(state) {
+  return state.raid.nextIn <= 15 ? 'imminent'
+       : state.raid.nextIn <= 45 ? 'soon'
+       : state.raid.nextIn <= 90 ? 'gathering' : 'distant';
+}
+
 function forecastStrip() {
   const forecast = document.createElement('div');
   forecast.className = 'forecast';
   if (game.frontierAt > 0 && !game.over) {
     forecast.appendChild(makeIcon(ICONS.explore, 'war signs'));
-    const eta = game.raid.nextIn <= 15 ? 'imminent'
-              : game.raid.nextIn <= 45 ? 'soon'
-              : game.raid.nextIn <= 90 ? 'gathering' : 'distant';
+    const eta = raidEta(game);
     const group = document.createElement('span');
     group.className = 'forecast-group';
     const label = document.createElement('span');
@@ -3161,6 +3204,12 @@ document.getElementById('cheat-farm').addEventListener('click', () => {
   flashTile(`structure:farm:${z.id}`, 'spawn');
   render();
 });
+document.getElementById('cheat-tower').addEventListener('click', () => {
+  const z = selectedZone(game) && selectedZone(game).status === 'owned' ? selectedZone(game) : homeZone(game);
+  z.structures.guardtower += 1;
+  flashTile(`structure:guardtower:${z.id}`, 'spawn');
+  render();
+});
 document.getElementById('cheat-kill').addEventListener('click', () => {
   if (game.raids.length > 0) {
     writeLog(game, 'All attackers struck down.');
@@ -3187,7 +3236,7 @@ const CHEAT_ICONS = {
   'cheat-btn': 'gold', 'cheat-train': 'build', 'cheat-harvest': 'harvest',
   'cheat-raid': 'enemy', 'cheat-footman': 'footman',
   'cheat-worker': 'worker', 'cheat-farm': 'farm', 'cheat-scout': 'vision',
-  'cheat-kill': 'deathcoil'
+  'cheat-tower': 'guardtower', 'cheat-kill': 'deathcoil'
 };
 Object.keys(CHEAT_ICONS).forEach(id => {
   const btn = document.getElementById(id);

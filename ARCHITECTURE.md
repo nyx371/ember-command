@@ -153,6 +153,13 @@ adds `.zone-fogged`, whose `::before` washes the band dark. Uncharted bands
 are flat black via `.zone-field`. Presence, not memory: the wash comes back
 the moment a zone empties out.
 
+### Splash (siege)
+`splashFactor(foes)` = `1 + SPLASH_PER_FOE × (foes − 1)`, capped at
+`SPLASH_MAX`. Applied per attacker type by `poolDamage(state, pool, foes)`
+and by the tower term in `defenseDamage` — anything flagged `splash: true`
+(ballistas, cannon towers) scales with the size of the stack it fires into.
+`foes` is the raid's `size`, or `garrisonCount(g)` when assaulting.
+
 ### Combat feedback (flashes, strikes, projectiles)
 `flashTile(key, kind, hits, hold)` — `hits` draws one strike per attacker (up
 to `HIT_MAX`, `HIT_SPAN_MS` apart, via `--hits`/`--hit-span` on the tile);
@@ -165,8 +172,7 @@ towers); combat code calls `queueShot(fromSel, toSel, icon, hits)` and
 over `PROJECTILE_MS`. Endpoints are selectors over the data attributes tiles
 already carry (`selArmy`/`selStruct`/`selRaid`/`selStrike`/`selFoe`) — the
 per-type tiles that share a zone-level kind/type are told apart by
-`data-unit`. There is **no splash/AoE**: damage is a single pooled number per
-volley.
+`data-unit`. Damage stays a single pooled number per volley (see Splash above).
 
 ### Timed jobs (one system)
 `game.jobs` — shared shape `{ uid, kind, icon, label, duration, remaining,
