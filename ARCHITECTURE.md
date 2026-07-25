@@ -145,6 +145,13 @@ relief; the stronghold (`final`) wins the game. A wiped strike leaves
 garrison damage standing. Garrison composition is veiled in the UI until
 our own column engages.
 
+### Fog of war
+`zoneFogged(state, zone)` — true when a charted zone holds none of ours (no
+`zone.army`, no `zone.strike`, no live workers, no structures); `zoneBand`
+adds `.zone-fogged`, whose `::before` washes the band dark. Uncharted bands
+are flat black via `.zone-field`. Presence, not memory: the wash comes back
+the moment a zone empties out.
+
 ### Timed jobs (one system)
 `game.jobs` — shared shape `{ uid, kind, icon, label, duration, remaining,
 cost, complete }` plus:

@@ -189,6 +189,7 @@
 <p>Patterns already built — extend these rather than inventing new ones:</p>
 <ul>
   <li><strong>Zone bands</strong> — the world renders one tappable band per zone (caption <code>name · status</code>, inset ring when selected), frontier at the top, home at the bottom; the view opens scrolled to home.</li>
+  <li><strong>Fog of war</strong> — uncharted ground renders flat black (only scouts and the war-signs strip read on it); a charted zone holding nothing of ours — no defenders, no assault column, no workers, no buildings — sits under a semi-transparent dark wash. Putting anything back in the zone lifts it. Taps pass through the wash.</li>
   <li><strong>Grouped tiles</strong> — anything stackable renders as one compact tile with a <code>count-badge</code> (defenders spread into one tile per unit type per zone).</li>
   <li><strong>Radial progress rings</strong> — canvas conic-gradient rings (<code>radialProgressCanvas</code>), stacked semi-transparent when several timers share a tile, animated smoothly between ticks.</li>
   <li><strong>Job chips</strong> — every in-flight timed job (training, construction, upgrade) is one tappable chip: its own ring, tap to cancel and refund.</li>

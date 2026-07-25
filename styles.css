@@ -315,11 +315,19 @@ button { touch-action: manipulation; }
   image-rendering: pixelated;
 }
 .world-zone + .world-zone { border-top: 1px solid rgba(255, 255, 255, 0.12); }
-/* Uncharted ground reads as fog — the grass darkened under a heavy wash. */
-.zone-field {
-  background:
-    linear-gradient(rgba(16, 18, 22, 0.8), rgba(16, 18, 22, 0.8)),
-    url('assets/tiles/grass.png') top left / 64px repeat;
+/* Uncharted ground is simply black — nothing at all is known about it. Scouts
+   and the war-signs strip still read on top of it. */
+.zone-field { background: #04050a; }
+/* Fog of war: a charted zone with nothing of ours in it sits under a dark
+   wash — you remember what's there, you don't see it. The wash rides above the
+   tiles but takes no taps, so selecting still works through it. */
+.world-zone.zone-fogged::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  background: rgba(4, 6, 12, 0.62);
+  pointer-events: none;
 }
 .zone-home  { min-height: calc(var(--tile) * 8); }
 /* Terrain variety: some zones are brown dirt instead of grass. */

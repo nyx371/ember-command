@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.72';
-const VERSION_TAG = 'charting the frontier takes time again — more scouts, faster';
+const VERSION = '0.73';
+const VERSION_TAG = 'fog of war on empty zones; forward halls keep the hall icon';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -2485,10 +2485,21 @@ function raidTilesAt(index) {
   });
 }
 
+// Fog of war: a charted zone we have nothing in — no defenders, no assault
+// column, no workers, no buildings — is remembered, not seen. Its band renders
+// under a dark wash until we put something back in it.
+function zoneFogged(state, zone) {
+  return poolCount(zone.army) === 0
+    && strikeCount(zone.strike) === 0
+    && workersInZoneLive(state, zone).length === 0
+    && Object.keys(BUILDINGS).every(k => zone.structures[k] === 0);
+}
+
 // Render one zone as a stacked, tappable band (tapping empty band area selects
 // the whole zone; tapping a tile selects that tile).
 function renderZoneBand(zone) {
   const cls = zone.status === 'occupied' ? 'occupied' : (zone.index === 0 ? 'home' : 'owned');
+  const fogged = zoneFogged(game, zone);
   const rows = [];
   const raids = raidTilesAt(zone.index);
 
@@ -2497,7 +2508,7 @@ function renderZoneBand(zone) {
     const ours = strikeTiles(zone);                                // our force enters from the bottom
     if (ours.length) rows.push(tileRow(`z${zone.id}-strike`, ours));
     if (raids.length) rows.push(tileRow(`z${zone.id}-raids`, raids));
-    const band = zoneBand(cls, zone.id, rows, zone.terrain);
+    const band = zoneBand(cls, zone.id, rows, zone.terrain, fogged);
     band.appendChild(zoneRewardChip(zone.garrison));   // the prize, top-right of the zone
     return band;
   }
@@ -2535,15 +2546,17 @@ function renderZoneBand(zone) {
     if (zone.structures[key] <= 0) return;
     structTiles.push(entityButton({
       kind: 'structure', type: key, id: zone.id, zoneId: zone.id, compact: true,
-      icon: key === 'hall' ? hallTierIcon(game) : BUILDINGS[key].icon,
-      label: key === 'hall' ? hallTierName(game) : BUILDINGS[key].label,
+      // Only home's hall wears the tier (keep/castle) — forward halls built
+      // afterwards are plain town halls, icon and all.
+      icon: key === 'hall' && zone.index === 0 ? hallTierIcon(game) : BUILDINGS[key].icon,
+      label: key === 'hall' && zone.index === 0 ? hallTierName(game) : BUILDINGS[key].label,
       countLabel: zone.structures[key] > 1 ? zone.structures[key] : null,
       hp: buildingHp(game, zone, key)
     }));
   });
   rows.push(tileRow(`z${zone.id}-struct`, structTiles));
 
-  return zoneBand(cls, zone.id, rows, zone.terrain);
+  return zoneBand(cls, zone.id, rows, zone.terrain, fogged);
 }
 
 // The scouting party out on the frontier: one tile per unit type in it, each
@@ -2615,11 +2628,13 @@ function renderWorld() {
   discovered.forEach(zone => dom.world.appendChild(renderZoneBand(zone)));
 }
 
-// A band of the world; rows stack inside it. `cls` sets the tint.
-function zoneBand(cls, id, rows, terrain) {
+// A band of the world; rows stack inside it. `cls` sets the tint, `fogged`
+// lays the fog-of-war wash over it.
+function zoneBand(cls, id, rows, terrain, fogged) {
   const el = document.createElement('section');
   el.className = `world-zone zone-${cls}`;
   if (terrain) el.classList.add(`terrain-${terrain}`);
+  if (fogged) el.classList.add('zone-fogged');
   if (game.selected.kind === 'zone' && String(game.selected.id) === String(id)) {
     el.classList.add('zone-selected');
   }
