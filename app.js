@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.79';
-const VERSION_TAG = 'hp bars drain properly; towers hold still too';
+const VERSION = '0.80';
+const VERSION_TAG = 'same-type raiders in a zone merge into one stack';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -1442,7 +1442,35 @@ function raidTargetZone(state, raid) {
   return homeZone(state);
 }
 
+// Parties of the same raider type standing in the same zone fold into ONE
+// stack — a fresh wave reinforces the grunts already hammering a zone instead
+// of queueing up beside them as a second tile. Per-unit hp and damage become
+// the size-weighted mix of both, so a later (tougher) wave genuinely
+// strengthens the survivors it joins without anyone being lost in the merge.
+function mergeRaids(state) {
+  const kept = [];
+  state.raids.forEach(raid => {
+    const host = kept.find(r => r.kind === raid.kind && r.index === raid.index);
+    if (!host) { kept.push(raid); return; }
+    const size = host.size + raid.size;
+    const hp = (host.size * host.grunt.hp + raid.size * raid.grunt.hp) / size;
+    const dmg = (host.size * host.grunt.dmg + raid.size * raid.grunt.dmg) / size;
+    host.grunt = { hp, dmg };
+    host.hpPool += raid.hpPool;
+    host.hpMax += raid.hpMax;
+    host.size = Math.max(1, Math.ceil(host.hpPool / hp));
+    host.plunder = (host.plunder || 0) + (raid.plunder || 0);
+    host.discovered = host.discovered || raid.discovered;
+    host.lastHitAt = Math.max(host.lastHitAt || 0, raid.lastHitAt || 0);
+    const zone = zoneByIndex(state, host.index);
+    writeLog(state, `${raid.size} more ${raid.label} swell the attack${zone ? ` on ${zone.name}` : ''}.`);
+    flashTile(`enemy:raid:${host.id}`, 'spawn');
+  });
+  state.raids = kept;
+}
+
 function raidTick(state) {
+  mergeRaids(state);
   state.raids.forEach(raid => {
     const zone = raidTargetZone(state, raid);
     // Raiders appear in whichever zone they're set on — no march, no warning.

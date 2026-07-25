@@ -52,7 +52,7 @@ const exports_ = ['game', 'gameTick', 'runCommand', 'selectEntity', 'selectedCom
   'cancelJob', 'supplyCap', 'supplyUsed', 'zoneById', 'zoneByIndex', 'makeZone',
   'makeGarrison', 'GARRISON_POOL', 'STRONGHOLD', 'exploreFrom', 'startTransfer',
   'executeMoveOne', 'spawnRaid', 'poolCount', 'poolDamage', 'splashFactor',
-  'damagePool', 'poolHp'];
+  'damagePool', 'poolHp', 'mergeRaids'];
 eval(src + '\n;globalThis.__X = {' + exports_.join(',') + '};');
 const X = globalThis.__X;
 
@@ -246,6 +246,27 @@ const hpAfterDeath = X.poolHp(X.game, home.army).total;
 assert(hpAfterDeath < hpAfterFirst, 'bar keeps draining across a death');
 assert(Math.abs(hpAfterDeath - 90 / 180) < 1e-9, 'bar still measures against the stack at full strength');
 home.army.wounds = 0;
+
+// ── Same-type raiders in one zone fold into a single stack ───────────────
+X.game.raids = [];
+X.game.raid.wave = 3;
+X.spawnRaid(X.game);
+X.game.raids = X.game.raids.filter(r => r.kind === 'grunt');
+const firstWave = { size: X.game.raids[0].size, hp: X.game.raids[0].grunt.hp, max: X.game.raids[0].hpMax };
+X.game.raid.wave = 9;
+X.spawnRaid(X.game);
+X.game.raids = X.game.raids.filter(r => r.kind === 'grunt');
+assert(X.game.raids.length === 2, 'two grunt parties before the merge');
+const secondWave = { size: X.game.raids[1].size, hp: X.game.raids[1].grunt.hp, max: X.game.raids[1].hpMax };
+X.mergeRaids(X.game);
+const merged = X.game.raids[0];
+assert(X.game.raids.length === 1, 'same-type parties in one zone merged');
+assert(merged.size === firstWave.size + secondWave.size, 'merged stack keeps every raider');
+assert(merged.hpMax === firstWave.max + secondWave.max, 'hp ceiling is the sum of both waves');
+assert(merged.grunt.hp > firstWave.hp && merged.grunt.hp < secondWave.hp,
+  'per-raider hp is the weighted mix — the later wave strengthens the older one');
+X.game.raids = [];
+X.game.raid.nextIn = 1e9;
 
 // ── Stronghold falls -> victory (shrunken for test speed) ─────────────────
 let z3 = X.zoneByIndex(X.game, 3) || (X.game.zones.push(X.makeZone(3, 0)), X.zoneByIndex(X.game, 3));

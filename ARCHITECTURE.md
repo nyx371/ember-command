@@ -119,7 +119,11 @@ moves exactly one; tapping elsewhere disarms.
 ### Raid combat
 `RAIDER_TYPES` roster (grunts wave 1+, axethrowers 6+, ogres 9+, catapults
 12+; gentle ramp, per-party offset volley phases via `foeDelay`). Raids
-spawn beyond the **deepest owned zone** and move inward zone by zone
+spawn beyond the **deepest owned zone** and move inward zone by zone.
+`mergeRaids` (top of `raidTick`) folds parties of the same type standing in
+the same zone into one stack — size and `hpMax` add, per-raider hp/dmg
+become the size-weighted mix — so a fresh wave reinforces the one already
+fighting instead of stacking up a second tile. Raids move
 (`raid.index`) with **no travel time** — they appear in the zone they're set
 on and fight the same tick (`raid.atIndex` tracks the last announced zone so
 arrival flashes/logs fire once). That zone's defenders + towers fire
