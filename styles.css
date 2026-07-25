@@ -541,7 +541,7 @@ button { touch-action: manipulation; }
   left: 2px;
   bottom: 1px;
   width: calc(100% - 4px);
-  height: 4px;
+  height: 5px;
   /* Above the damage-flash overlay (which covers the whole tile), so the bar
      stays readable at exactly the moment it matters — while it's being hit. */
   z-index: 1;

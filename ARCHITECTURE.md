@@ -172,14 +172,20 @@ adding a fifth row breaks the "nothing moves" guarantee.
 
 ### HP bars
 One bar per stack, `{ total }` only — `stackHp(current, peak)` clamps it.
-`hpBarEl` returns a CANVAS with the track and fill painted as pixels — the
-same primitive as the radial progress rings, which are proven on every
-device. render() recreates it each tick; no CSS layout (percentage widths,
-flex tracks, transforms, transitions) is involved in showing the value, and
-none should ever be reintroduced — three CSS-based fills in a row rendered
-fine in Chromium and sat frozen on iOS. CSS only places it: absolute, 4px
-tall, explicit `width: calc(100% - 4px)` (a replaced element ignores
-left+right sizing), `z-index: 1` so it rides above the damage flash.
+`hpBarEl` returns a CANVAS with track and fill painted as pixels — the same
+primitive as the radial progress rings, proven on every device. No CSS is
+involved in showing OR moving the value, and none should be reintroduced —
+three CSS-based fills in a row rendered fine in Chromium and sat frozen on
+iOS. CSS only places it (absolute, explicit `width: calc(100% - 4px)` since
+replaced elements ignore left+right sizing, `z-index: 1` above the flash).
+The model damages at the top of the tick but the hurt flash waits out the
+projectile flight, so a bar painted at the model's value moves ~300ms BEFORE
+the visible impact. Instead the bar holds its last-shown value (`hpShown`)
+while shots fly, then a rAF loop repaints it draining across the flash's
+strike window, with the just-lost slice drawn as a bright fading chip so a
+1-2% volley still reads. A mid-drain render replacement is fine: the loop
+stops when its canvas is disconnected and the successor resumes from
+`hpShown`.
 `peak` is the stack's combined hp when the fight started (`pool.hpPeak` /
 `strike.hpPeak` stamped by `damagePool`/`damageStrike` on the first hit,
 `raid.hpMax` at spawn, `g.maxPool` for garrisons). Never measure against the

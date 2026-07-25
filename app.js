@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.84';
-const VERSION_TAG = 'hp bars are canvases now — painted pixels, like the rings';
+const VERSION = '0.85';
+const VERSION_TAG = 'hp bars drain at impact, with a bright chip per volley';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -2359,24 +2359,68 @@ function nodeProgressBars(state, node) {
     .map(w => Math.min(1, ((cd - w.cooldown) + tickFraction(step)) / cd));
 }
 
+// The value each tile's bar currently SHOWS (which lags the model during a
+// drain). Keyed by flash key; a key never seen starts from full, so the first
+// hit on a fresh group is a big visible drain, not a bar born part-empty.
+const hpShown = new Map();
+
+function paintHpBar(ctx, danger, total, ghost, ghostAlpha) {
+  ctx.clearRect(0, 0, 200, 10);
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.22)';
+  ctx.fillRect(0, 0, 200, 10);
+  const w = Math.round(Math.max(0, Math.min(1, total)) * 200);
+  ctx.fillStyle = danger ? '#e0503a' : '#7cbf6a';
+  ctx.fillRect(0, 0, w, 10);
+  // The slice just torn off, drawn hot and fading — a 1-2% volley is invisible
+  // as bare movement, but a bright chip at the bar's edge reads at any size.
+  if (ghost > total && ghostAlpha > 0) {
+    const gw = Math.round(Math.max(0, Math.min(1, ghost)) * 200);
+    ctx.fillStyle = `rgba(255, 236, 170, ${ghostAlpha.toFixed(3)})`;
+    ctx.fillRect(w, 0, gw - w, 10);
+  }
+}
+
 // One continuous bar per group, showing the pool's combined hp. Drawn on a
 // CANVAS — the same primitive as the radial progress rings, which are proven
-// to render and update on every device this game runs on, inside these same
-// buttons. No CSS layout is involved in showing the value: no percentage
-// widths, no flex tracks, no transforms, no transitions — the fill is pixels
-// painted at creation, and render() recreates the canvas every tick.
-function hpBarEl(hp, danger) {
+// on every device this game runs on, inside these same buttons. No CSS is
+// involved in showing OR moving the value; both are pixels painted here.
+//
+// Timing: the model takes its damage at the top of the tick, but the hurt
+// flash is held back for the projectile flight (`flash.delay`). A bar painted
+// at the model's value would therefore move ~300ms BEFORE the blow visibly
+// lands — the exact 'flash fires, bar ignores it' feel. So the bar holds the
+// value it last showed while the shots are in the air, then drains to the new
+// value across the flash's strike window, repainted per frame from JS.
+function hpBarEl(hp, danger, key, flash) {
   const bar = document.createElement('canvas');
   bar.className = 'hp-bar';
   bar.width = 200;
-  bar.height = 8;
+  bar.height = 10;
   const ctx = bar.getContext('2d');
-  if (ctx) {
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.22)';
-    ctx.fillRect(0, 0, 200, 8);
-    ctx.fillStyle = danger ? '#e0503a' : '#7cbf6a';
-    ctx.fillRect(0, 0, Math.round(Math.max(0, Math.min(1, hp.total)) * 200), 8);
+  if (!ctx) return bar;
+  const target = Math.max(0, Math.min(1, hp.total));
+  const prev = key != null && hpShown.has(key) ? hpShown.get(key) : 1;
+  const hurt = flash && flash.kind === 'damage';
+  if (prev <= target || !hurt || typeof requestAnimationFrame !== 'function') {
+    // No fresh hit (or healing, or headless) — just show the truth.
+    paintHpBar(ctx, danger, target, 0, 0);
+    if (key != null) hpShown.set(key, target);
+    return bar;
   }
+  const start = performance.now() + flash.delay;
+  const span = Math.max(150, flash.span * flash.strikes);
+  paintHpBar(ctx, danger, prev, 0, 0);   // hold while the shots fly
+  const step = () => {
+    if (!bar.isConnected) return;        // render() replaced us; successor resumes from hpShown
+    const p = Math.max(0, Math.min(1, (performance.now() - start) / span));
+    const cur = prev + (target - prev) * p;
+    paintHpBar(ctx, danger, cur, prev, 0.9 * (1 - p * 0.6));
+    if (key != null) hpShown.set(key, cur);
+    if (p < 1) { requestAnimationFrame(step); return; }
+    paintHpBar(ctx, danger, target, 0, 0);
+    if (key != null) hpShown.set(key, target);
+  };
+  requestAnimationFrame(step);
   return bar;
 }
 
@@ -2450,7 +2494,7 @@ function entityButton({ kind, type, id, zoneId, unit, icon, label, count, meta, 
   // Segmented hp bar: one segment per unit, the last partially drained by the
   // pool's accumulated wounds; collapses to one bar for hordes. Appended last
   // so it paints above the badges.
-  if (hp) button.appendChild(hpBarEl(hp, danger));
+  if (hp) button.appendChild(hpBarEl(hp, danger, flashKey, flash && flash.overlay));
 
   if (!compact) {
     const body = document.createElement('span');
