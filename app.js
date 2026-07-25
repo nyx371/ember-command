@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.85';
-const VERSION_TAG = 'hp bars drain at impact, with a bright chip per volley';
+const VERSION = '0.86';
+const VERSION_TAG = 'hp bars show one segment per unit in the stack';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -1145,15 +1145,17 @@ function poolMaxHp(state, pool) {
 // full every time a unit died — the wound that killed it leaves with it — so a
 // group being ground down would look untouched. Against the peak it drains
 // honestly from full to empty.
-function stackHp(current, peak) {
+// `segments` = units currently in the stack; the bar paints a divider per
+// unit so you can read deaths off it (3 units -> 3 cells).
+function stackHp(current, peak, segments = 1) {
   if (!peak || peak <= 0) return null;
-  return { total: Math.max(0, Math.min(1, current / peak)) };
+  return { total: Math.max(0, Math.min(1, current / peak)), segments };
 }
 
 function poolHp(state, pool) {
   if (poolCount(pool) === 0) return null;
   if (pool.wounds === 0 && !recentlyHit(pool.lastHitAt)) return null;
-  return stackHp(poolMaxHp(state, pool) - pool.wounds, pool.hpPeak || poolMaxHp(state, pool));
+  return stackHp(poolMaxHp(state, pool) - pool.wounds, pool.hpPeak || poolMaxHp(state, pool), poolCount(pool));
 }
 
 // Node crews: one segment per worker, shown only while the crew is damaged.
@@ -1169,7 +1171,7 @@ function nodeHp(state, node) {
   const zone = nodeZone(state, node.id);
   const live = zone ? workersInZoneLive(state, zone).length : 0;
   if (live === 0) return null;
-  return stackHp(live * WORKER_HP - state.workerWounds, state.workerHpPeak || live * WORKER_HP);
+  return stackHp(live * WORKER_HP - state.workerWounds, state.workerHpPeak || live * WORKER_HP, live);
 }
 
 // Structure tiles: bar whenever a zone's building carries unrepaired damage.
@@ -1180,13 +1182,13 @@ function buildingHp(state, zone, key) {
   const standing = zone.structures[key];
   if (standing <= 0) return null;
   // Damage lands on one instance at a time; the bar covers all of them.
-  return stackHp(standing * full - dmg, standing * full);
+  return stackHp(standing * full - dmg, standing * full, standing);
 }
 
 function raidHp(raid) {
   if (raid.size === 0) return null;
   if (raid.hpPool >= raid.hpMax && !recentlyHit(raid.lastHitAt)) return null;
-  return stackHp(raid.hpPool, raid.hpMax);
+  return stackHp(raid.hpPool, raid.hpMax, raid.size);
 }
 
 // Combined garrison hp bar (all guard types + towers), only while damaged.
@@ -1195,7 +1197,7 @@ function garrisonHp(g) {
   const left = garrisonGuardHp(g) + towerLeft;
   if (left >= g.maxPool && !recentlyHit(g.lastHitAt)) return null;
   if (garrisonCount(g) + g.towersLeft === 0) return null;
-  return stackHp(left, g.maxPool);
+  return stackHp(left, g.maxPool, garrisonCount(g) + g.towersLeft);
 }
 
 // A zone's assault column bar — only the fighting strike force takes damage.
@@ -1204,7 +1206,7 @@ function strikeHp(state, zone) {
   if (!col || strikeCount(col) === 0) return null;
   const hitAt = zone.garrison ? zone.garrison.strikeHitAt : 0;
   if (!col.wounds && !recentlyHit(hitAt)) return null;
-  return stackHp(poolMaxHp(state, col) - col.wounds, col.hpPeak || poolMaxHp(state, col));
+  return stackHp(poolMaxHp(state, col) - col.wounds, col.hpPeak || poolMaxHp(state, col), strikeCount(col));
 }
 
 // Moving units between zones is instant: they leave the source zone's pool and
@@ -2364,7 +2366,7 @@ function nodeProgressBars(state, node) {
 // hit on a fresh group is a big visible drain, not a bar born part-empty.
 const hpShown = new Map();
 
-function paintHpBar(ctx, danger, total, ghost, ghostAlpha) {
+function paintHpBar(ctx, danger, total, ghost, ghostAlpha, segments = 1) {
   ctx.clearRect(0, 0, 200, 10);
   ctx.fillStyle = 'rgba(255, 255, 255, 0.22)';
   ctx.fillRect(0, 0, 200, 10);
@@ -2377,6 +2379,14 @@ function paintHpBar(ctx, danger, total, ghost, ghostAlpha) {
     const gw = Math.round(Math.max(0, Math.min(1, ghost)) * 200);
     ctx.fillStyle = `rgba(255, 236, 170, ${ghostAlpha.toFixed(3)})`;
     ctx.fillRect(w, 0, gw - w, 10);
+  }
+  // One cell per unit in the stack — dividers across the whole track so the
+  // structure reads on the drained part too. Hordes collapse to a plain bar.
+  if (segments > 1 && segments <= 24) {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    for (let i = 1; i < segments; i += 1) {
+      ctx.fillRect(Math.round((i * 200) / segments) - 1, 0, 2, 10);
+    }
   }
 }
 
@@ -2401,23 +2411,24 @@ function hpBarEl(hp, danger, key, flash) {
   const target = Math.max(0, Math.min(1, hp.total));
   const prev = key != null && hpShown.has(key) ? hpShown.get(key) : 1;
   const hurt = flash && flash.kind === 'damage';
+  const segs = hp.segments || 1;
   if (prev <= target || !hurt || typeof requestAnimationFrame !== 'function') {
     // No fresh hit (or healing, or headless) — just show the truth.
-    paintHpBar(ctx, danger, target, 0, 0);
+    paintHpBar(ctx, danger, target, 0, 0, segs);
     if (key != null) hpShown.set(key, target);
     return bar;
   }
   const start = performance.now() + flash.delay;
   const span = Math.max(150, flash.span * flash.strikes);
-  paintHpBar(ctx, danger, prev, 0, 0);   // hold while the shots fly
+  paintHpBar(ctx, danger, prev, 0, 0, segs);   // hold while the shots fly
   const step = () => {
     if (!bar.isConnected) return;        // render() replaced us; successor resumes from hpShown
     const p = Math.max(0, Math.min(1, (performance.now() - start) / span));
     const cur = prev + (target - prev) * p;
-    paintHpBar(ctx, danger, cur, prev, 0.9 * (1 - p * 0.6));
+    paintHpBar(ctx, danger, cur, prev, 0.9 * (1 - p * 0.6), segs);
     if (key != null) hpShown.set(key, cur);
     if (p < 1) { requestAnimationFrame(step); return; }
-    paintHpBar(ctx, danger, target, 0, 0);
+    paintHpBar(ctx, danger, target, 0, 0, segs);
     if (key != null) hpShown.set(key, target);
   };
   requestAnimationFrame(step);

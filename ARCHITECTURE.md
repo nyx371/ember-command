@@ -172,7 +172,10 @@ adding a fifth row breaks the "nothing moves" guarantee.
 
 ### HP bars
 One bar per stack, `{ total }` only — `stackHp(current, peak)` clamps it.
-`hpBarEl` returns a CANVAS with track and fill painted as pixels — the same
+`stackHp(current, peak, segments)` — `segments` is the stack's current unit
+count; the paint draws one cell per unit (dividers across the whole track,
+skipped above 24 units). `hpBarEl` returns a CANVAS with track and fill
+painted as pixels — the same
 primitive as the radial progress rings, proven on every device. No CSS is
 involved in showing OR moving the value, and none should be reintroduced —
 three CSS-based fills in a row rendered fine in Chromium and sat frozen on
