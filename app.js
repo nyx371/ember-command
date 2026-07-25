@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.80';
-const VERSION_TAG = 'same-type raiders in a zone merge into one stack';
+const VERSION = '0.81';
+const VERSION_TAG = 'hp bars drain as blows land; fixed-height event log';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -1160,12 +1160,16 @@ function poolHp(state, pool) {
 // Worker wounds are a global pool but the next victim is deterministic (the
 // last non-builder), so the bar belongs on that worker's node.
 function nodeHp(state, node) {
-  const count = workersAtNode(state, node).length;
-  if (count === 0) return null;
+  if (workersAtNode(state, node).length === 0) return null;
   if (state.workerWounds === 0 && !recentlyHit(state.workerLastHitAt)) return null;
   const victim = state.workers.filter(w => w.job !== 'building').pop();
   if (!victim || String(victim.nodeId) !== String(node.id)) return null;
-  return stackHp(count * WORKER_HP - state.workerWounds, state.workerHpPeak || count * WORKER_HP);
+  // Wounds are one pool for the whole zone's workforce, so the bar has to be
+  // measured against that same workforce — not just this node's crew.
+  const zone = nodeZone(state, node.id);
+  const live = zone ? workersInZoneLive(state, zone).length : 0;
+  if (live === 0) return null;
+  return stackHp(live * WORKER_HP - state.workerWounds, state.workerHpPeak || live * WORKER_HP);
 }
 
 // Structure tiles: bar whenever a zone's building carries unrepaired damage.
@@ -1541,6 +1545,10 @@ function raidTick(state) {
       damageBuildings(state, zone, raid, dmg, RAID_TOWER_TARGETS, hits, land);
       atStructure();
     } else if (workersInZoneLive(state, zone).length > 0) {
+      // The crew that takes it is the same one damageWorkers picks — shoot at
+      // their node so the held-back flash has something visible causing it.
+      const victim = workersInZoneLive(state, zone).filter(w => w.job !== 'building').pop();
+      if (victim && victim.nodeId) queueShot(selRaid(raid.id), selNode(victim.nodeId), shot, hits);
       damageWorkers(state, zone, dmg, hits, land);
     } else {
       damageBuildings(state, zone, raid, dmg, razeOrder(), hits, land);
@@ -2168,6 +2176,7 @@ function tileFlash(key) {
 const selArmy   = (zoneId, type) => `.entity[data-kind="army"][data-type="${type}"][data-zone="${zoneId}"]`;
 const selStruct = (zoneId, key)  => `.entity[data-kind="structure"][data-type="${key}"][data-zone="${zoneId}"]`;
 const selRaid   = id             => `.entity[data-kind="enemy"][data-id="${id}"]`;
+const selNode   = id             => `.entity[data-kind="node"][data-id="${id}"]`;
 const selStrike = (zoneId, type) => `.entity[data-kind="zone"][data-type="head"][data-zone="${zoneId}"][data-unit="${type}"]`;
 const selFoe    = (zoneId, type) => `.entity[data-kind="zone"][data-type="foe"][data-zone="${zoneId}"][data-unit="${type}"]`;
 
@@ -2350,15 +2359,33 @@ function nodeProgressBars(state, node) {
     .map(w => Math.min(1, ((cd - w.cooldown) + tickFraction(step)) / cd));
 }
 
-// One continuous bar per group, showing the pool's combined hp — no
-// per-unit segmentation.
-function hpBarEl(hp, extraClass) {
+// The width each tile's bar was last drawn at, so a rebuilt bar can start
+// where the old one ended and slide to the new value instead of teleporting.
+const hpShown = new Map();
+
+// One continuous bar per group, showing the pool's combined hp — no per-unit
+// segmentation. `flash` is the tile's damage-flash entry (if any): the bar
+// takes the same delay and duration, so it drains as the blows land rather
+// than a beat before the projectile that caused it has even arrived.
+function hpBarEl(hp, extraClass, key, flash) {
   const bar = document.createElement('span');
   bar.className = extraClass ? `hp-bar ${extraClass}` : 'hp-bar';
   const seg = document.createElement('span');
   seg.className = 'hp-seg';
   const fill = document.createElement('i');
-  fill.style.width = `${Math.round(Math.max(0, Math.min(1, hp.total)) * 100)}%`;
+  const target = Math.max(0, Math.min(1, hp.total));
+  const prev = key != null && hpShown.has(key) ? hpShown.get(key) : target;
+  if (key != null) hpShown.set(key, target);
+  const pct = v => `${Math.round(v * 100)}%`;
+  if (prev !== target && typeof requestAnimationFrame === 'function') {
+    const hurt = flash && flash.kind === 'damage';
+    fill.style.width = pct(prev);
+    fill.style.transition = `width ${hurt ? flash.span * flash.strikes : 200}ms linear`
+      + ` ${hurt ? flash.delay : 0}ms`;
+    requestAnimationFrame(() => { fill.style.width = pct(target); });
+  } else {
+    fill.style.width = pct(target);
+  }
   seg.appendChild(fill);
   bar.appendChild(seg);
   return bar;
@@ -2434,7 +2461,7 @@ function entityButton({ kind, type, id, zoneId, unit, icon, label, count, meta, 
   // Segmented hp bar: one segment per unit, the last partially drained by the
   // pool's accumulated wounds; collapses to one bar for hordes. Appended last
   // so it paints above the badges.
-  if (hp) button.appendChild(hpBarEl(hp));
+  if (hp) button.appendChild(hpBarEl(hp, null, flashKey, flash && flash.overlay));
 
   if (!compact) {
     const body = document.createElement('span');

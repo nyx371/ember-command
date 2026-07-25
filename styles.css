@@ -168,7 +168,8 @@ button { touch-action: manipulation; }
   font-size: 14px;
 }
 
-.menu-log { max-height: 150px; overflow-y: auto; touch-action: pan-y; -webkit-overflow-scrolling: touch; }
+/* Fixed height, always — the popover must not resize as events come and go. */
+.menu-log { height: 150px; overflow-y: auto; touch-action: pan-y; -webkit-overflow-scrolling: touch; }
 .menu-log p { margin: 0; padding: 5px 0; color: var(--muted); border-top: 1px solid rgba(87, 67, 31, 0.5); font-size: 14px; line-height: 1.25; }
 .menu-log p:first-child { color: var(--text); border-top: 0; }
 

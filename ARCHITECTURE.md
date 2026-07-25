@@ -172,6 +172,10 @@ adding a fifth row breaks the "nothing moves" guarantee.
 
 ### HP bars
 One bar per stack, `{ total }` only — `stackHp(current, peak)` clamps it.
+`hpBarEl` remembers each tile's last drawn width (`hpShown`, keyed by the
+tile's flash key) and CSS-transitions from it, taking the damage flash's own
+delay and duration — so the bar drains as the blows land instead of dropping
+a beat before the projectile that caused it arrives.
 `peak` is the stack's combined hp when the fight started (`pool.hpPeak` /
 `strike.hpPeak` stamped by `damagePool`/`damageStrike` on the first hit,
 `raid.hpMax` at spawn, `g.maxPool` for garrisons). Never measure against the
