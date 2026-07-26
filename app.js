@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.87';
-const VERSION_TAG = 'real WC2 projectiles, impact bursts, damage floats, construction lots, rubble';
+const VERSION = '0.88';
+const VERSION_TAG = 'lots resolve in place: rubble on stack wipe, site only for a first build';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -920,7 +920,7 @@ function startConstruction(state, key, zoneId) {
   worker.cooldown = 0;
   const time = scaledTime(b.build.time);
   state.jobs.push({
-    uid: nextId(), kind: 'construct', workerId: worker.id, zoneId: zone.id,
+    uid: nextId(), kind: 'construct', workerId: worker.id, zoneId: zone.id, buildKey: key,
     icon: b.icon, label: b.label, duration: time, remaining: time,
     cost: b.build.cost,
     complete: s => {
@@ -1408,10 +1408,13 @@ function damageBuildings(state, zone, raid, dmg, order, hits = 1, hold = 0) {
   if (zone.structureDamage[key] >= buildingMaxHp(state, key)) {
     zone.structures[key] -= 1;
     zone.structureDamage[key] = 0;
-    // The fall is an event: the screen jolts and the lot is smoking rubble
-    // for a while before the ground clears.
-    state.rubble.push({ zoneId: zone.id, key, until: state.tick + RUBBLE_TICKS });
-    shakeWorld();
+    // Losing ONE copy of a stack just drops the count; the whole stack going
+    // down is the event — the screen jolts and the lot smokes as rubble where
+    // the stack's tile stood, until the ground clears.
+    if (zone.structures[key] === 0) {
+      state.rubble.push({ zoneId: zone.id, key, until: state.tick + RUBBLE_TICKS });
+      shakeWorld();
+    }
     writeLog(state, `${cap(BUILDINGS[key].label)} at ${zone.name} destroyed by raiders!`);
     if (key === 'hall' && zone.index === 0) {
       flashError('The town hall has fallen!');
@@ -2901,32 +2904,47 @@ function nodeTiles(zone) {
   }));
 }
 
-// Our buildings standing in the zone, one tile per type — plus a WC2
-// construction-site tile for each building going up here (its ring is the
-// build timer), and smoking rubble where one just fell.
+// Our buildings in the zone, one SLOT per type in BUILDINGS order. A slot
+// shows the standing stack if there is one; otherwise the lot itself —
+// smoking rubble if the stack just fell, or the construction site while the
+// first building of that type goes up. Because the slot order never changes,
+// the finished building appears exactly where its site stood, and rubble
+// smokes exactly where the stack's tile was. Adding a copy to a standing
+// stack shows no site — the count just ticks up when it finishes.
 function structTiles(zone) {
-  const tiles = Object.keys(BUILDINGS).filter(key => zone.structures[key] > 0).map(key => entityButton({
-    kind: 'structure', type: key, id: zone.id, zoneId: zone.id, compact: true,
-    // Only home's hall wears the tier (keep/castle) — forward halls built
-    // afterwards are plain town halls, icon and all.
-    icon: key === 'hall' && zone.index === 0 ? hallTierIcon(game) : BUILDINGS[key].icon,
-    label: key === 'hall' && zone.index === 0 ? hallTierName(game) : BUILDINGS[key].label,
-    countLabel: zone.structures[key] > 1 ? zone.structures[key] : null,
-    hp: buildingHp(game, zone, key)
-  }));
-  game.jobs
-    .filter(j => j.kind === 'construct' && !j.repairKey && String(j.zoneId) === String(zone.id))
-    .forEach(job => tiles.push(entityButton({
-      kind: 'worksite', type: 'site', id: job.uid, zoneId: zone.id, compact: true,
-      icon: 'construction', label: `${job.label} — under construction`,
-      jobUid: job.uid, progressBars: [jobProgress(game, job)]
-    })));
-  game.rubble
-    .filter(r => String(r.zoneId) === String(zone.id))
-    .forEach((r, i) => tiles.push(entityButton({
-      kind: 'worksite', type: 'rubble', id: `${zone.id}:${r.key}:${i}`, zoneId: zone.id, compact: true,
-      icon: 'rubble', label: `${BUILDINGS[r.key].label} destroyed`, dimmed: true
-    })));
+  const jobsHere = game.jobs.filter(j =>
+    j.kind === 'construct' && !j.repairKey && String(j.zoneId) === String(zone.id));
+  const rubbleHere = game.rubble.filter(r => String(r.zoneId) === String(zone.id));
+  const tiles = [];
+  Object.keys(BUILDINGS).forEach(key => {
+    if (zone.structures[key] > 0) {
+      tiles.push(entityButton({
+        kind: 'structure', type: key, id: zone.id, zoneId: zone.id, compact: true,
+        // Only home's hall wears the tier (keep/castle) — forward halls built
+        // afterwards are plain town halls, icon and all.
+        icon: key === 'hall' && zone.index === 0 ? hallTierIcon(game) : BUILDINGS[key].icon,
+        label: key === 'hall' && zone.index === 0 ? hallTierName(game) : BUILDINGS[key].label,
+        countLabel: zone.structures[key] > 1 ? zone.structures[key] : null,
+        hp: buildingHp(game, zone, key)
+      }));
+      return;
+    }
+    if (rubbleHere.some(r => r.key === key)) {
+      tiles.push(entityButton({
+        kind: 'worksite', type: 'rubble', id: `${zone.id}:${key}`, zoneId: zone.id, compact: true,
+        icon: 'rubble', label: `${BUILDINGS[key].label} destroyed`, dimmed: true
+      }));
+      return;
+    }
+    const job = jobsHere.find(j => j.buildKey === key);
+    if (job) {
+      tiles.push(entityButton({
+        kind: 'worksite', type: 'site', id: job.uid, zoneId: zone.id, compact: true,
+        icon: 'construction', label: `${job.label} — under construction`,
+        jobUid: job.uid, progressBars: [jobProgress(game, job)]
+      }));
+    }
+  });
   return tiles;
 }
 

@@ -209,12 +209,15 @@ carry `shot: '<icon>'` — real WC2 sprites from `resources/missiles.png`
 flight, thrown axes spin instead). Cannonballs and boulders bloom on
 landing (`impactBurst`). Floating combat text (`queueFloat`/`launchFloats`,
 same launcher pattern as shots) shows -damage on the target with the hurt
-flash's hold, and +gold where bounty is earned. A building of ours falling
-pushes `{zoneId, key, until}` onto `game.rubble` (cleared by the tick after
-`RUBBLE_TICKS`), jolts the viewport (`shakeWorld`, `.world-shake`), and the
-lot renders as WC2 rubble; a construct job renders as a WC2 construction
-site tile in the zone's built row (kind `worksite`, tap-inert, ring =
-build timer). (ARMY / RAIDER_TYPES / BUILDINGS
+flash's hold, and +gold where bounty is earned. The built row is one SLOT
+per type in `BUILDINGS` order (`structTiles`): the standing stack, else
+rubble, else the construction site — so finished buildings appear in place
+and effects land where the stack's tile stood. A stack falling to ZERO (not
+each copy) pushes `{zoneId, key, until}` onto `game.rubble` (cleared after
+`RUBBLE_TICKS`) and jolts the viewport (`shakeWorld`, `.world-shake`); a
+construct job (tagged `buildKey`) shows its site tile only while no copy of
+that type stands (kind `worksite`, tap-inert, ring = build timer) — adding
+to a standing stack just ticks the count up on completion. (ARMY / RAIDER_TYPES / BUILDINGS
 towers); combat code calls `queueShot(fromSel, toSel, icon, hits)` and
 `launchShots()` (end of `render()`) flies the sprite tile-to-tile with WAAPI
 over `PROJECTILE_MS`. Endpoints are selectors over the data attributes tiles
