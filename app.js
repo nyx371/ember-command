@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.88';
-const VERSION_TAG = 'lots resolve in place: rubble on stack wipe, site only for a first build';
+const VERSION = '0.89';
+const VERSION_TAG = 'income rates, red blockers, and a battle ring on fighting zones';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -2702,21 +2702,35 @@ function renderResources() {
   dom.stores.replaceChildren();
   // Big stockpiles compact to 12.5k so the four columns never squeeze.
   const fmtStore = n => (n >= 10000 ? fmtQty(n) : n);
+  const fmtRate = r => (r >= 10 ? `+${Math.round(r)}` : `+${r.toFixed(1)}`);
   const rows = [
-    ['gold',   ICONS.gold,   fmtStore(game.resources.gold)],
-    ['lumber', ICONS.lumber, fmtStore(game.resources.lumber)],
-    ['oil',    ICONS.oil,    fmtStore(game.resources.oil)],
-    ['supply', ICONS.supply, `${supplyUsed(game)}/${supplyCap(game)}`]
+    ['gold',   ICONS.gold,   fmtStore(game.resources.gold),   incomePerTick(game, 'gold')],
+    ['lumber', ICONS.lumber, fmtStore(game.resources.lumber), incomePerTick(game, 'lumber')],
+    ['oil',    ICONS.oil,    fmtStore(game.resources.oil),    null],
+    ['supply', ICONS.supply, `${supplyUsed(game)}/${supplyCap(game)}`, null]
   ];
 
-  rows.forEach(([label, icon, value]) => {
+  rows.forEach(([label, icon, value, rate]) => {
     const item = document.createElement('div');
     item.className = 'resource';
     item.title = label;
     item.append(makeIcon(icon, label));
+    const col = document.createElement('div');
+    col.className = 'resource-col';
     const amount = document.createElement('strong');
     amount.textContent = value;
-    item.appendChild(amount);
+    // Supply at the cap is the single most common 'why can't I train' — say
+    // it in red right where the number is.
+    if (label === 'supply' && supplyUsed(game) >= supplyCap(game)) amount.classList.add('capped');
+    col.appendChild(amount);
+    // Live income under the stockpile, so the economy is a read, not a vibe.
+    if (rate != null && rate > 0.05) {
+      const r = document.createElement('span');
+      r.className = 'res-rate';
+      r.textContent = `${fmtRate(rate)}/s`;
+      col.appendChild(r);
+    }
+    item.appendChild(col);
     dom.stores.appendChild(item);
   });
 }
@@ -3045,7 +3059,12 @@ function renderWorld() {
   const discovered = game.zones.filter(z => z.discovered).sort((a, b) => b.index - a.index);
   const charting = chartingZone(game);
   if (charting) dom.world.appendChild(unchartedBand(charting));
-  discovered.forEach(zone => dom.world.appendChild(renderZoneBand(zone)));
+  const attacked = attackedZoneIds();   // fighting bands pulse a red ring
+  discovered.forEach(zone => {
+    const band = renderZoneBand(zone);
+    if (attacked.has(String(zone.id))) band.classList.add('zone-under-attack');
+    dom.world.appendChild(band);
+  });
 }
 
 // A band of the world; rows stack inside it. `cls` sets the tint, `fogged`

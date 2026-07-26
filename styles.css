@@ -103,6 +103,23 @@ button { touch-action: manipulation; }
   border: 0;
   border-radius: 0;
 }
+.resource-col {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+}
+/* Live income per second, sitting under the stockpile. */
+.res-rate {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+}
+/* Supply pinned at the cap — the number itself carries the warning. */
+.resource strong.capped { color: var(--danger); }
 
 .resource strong {
   min-width: 0;
@@ -336,6 +353,13 @@ button { touch-action: manipulation; }
 }
 /* Terrain variety: some zones are brown dirt instead of grass. */
 .world-zone.terrain-dirt { background: url('assets/tiles/dirt.png') top left / 64px repeat; }
+/* A band a raid is actively fighting in pulses a red inset ring, so danger is
+   visible on the band itself, not only via the off-screen edge bars. */
+@keyframes zone-alert-pulse {
+  0%, 100% { box-shadow: inset 0 0 0 2px rgba(224, 80, 58, 0.35); }
+  50%      { box-shadow: inset 0 0 0 3px rgba(224, 80, 58, 0.85); }
+}
+.world-zone.zone-under-attack { animation: zone-alert-pulse 1s ease-in-out infinite; }
 /* A selected band gets an inset ring: blue for zones you own, light grey for
    uncharted (field) or enemy-held (occupied) ones. */
 .world-zone.zone-selected { box-shadow: inset 0 0 0 2px rgba(120, 190, 255, 0.75); }
@@ -776,7 +800,7 @@ button { touch-action: manipulation; }
   margin-right: 3px;
   line-height: 1;
 }
-.cost-amt.cost-short { color: var(--muted); }
+.cost-amt.cost-short { color: #ff8b74; }   /* the missing piece reads red, not just dimmer */
 .cost-icon.cost-short { opacity: 0.55; filter: grayscale(0.6); }
 
 .command {
