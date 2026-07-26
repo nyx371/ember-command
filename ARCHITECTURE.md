@@ -204,7 +204,17 @@ to `HIT_MAX`, `HIT_SPAN_MS` apart, via `--hits`/`--hit-span` on the tile);
 `hold + span × hits` under one tick or the next render restarts it.
 Only melee tiles lunge (`.melee-attacker`); ranged units and towers hold
 still (`.ranged-attacker`, no structure attack flash). Ranged attackers
-carry `shot: '<icon>'` (ARMY / RAIDER_TYPES / BUILDINGS
+carry `shot: '<icon>'` — real WC2 sprites from `resources/missiles.png`
+(`p_*.png`, extracted pointing up; `launchShots` rotates them along the
+flight, thrown axes spin instead). Cannonballs and boulders bloom on
+landing (`impactBurst`). Floating combat text (`queueFloat`/`launchFloats`,
+same launcher pattern as shots) shows -damage on the target with the hurt
+flash's hold, and +gold where bounty is earned. A building of ours falling
+pushes `{zoneId, key, until}` onto `game.rubble` (cleared by the tick after
+`RUBBLE_TICKS`), jolts the viewport (`shakeWorld`, `.world-shake`), and the
+lot renders as WC2 rubble; a construct job renders as a WC2 construction
+site tile in the zone's built row (kind `worksite`, tap-inert, ring =
+build timer). (ARMY / RAIDER_TYPES / BUILDINGS
 towers); combat code calls `queueShot(fromSel, toSel, icon, hits)` and
 `launchShots()` (end of `render()`) flies the sprite tile-to-tile with WAAPI
 over `PROJECTILE_MS`. Endpoints are selectors over the data attributes tiles

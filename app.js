@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.86';
-const VERSION_TAG = 'hp bars show one segment per unit in the stack';
+const VERSION = '0.87';
+const VERSION_TAG = 'real WC2 projectiles, impact bursts, damage floats, construction lots, rubble';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -83,6 +83,7 @@ const HP_BAR_LINGER_MS = 3000;  // keep a combat hp bar visible across volleys
 const SPLASH_PER_FOE = 0.15;
 const SPLASH_MAX = 2;
 
+const RUBBLE_TICKS = 8;        // how long a destroyed building's rubble smokes
 const HIT_SPAN_MS = 100;
 const HIT_MAX = 5;
 const MELEE_LAND_MS = 110;
@@ -332,11 +333,20 @@ const ICONS = {
   ogre: 'assets/icons/o_unit_ogre.png',
   catapult: 'assets/icons/o_unit_catapult.png',
   stronghold: 'assets/icons/o_bld_fortress.png',
-  arrow: 'assets/icons/c_arrow1.png',
-  bolt: 'assets/icons/c_arrow3.png',
-  cannonball: 'assets/icons/c_hcannon1.png',
+  // Real WC2 projectile sprites (resources/missiles.png), extracted pointing
+  // up — launchShots rotates them along the flight path. The thrown axe stays
+  // a command-icon axe (the missiles sheet has hammers and eyeballs, no axe)
+  // and spins in flight instead of rotating.
+  arrow: 'assets/icons/p_arrow.png',
+  bolt: 'assets/icons/p_bolt.png',
+  cannonball: 'assets/icons/p_cannonball.png',
   thrownaxe: 'assets/icons/c_axe1.png',
-  boulder: 'assets/icons/c_ocannon1.png',
+  boulder: 'assets/icons/p_flame.png',
+  burstFire: 'assets/icons/fx_burst_fire.png',
+  burstGold: 'assets/icons/fx_burst_gold.png',
+  smoke: 'assets/icons/fx_smoke.png',
+  construction: 'assets/icons/site_build.png',
+  rubble: 'assets/icons/site_rubble.png',
   axe2: 'assets/icons/c_axe2.png',
   axe3: 'assets/icons/c_axe3.png',
   sword2: 'assets/icons/c_sword2.png',
@@ -513,6 +523,7 @@ function createGame() {
     hallTier: 0,   // 0 = town hall, 1 = keep (home's hall)
     raid: { nextIn: RAID_FIRST_DELAY, interval: RAID_INTERVAL_BASE, wave: 0 },
     raids: [],            // active raiding parties (see spawnRaid)
+    rubble: [],           // smoking lots where buildings just fell {zoneId, key, until}
     workerWounds: 0,      // damage accumulated toward the next worker death
     log: ['Raiders are coming — one footman won\'t hold them forever.', 'Tap the town hall to build and train.', 'Welcome to Ember Command.'],
     cheats: { fastTrain: false, fastHarvest: false }
@@ -541,7 +552,8 @@ const dom = {
   raidclock: document.querySelector('#raidclock'),
   error: document.querySelector('#error'),
   raidAlertTop: document.querySelector('#raid-alert-top'),
-  raidAlertBottom: document.querySelector('#raid-alert-bottom')
+  raidAlertBottom: document.querySelector('#raid-alert-bottom'),
+  worldViewport: document.querySelector('.world-viewport')
 };
 
 const game = createGame();
@@ -1323,6 +1335,8 @@ function queueZoneShots(state, zone, targetSel, towersFire = true) {
 function damagePool(state, zone, dmg, hits = 1, hold = 0) {
   const pool = zone.army;
   flashTile(`army:defend:${zone.id}`, 'damage', hits, hold);
+  const front = Object.keys(ARMY).find(k => pool[k] > 0);
+  if (front && dmg >= 1) queueFloat(selArmy(zone.id, front), `-${Math.round(dmg)}`, 'hurt', hold);
   // First hit of a fresh fight fixes what "full" means for the hp bar.
   if (pool.wounds === 0) pool.hpPeak = poolMaxHp(state, pool);
   pool.lastHitAt = performance.now();
@@ -1349,7 +1363,10 @@ function damageWorkers(state, zone, dmg, hits = 1, hold = 0) {
   state.workerWounds += dmg;
   const here = () => workersInZoneLive(state, zone).filter(w => w.job !== 'building');
   const target = here().pop();
-  if (target && target.nodeId) flashTile(`node:${target.job}:${target.nodeId}`, 'damage', hits, hold);
+  if (target && target.nodeId) {
+    flashTile(`node:${target.job}:${target.nodeId}`, 'damage', hits, hold);
+    if (dmg >= 1) queueFloat(selNode(target.nodeId), `-${Math.round(dmg)}`, 'hurt', hold);
+  }
   while (state.workerWounds >= WORKER_HP && workersInZoneLive(state, zone).length > 0) {
     state.workerWounds -= WORKER_HP;
     // Builders die last; a dead builder takes its construction down with it.
@@ -1386,10 +1403,15 @@ function damageBuildings(state, zone, raid, dmg, order, hits = 1, hold = 0) {
   if (!raid.targetType) return;   // nothing left standing here
   const key = raid.targetType;
   flashTile(`structure:${key}:${zone.id}`, 'damage', hits, hold);
+  if (dmg >= 1) queueFloat(selStruct(zone.id, key), `-${Math.round(dmg)}`, 'hurt', hold);
   zone.structureDamage[key] += dmg;
   if (zone.structureDamage[key] >= buildingMaxHp(state, key)) {
     zone.structures[key] -= 1;
     zone.structureDamage[key] = 0;
+    // The fall is an event: the screen jolts and the lot is smoking rubble
+    // for a while before the ground clears.
+    state.rubble.push({ zoneId: zone.id, key, until: state.tick + RUBBLE_TICKS });
+    shakeWorld();
     writeLog(state, `${cap(BUILDINGS[key].label)} at ${zone.name} destroyed by raiders!`);
     if (key === 'hall' && zone.index === 0) {
       flashError('The town hall has fallen!');
@@ -1500,8 +1522,9 @@ function raidTick(state) {
         const towers = raid.siege ? 0
           : RAID_TOWER_TARGETS.reduce((n, k) => n + zone.structures[k], 0);
         const flew = queueZoneShots(state, zone, selRaid(raid.id), !raid.siege);
-        flashTile(`enemy:raid:${raid.id}`, 'damage', defenders + towers,
-          flew ? PROJECTILE_MS : MELEE_LAND_MS);
+        const land = flew ? PROJECTILE_MS : MELEE_LAND_MS;
+        flashTile(`enemy:raid:${raid.id}`, 'damage', defenders + towers, land);
+        queueFloat(selRaid(raid.id), `-${Math.round(dealt)}`, 'hurt', land);
         flashTile(`army:defend:${zone.id}`, 'attack', defenders);
         // Towers don't move when they fire — the shot leaving them is the tell.
         raid.lastHitAt = performance.now();
@@ -1514,6 +1537,8 @@ function raidTick(state) {
         const loot = kills * RAIDER_TYPES[raid.kind].bounty;
         raid.plunder = (raid.plunder || 0) + loot;
         state.resources.gold += loot;
+        // Plunder pays out where it was earned — a beat after the hurt lands.
+        queueFloat(selRaid(raid.id), `+${loot}g`, 'gold', 700);
       }
       if (raid.size <= 0) {
         writeLog(state, `Raid repelled at ${zone.name}! Plundered ${raid.plunder || 0} gold.`);
@@ -1578,6 +1603,8 @@ function damageStrike(state, zone, dmg, hits = 1, hold = 0) {
   const g = zone.garrison;
   const strike = zone.strike;
   if (!strike.wounds) strike.hpPeak = poolMaxHp(state, strike);
+  const front = Object.keys(ARMY).find(k => strike[k] > 0);
+  if (front && dmg >= 1) queueFloat(selStrike(zone.id, front), `-${Math.round(dmg)}`, 'hurt', hold);
   strike.wounds = (strike.wounds || 0) + dmg;
   g.strikeHitAt = performance.now();
   flashTile(`zone:head:${zone.id}`, 'damage', hits, hold);
@@ -1663,7 +1690,9 @@ function garrisonTick(state) {
           queueShot(selStrike(zone.id, k), selFoe(zone.id, mark), ARMY[k].shot, zone.strike[k]);
           flew = true;
         });
-        flashTile(`zone:foe:${zone.id}`, 'damage', hits, flew ? PROJECTILE_MS : MELEE_LAND_MS);
+        const landAt = flew ? PROJECTILE_MS : MELEE_LAND_MS;
+        flashTile(`zone:foe:${zone.id}`, 'damage', hits, landAt);
+        queueFloat(selFoe(zone.id, mark), `-${Math.round(dealt)}`, 'hurt', landAt);
         flashTile(`zone:head:${zone.id}`, 'attack', hits);   // our units lunge in
         g.lastHitAt = performance.now();
         const towersBefore = g.towersLeft;
@@ -1731,6 +1760,7 @@ function gameTick() {
   }
   raidTick(game);
   garrisonTick(game);
+  game.rubble = game.rubble.filter(r => game.tick < r.until);
 
   advanceJobs(game);
   clampGame(game);
@@ -2208,9 +2238,19 @@ function launchShots() {
     const dst = dom.world.querySelector(shot.to);
     if (!src || !dst || !src.animate) return;
     const a = point(src), b = point(dst);
+    // Sprites are drawn pointing up; aim them along the flight path. Thrown
+    // axes spin end over end instead. Heavy shot blooms on landing.
+    const deg = Math.round(Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI) + 90;
+    const burst = shot.icon === 'cannonball' ? 'burstGold'
+      : shot.icon === 'boulder' ? 'burstFire' : null;
     for (let i = 0; i < shot.hits; i += 1) {
-      const el = makeIcon(ICONS[shot.icon], 'shot');
-      el.className = 'icon projectile';
+      const el = document.createElement('span');
+      el.className = 'projectile';
+      const img = makeIcon(ICONS[shot.icon], 'shot');
+      img.className = 'icon projectile-sprite';
+      if (shot.icon === 'thrownaxe') img.classList.add('spin');
+      else img.style.transform = `rotate(${deg}deg)`;
+      el.appendChild(img);
       el.style.left = `${a.x}px`;
       el.style.top = `${a.y}px`;
       dom.world.appendChild(el);
@@ -2218,10 +2258,60 @@ function launchShots() {
         { transform: 'translate(-50%, -50%)' },
         { transform: `translate(calc(${Math.round(b.x - a.x)}px - 50%), calc(${Math.round(b.y - a.y)}px - 50%))` }
       ], { duration: PROJECTILE_MS, delay: i * HIT_SPAN_MS, easing: 'linear', fill: 'backwards' });
-      flight.onfinish = () => el.remove();
+      flight.onfinish = () => { el.remove(); if (burst) impactBurst(b.x, b.y, burst); };
       flight.oncancel = () => el.remove();
     }
   });
+}
+
+// A short bloom where a heavy shot lands — golden flash for cannonballs,
+// fire for catapult stones, smoke where a building falls.
+function impactBurst(x, y, icon) {
+  const el = makeIcon(ICONS[icon], 'impact');
+  el.className = 'icon impact-burst';
+  el.style.left = `${x}px`;
+  el.style.top = `${y}px`;
+  dom.world.appendChild(el);
+  setTimeout(() => el.remove(), 500);
+}
+
+// Floating combat text: queued by the damage helpers with the same hold the
+// hurt flash uses, spawned over the target tile at render time, drifts up and
+// fades. Decorative only — never tappable.
+const pendingFloats = [];
+
+function queueFloat(sel, text, cls, delay = 0) {
+  pendingFloats.push({ sel, text, cls, delay });
+}
+
+function launchFloats() {
+  const floats = pendingFloats.splice(0, pendingFloats.length);
+  if (!floats.length || !dom.world.querySelector) return;
+  const canvas = dom.world.getBoundingClientRect();
+  floats.forEach(f => {
+    const target = dom.world.querySelector(f.sel);
+    if (!target) return;
+    const r = target.getBoundingClientRect();
+    if (!r.width) return;
+    const el = document.createElement('span');
+    el.className = `float-text ${f.cls}`;
+    el.textContent = f.text;
+    el.style.left = `${r.left + r.width / 2 - canvas.left + dom.world.scrollLeft}px`;
+    el.style.top = `${r.top - canvas.top + dom.world.scrollTop + 6}px`;
+    el.style.animationDelay = `${f.delay}ms`;
+    dom.world.appendChild(el);
+    setTimeout(() => el.remove(), f.delay + 1400);
+  });
+}
+
+// A quick jolt of the whole world screen — reserved for a building of ours
+// actually falling, so it stays meaningful.
+function shakeWorld() {
+  const vp = dom.worldViewport;
+  if (!vp || !vp.classList) return;
+  vp.classList.remove('world-shake');
+  if (typeof vp.offsetWidth === 'number') void vp.offsetWidth;   // restart the animation
+  vp.classList.add('world-shake');
 }
 
 let errorTimer = null;
@@ -2555,6 +2645,7 @@ function render() {
   });
   if (worldScrollTop) dom.world.scrollTop = worldScrollTop;
   launchShots();   // the tiles exist now, so ranged volleys can fly
+  launchFloats();
   renderOrders();
   renderLog();
   updateRaidAlerts();
@@ -2810,9 +2901,11 @@ function nodeTiles(zone) {
   }));
 }
 
-// Our buildings standing in the zone, one tile per type.
+// Our buildings standing in the zone, one tile per type — plus a WC2
+// construction-site tile for each building going up here (its ring is the
+// build timer), and smoking rubble where one just fell.
 function structTiles(zone) {
-  return Object.keys(BUILDINGS).filter(key => zone.structures[key] > 0).map(key => entityButton({
+  const tiles = Object.keys(BUILDINGS).filter(key => zone.structures[key] > 0).map(key => entityButton({
     kind: 'structure', type: key, id: zone.id, zoneId: zone.id, compact: true,
     // Only home's hall wears the tier (keep/castle) — forward halls built
     // afterwards are plain town halls, icon and all.
@@ -2821,6 +2914,20 @@ function structTiles(zone) {
     countLabel: zone.structures[key] > 1 ? zone.structures[key] : null,
     hp: buildingHp(game, zone, key)
   }));
+  game.jobs
+    .filter(j => j.kind === 'construct' && !j.repairKey && String(j.zoneId) === String(zone.id))
+    .forEach(job => tiles.push(entityButton({
+      kind: 'worksite', type: 'site', id: job.uid, zoneId: zone.id, compact: true,
+      icon: 'construction', label: `${job.label} — under construction`,
+      jobUid: job.uid, progressBars: [jobProgress(game, job)]
+    })));
+  game.rubble
+    .filter(r => String(r.zoneId) === String(zone.id))
+    .forEach((r, i) => tiles.push(entityButton({
+      kind: 'worksite', type: 'rubble', id: `${zone.id}:${r.key}:${i}`, zoneId: zone.id, compact: true,
+      icon: 'rubble', label: `${BUILDINGS[r.key].label} destroyed`, dimmed: true
+    })));
+  return tiles;
 }
 
 // Render one zone as a tappable band (tapping empty band area selects the whole
@@ -3187,7 +3294,7 @@ dom.world.addEventListener('pointerup', event => {
     if (z) selectEntity('zone', 'head', z.id, z.id);
     return;
   }
-  if (tap.button.dataset.kind === 'enemy' || tap.button.dataset.kind === 'frontier') return;
+  if (['enemy', 'frontier', 'worksite'].includes(tap.button.dataset.kind)) return;
   // A scout tile recalls the whole party to the zone it set out from.
   if (tap.button.dataset.kind === 'scout') {
     cancelJob(game, Number(tap.button.dataset.id));

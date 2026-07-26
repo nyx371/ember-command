@@ -519,17 +519,73 @@ button { touch-action: manipulation; }
    lunge on top of it just reads as noise. (Towers still recoil as they fire.) */
 .entity.ranged-attacker.flash-attack { animation: none; }
 
-/* Placeholder projectiles: a sprite per shot, flown from the shooter's tile to
-   its target's by app.js (WAAPI) and removed on landing. Decorative only — it
-   sits above the fog wash and never takes a tap. */
+/* Projectiles: real WC2 missile sprites, flown from the shooter's tile to the
+   target's by app.js (WAAPI) and removed on landing. The wrapper carries the
+   flight; the inner sprite carries aim rotation (or an axe's spin). Decorative
+   only — sits above the fog wash, never takes a tap. */
 .projectile {
   position: absolute;
   z-index: 3;
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   pointer-events: none;
+}
+.projectile-sprite {
+  width: 100%;
+  height: 100%;
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.75));
 }
+@keyframes axe-spin { to { transform: rotate(360deg); } }
+.projectile-sprite.spin { animation: axe-spin 0.45s linear infinite; }
+
+/* Where a heavy shot lands: a burst sprite pops and fades. */
+@keyframes burst-pop {
+  0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.5); }
+  25%  { opacity: 1; transform: translate(-50%, -50%) scale(1.1); }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(1.35); }
+}
+.impact-burst {
+  position: absolute;
+  z-index: 3;
+  width: 30px;
+  height: 30px;
+  pointer-events: none;
+  animation: burst-pop 0.45s ease-out forwards;
+}
+
+/* Floating combat text: -damage over the tile that takes a volley (timed to
+   land with it), +gold where plunder is earned. Drifts up and fades. */
+@keyframes float-up {
+  0%   { opacity: 0; transform: translate(-50%, 0); }
+  15%  { opacity: 1; }
+  100% { opacity: 0; transform: translate(-50%, -22px); }
+}
+.float-text {
+  position: absolute;
+  z-index: 4;
+  padding: 0 3px;
+  color: #ff8b74;
+  background: rgba(0, 0, 0, 0.45);
+  border-radius: 2px;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.2;
+  pointer-events: none;
+  opacity: 0;
+  text-shadow: 1px 1px 0 #000;
+  animation: float-up 1.1s ease-out forwards;
+}
+.float-text.gold { color: var(--accent); }
+
+/* The whole battlefield jolts when a building of ours comes down. */
+@keyframes world-jolt {
+  0%, 100% { transform: translate(0, 0); }
+  20% { transform: translate(-3px, 2px); }
+  40% { transform: translate(3px, -2px); }
+  60% { transform: translate(-2px, -1px); }
+  80% { transform: translate(2px, 1px); }
+}
+.world-viewport.world-shake { animation: world-jolt 0.4s ease-out; }
 
 /* Combined hp bar along a tile's bottom edge: a CANVAS, painted in app.js
    (hpBarEl) — track and fill are pixels, so nothing here decides how full it
