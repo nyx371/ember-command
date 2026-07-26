@@ -2,8 +2,8 @@
 
 // Bump VERSION (+0.01) and rewrite VERSION_TAG with every pushed change —
 // they render at the top of the menu so a stale cache is immediately visible.
-const VERSION = '0.89';
-const VERSION_TAG = 'income rates, red blockers, and a battle ring on fighting zones';
+const VERSION = '0.90';
+const VERSION_TAG = 'ten polish tweaks: news dot, idle hints, day-stamped log, easing';
 
 const MAX_LOG_LINES = 9;
 const ICON_VERSION = '20260719-design1';
@@ -587,7 +587,8 @@ function costIcons(cost) {
 }
 
 function writeLog(state, line) {
-  state.log.unshift(line);
+  // Every entry carries the day it happened, so the log reads as a chronicle.
+  state.log.unshift(`D${currentDay(state) + 1} · ${line}`);
   state.log = state.log.slice(0, MAX_LOG_LINES);
 }
 
@@ -2651,6 +2652,7 @@ function render() {
   launchFloats();
   renderOrders();
   renderLog();
+  updateMenuNews();
   updateRaidAlerts();
 }
 
@@ -2703,10 +2705,12 @@ function renderResources() {
   // Big stockpiles compact to 12.5k so the four columns never squeeze.
   const fmtStore = n => (n >= 10000 ? fmtQty(n) : n);
   const fmtRate = r => (r >= 10 ? `+${Math.round(r)}` : `+${r.toFixed(1)}`);
+  // Oil stays out of the bar until the first drop exists (the naval game) —
+  // no point spending a column on a permanent 0.
   const rows = [
     ['gold',   ICONS.gold,   fmtStore(game.resources.gold),   incomePerTick(game, 'gold')],
     ['lumber', ICONS.lumber, fmtStore(game.resources.lumber), incomePerTick(game, 'lumber')],
-    ['oil',    ICONS.oil,    fmtStore(game.resources.oil),    null],
+    ...(game.resources.oil > 0 ? [['oil', ICONS.oil, fmtStore(game.resources.oil), null]] : []),
     ['supply', ICONS.supply, `${supplyUsed(game)}/${supplyCap(game)}`, null]
   ];
 
@@ -2769,8 +2773,16 @@ function jobChip(job) {
 function renderQueueStrip() {
   const scrollLeft = dom.queue.scrollLeft;
   dom.queue.replaceChildren();
-  game.jobs.filter(j => ['train', 'construct', 'upgrade'].includes(j.kind))
-    .forEach(job => dom.queue.appendChild(jobChip(job)));
+  const jobs = game.jobs.filter(j => ['train', 'construct', 'upgrade'].includes(j.kind));
+  if (jobs.length === 0) {
+    // The tray stays; a whisper of a label keeps it from reading as broken.
+    const hint = document.createElement('span');
+    hint.className = 'queue-hint';
+    hint.textContent = 'production idle';
+    dom.queue.appendChild(hint);
+    return;
+  }
+  jobs.forEach(job => dom.queue.appendChild(jobChip(job)));
   if (scrollLeft) dom.queue.scrollLeft = scrollLeft;
 }
 
@@ -2992,7 +3004,14 @@ function renderZoneBand(zone) {
 // scouts are out). Tapping one recalls the whole party.
 function scoutTiles(zone) {
   const job = exploreJob(game, zone.id);
-  if (!job) return [];
+  // Nobody out: a faint hint marks the frontier as the place scouting starts.
+  // Tapping it selects the band, same as tapping the wilderness itself.
+  if (!job) {
+    return [entityButton({
+      kind: 'zone', type: 'head', id: zone.id, zoneId: zone.id, compact: true,
+      icon: 'explore', label: 'the uncharted frontier — send scouts', dimmed: true
+    })];
+  }
   const progress = jobProgress(game, job);
   return Object.keys(ARMY).filter(t => job.scouts[t] > 0).map(t => entityButton({
     kind: 'scout', type: t, id: job.uid, compact: true,
@@ -3481,6 +3500,27 @@ Object.keys(CHEAT_ICONS).forEach(id => {
 });
 
 document.getElementById('gameover').addEventListener('click', () => location.reload());
+
+// A small gold dot on the menu button whenever the log has entries the player
+// hasn't opened the menu to see. Opening it marks everything read.
+const menuEl = document.querySelector('.menu');
+const menuSummaryEl = document.querySelector('.menu summary');
+let menuSeenTop = null;
+if (menuEl && menuEl.addEventListener) {
+  menuEl.addEventListener('toggle', () => {
+    if (menuEl.open) {
+      menuSeenTop = game.log[0] || null;
+      if (menuSummaryEl && menuSummaryEl.classList) menuSummaryEl.classList.remove('has-news');
+    }
+  });
+}
+function updateMenuNews() {
+  if (!menuSummaryEl || !menuSummaryEl.classList) return;
+  if (menuEl && menuEl.open) { menuSeenTop = game.log[0] || null; }
+  const news = game.log.length > 0 && game.log[0] !== menuSeenTop && !(menuEl && menuEl.open);
+  if (news) menuSummaryEl.classList.add('has-news');
+  else menuSummaryEl.classList.remove('has-news');
+}
 
 // ── Boot ───────────────────────────────────────────────────────────────────
 
